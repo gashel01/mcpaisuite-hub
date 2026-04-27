@@ -1,0 +1,47 @@
+services:
+
+  # -- Backend (FastAPI / kernelmcp) ---------------------------------------------
+  api:
+    build:
+      context: ..
+      dockerfile: kernelmcp-demo/backend/Dockerfile
+    ports:
+      - "8007:8000"
+    environment:
+      KERNELMCP_NAMESPACE: ${KERNELMCP_NAMESPACE:-demo}
+      KERNELMCP_MODEL: ${KERNELMCP_MODEL:-claude-sonnet-4-6}
+      KERNELMCP_LOCAL_MODEL: ${KERNELMCP_LOCAL_MODEL:-ollama/mistral}
+      KERNELMCP_ROUTING: ${KERNELMCP_ROUTING:-true}
+      KERNELMCP_MAX_TURNS: ${KERNELMCP_MAX_TURNS:-20}
+      KERNELMCP_MAX_TOKENS: ${KERNELMCP_MAX_TOKENS:-50000}
+      KERNELMCP_MAX_COST: ${KERNELMCP_MAX_COST:-1.0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - api_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # -- Frontend (Next.js) -------------------------------------------------------
+  frontend:
+    build:
+      context: ..
+      dockerfile: kernelmcp-demo/frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8007}
+    ports:
+      - "3007:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8007}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  api_data:

@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+.env.*
+*.log
+.venv/
+venv/
+node_modules/
+.next/
+.DS_Store
+Thumbs.db
+*.db
+*.sqlite3
+
+# Only push README.md
+*.md
+!README.md

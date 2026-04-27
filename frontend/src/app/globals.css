@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0f0f14;
+  --bg-secondary: #16161e;
+  --bg-tertiary: #1e1e2a;
+  --border: #2a2a3a;
+  --text-primary: #e4e4ef;
+  --text-secondary: #9090a8;
+  --accent: #8b5cf6;
+  --accent-hover: #7c3aed;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a3a transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #2a2a3a;
+  border-radius: 3px;
+}
+
+@layer base {
+  input,
+  textarea,
+  select {
+    @apply bg-[#1e1e2a] border border-[#2a2a3a] text-[#e4e4ef] rounded-lg px-3 py-2 outline-none
+      focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors;
+  }
+
+  button {
+    @apply transition-colors duration-150;
+  }
+}
