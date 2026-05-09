@@ -1,43 +1,69 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    # Playwright Chromium dependencies
+    libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 \
+    libcups2 libdrm2 libxkbcommon0 libatspi2.0-0 libxcomposite1 \
+    libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
+    libcairo2 libasound2 libwayland-client0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (client only, for host_exec)
+RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
+    | tar xz --strip-components=1 -C /usr/local/bin docker/docker
 
 WORKDIR /app
 
-# Install demo dependencies
+# ── Layer 1: pip dependencies (rarely changes → cached) ─────────────────
 COPY kernelmcp-demo/backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy and install all 5 suite libs + kernelmcp from local source
-COPY memorymcp/memorymcp/ /tmp/memorymcp/memorymcp/
-COPY memorymcp/pyproject.toml /tmp/memorymcp/pyproject.toml
-COPY memorymcp/README.md /tmp/memorymcp/README.md
-RUN pip install --no-cache-dir --no-deps /tmp/memorymcp && rm -rf /tmp/memorymcp
+RUN pip install --no-cache-dir beautifulsoup4 lxml playwright pypdf chromadb \
+    && python -m playwright install chromium
 
-COPY planningmcp/planningmcp/ /tmp/planningmcp/planningmcp/
-COPY planningmcp/pyproject.toml /tmp/planningmcp/pyproject.toml
-COPY planningmcp/README.md /tmp/planningmcp/README.md
-RUN pip install --no-cache-dir --no-deps /tmp/planningmcp && rm -rf /tmp/planningmcp
+# Install suite lib deps from pyproject.toml only (source code comes later)
+COPY memorymcp/pyproject.toml memorymcp/README.md /tmp/memorymcp/
+RUN mkdir -p /tmp/memorymcp/memorymcp && touch /tmp/memorymcp/memorymcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/memorymcp && rm -rf /tmp/memorymcp
 
-COPY workspacemcp/workspacemcp/ /tmp/workspacemcp/workspacemcp/
-COPY workspacemcp/pyproject.toml /tmp/workspacemcp/pyproject.toml
-COPY workspacemcp/README.md /tmp/workspacemcp/README.md
-RUN pip install --no-cache-dir --no-deps /tmp/workspacemcp && rm -rf /tmp/workspacemcp
+COPY planningmcp/pyproject.toml planningmcp/README.md /tmp/planningmcp/
+RUN mkdir -p /tmp/planningmcp/planningmcp && touch /tmp/planningmcp/planningmcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/planningmcp && rm -rf /tmp/planningmcp
 
-COPY sandboxmcp/sandboxmcp/ /tmp/sandboxmcp/sandboxmcp/
-COPY sandboxmcp/pyproject.toml /tmp/sandboxmcp/pyproject.toml
-COPY sandboxmcp/README.md /tmp/sandboxmcp/README.md
-RUN pip install --no-cache-dir --no-deps /tmp/sandboxmcp && rm -rf /tmp/sandboxmcp
+COPY workspacemcp/pyproject.toml workspacemcp/README.md /tmp/workspacemcp/
+RUN mkdir -p /tmp/workspacemcp/workspacemcp && touch /tmp/workspacemcp/workspacemcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/workspacemcp && rm -rf /tmp/workspacemcp
 
-COPY kernelmcp/kernelmcp/ /tmp/kernelmcp/kernelmcp/
-COPY kernelmcp/pyproject.toml /tmp/kernelmcp/pyproject.toml
-COPY kernelmcp/README.md /tmp/kernelmcp/README.md
-RUN pip install --no-cache-dir --no-deps /tmp/kernelmcp && rm -rf /tmp/kernelmcp
+COPY sandboxmcp/pyproject.toml sandboxmcp/README.md /tmp/sandboxmcp/
+RUN mkdir -p /tmp/sandboxmcp/sandboxmcp && touch /tmp/sandboxmcp/sandboxmcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/sandboxmcp && rm -rf /tmp/sandboxmcp
 
-# Copy the demo backend application
+COPY schedulermcp/pyproject.toml schedulermcp/README.md /tmp/schedulermcp/
+RUN mkdir -p /tmp/schedulermcp/schedulermcp && touch /tmp/schedulermcp/schedulermcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/schedulermcp && rm -rf /tmp/schedulermcp
+
+COPY ragmcp/pyproject.toml ragmcp/README.md /tmp/ragmcp/
+RUN mkdir -p /tmp/ragmcp/ragmcp && touch /tmp/ragmcp/ragmcp/__init__.py \
+    && pip install --no-cache-dir "/tmp/ragmcp[fastembed,qdrant]" && rm -rf /tmp/ragmcp
+
+COPY kernelmcp/pyproject.toml kernelmcp/README.md /tmp/kernelmcp/
+RUN mkdir -p /tmp/kernelmcp/kernelmcp && touch /tmp/kernelmcp/kernelmcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/kernelmcp && rm -rf /tmp/kernelmcp
+
+# ── Layer 2: source code (changes often → fast rebuild) ──────────────────
+# Just copy Python source into the already-installed site-packages
+COPY memorymcp/memorymcp/ /usr/local/lib/python3.11/site-packages/memorymcp/
+COPY planningmcp/planningmcp/ /usr/local/lib/python3.11/site-packages/planningmcp/
+COPY workspacemcp/workspacemcp/ /usr/local/lib/python3.11/site-packages/workspacemcp/
+COPY sandboxmcp/sandboxmcp/ /usr/local/lib/python3.11/site-packages/sandboxmcp/
+COPY schedulermcp/schedulermcp/ /usr/local/lib/python3.11/site-packages/schedulermcp/
+COPY ragmcp/ragmcp/ /usr/local/lib/python3.11/site-packages/ragmcp/
+COPY kernelmcp/kernelmcp/ /usr/local/lib/python3.11/site-packages/kernelmcp/
+
+# ── Layer 3: demo app (changes most often → always fast) ─────────────────
 COPY kernelmcp-demo/backend/ /app/
 
-# Data directory for persistent config
 RUN mkdir -p /app/data
 
 EXPOSE 8000

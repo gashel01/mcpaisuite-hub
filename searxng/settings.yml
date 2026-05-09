@@ -1,0 +1,57 @@
+use_default_settings: true
+
+general:
+  instance_name: "kernelmcp-search"
+  debug: false
+
+search:
+  safe_search: 0
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "kernelmcp-searxng-secret-key-change-in-prod"
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+
+ui:
+  static_use_hash: true
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  - name: mojeek
+    engine: mojeek
+    shortcut: mj
+    disabled: false
+
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+
+  - name: qwant
+    engine: qwant
+    shortcut: qw
+    disabled: false
+
+  # Explicitly disable engines that return captchas
+  - name: yandex
+    engine: yandex
+    disabled: true

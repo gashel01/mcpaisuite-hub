@@ -1,5 +1,22 @@
 services:
 
+  # -- SearXNG (meta search engine) ----------------------------------------------
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "9999:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   # -- Backend (FastAPI / kernelmcp) ---------------------------------------------
   api:
     build:
@@ -17,8 +34,18 @@ services:
       KERNELMCP_MAX_COST: ${KERNELMCP_MAX_COST:-1.0}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SEARXNG_URL: http://searxng:8080
+      TZ: Europe/Paris
+      RAGMCP_VECTORSTORE: qdrant
+      RAGMCP_VECTORSTORE_URL: http://host.docker.internal:6333
+      RAGMCP_EMBEDDER: fastembed
+      RAGMCP_DATA_PATH: /app/data/rag
     volumes:
-      - api_data:/app/data
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      searxng:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -43,5 +70,3 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-volumes:
-  api_data:

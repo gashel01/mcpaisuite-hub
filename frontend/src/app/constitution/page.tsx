@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Save, ShieldCheck, Loader2 } from "lucide-react";
-import { getConstitution, saveConstitution } from "@/lib/api";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
+const getConstitution = async () => { const r = await fetch(`${BASE_URL}/constitution`); return r.json(); };
+const saveConstitution = async (rules: string) => { const r = await fetch(`${BASE_URL}/constitution`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rules }) }); return r.json(); };
 
 export default function ConstitutionPage() {
   const [rules, setRules] = useState("");
@@ -23,7 +25,7 @@ export default function ConstitutionPage() {
       setRules(c.rules);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch {
+    } catch (_e) {
       // silently fail
     } finally {
       setSaving(false);

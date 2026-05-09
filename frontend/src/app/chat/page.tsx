@@ -1,100 +1,297 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Wrench, AlertCircle, CheckCircle2, Clock, Cpu, Zap } from "lucide-react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import {
+  Cpu, Globe, GlobeLock, Trash2, FileDown, Terminal, ShieldAlert,
+  FileText, Loader2, ArrowDown, Bot, PanelLeft,
+} from "lucide-react";
+import { useTenant } from "@/context/tenant";
+import { BASE_URL } from "@/types";
+import type { ChatMsg, Turn, TaskInfo, ConvInfo, ScheduledJob } from "@/types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
+import ChatMessage from "@/components/chat-message";
+import ChatInput from "@/components/chat-input";
+import ChatHistory from "@/components/chat-history";
+import TaskModal from "@/components/task-modal";
+import EgressPanel from "@/components/egress-panel";
+import HostPanel from "@/components/host-panel";
+import { TurnItem } from "@/components/turns";
 
-interface Turn {
-  role: string;
-  content: string;
-  tool_name?: string;
-  tool_args?: Record<string, unknown>;
-  tool_result?: string;
-  tool_success?: boolean;
-  model?: string;
-  tokens?: number;
-}
-
-interface TaskResult {
-  id: string;
-  goal: string;
-  status: string;
-  turns: Turn[];
-  total_tokens?: number;
-  total_cost?: number;
-  total_turns?: number;
-}
+// ── Main chat page ─────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Array<{ role: "user" | "assistant" | "system"; content: string; task?: TaskResult }>>([]);
+  const { tenant } = useTenant();
+  const th = useMemo(() => ({ "X-Tenant-Id": tenant }), [tenant]);
+
+  // Core state
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [currentTask, setCurrentTask] = useState<TaskResult | null>(null);
+  const [convId, setConvId] = useState(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("conv") || "default";
+    }
+    return "default";
+  });
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [liveTurns, setLiveTurns] = useState<Turn[]>([]);
+
+  // Scroll
+  const [showScrollDown, setShowScrollDown] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUp = useRef(false);
+
+  // Panels
+  const [networkEnabled, setNetworkEnabled] = useState(false);
+  const [allowedDomains, setAllowedDomains] = useState<string[]>([]);
+  const [newDomain, setNewDomain] = useState("");
+  const [showEgress, setShowEgress] = useState(false);
+  const [execMode, setExecMode] = useState<"react" | "ltp" | "hybrid">("react");
+  const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [showHostAccess, setShowHostAccess] = useState(false);
+  const [hostApproved, setHostApproved] = useState<string[]>([]);
+  const [hostPending, setHostPending] = useState<{ namespace: string; pattern: string }[]>([]);
+  const [newHostPattern, setNewHostPattern] = useState("");
+
+  // History
+  const [showHistory, setShowHistory] = useState(true);
+  const [conversations, setConversations] = useState<ConvInfo[]>([]);
+  const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const [schedules, setSchedules] = useState<ScheduledJob[]>([]);
+  const [selectedTask, setSelectedTask] = useState<TaskInfo | null>(null);
+  const [elicitation, setElicitation] = useState<{ taskId: string; question: string } | null>(null);
+  const [elicitResponse, setElicitResponse] = useState("");
+
+
+  // ── Auto-scroll ──────────────────────────────────────────────────────────
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, currentTask]);
+    if (!userScrolledUp.current) endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, liveTurns]);
 
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const dist = container.scrollHeight - container.scrollTop - container.clientHeight;
+      userScrolledUp.current = dist > 80;
+      setShowScrollDown(dist > 200);
+    };
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // ── Data loading ─────────────────────────────────────────────────────────
+
+  // Refresh sidebar data (conversations, tasks, schedules)
+  const refreshSidebar = () => {
+    const h = { headers: th };
+    fetch(`${BASE_URL}/conversations`, h).then(r => r.json()).then(d => setConversations(d.conversations || [])).catch(() => {});
+    fetch(`${BASE_URL}/tasks`, h).then(r => r.json()).then(d => setTasks(d.tasks || [])).catch(() => {});
+    fetch(`${BASE_URL}/schedules`, h).then(r => r.json()).then(d => setSchedules(d.jobs || [])).catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshSidebar(); // Load once on mount — no polling
+    return () => {};
+  }, []);
+
+  useEffect(() => {
+    fetch(`${BASE_URL}/egress`, { headers: th }).then(r => r.json()).then(d => { setNetworkEnabled(d.enabled || false); setAllowedDomains(d.allowed_domains || []); }).catch(() => {});
+    fetch(`${BASE_URL}/mode`).then(r => r.json()).then(d => { if (d.mode) setExecMode(d.mode); }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => { setHostApproved(d.approved || []); setHostPending(d.pending || []); }).catch(() => {});
+  }, []);
+
+  // Load conversation messages — always sync from server
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlConv = params.get("conv");
+      if (urlConv && urlConv !== convId) setConvId(urlConv);
+    }
+    fetch(`${BASE_URL}/chat/${encodeURIComponent(convId)}`, { headers: th }).then(r => r.json()).then(data => {
+      if (data.messages && data.messages.length > 0) {
+        const serverMsgs = data.messages.map((m: any) => ({
+          role: m.role as "user" | "assistant", content: m.content,
+          turns: m.turns, tokens: m.tokens, cost: m.cost, taskId: m.task_id,
+        }));
+        setMessages(serverMsgs);
+        setLoading(false);
+        setLiveTurns([]);
+      }
+    }).catch(() => {});
+  }, [convId]);
+
+  // Sync conversation on window focus + navigation return
+  useEffect(() => {
+    const syncFromServer = async () => {
+      try {
+        const r = await fetch(`${BASE_URL}/chat/${encodeURIComponent(convId)}`, { headers: th });
+        if (!r.ok) return;
+        const data = await r.json();
+        const serverMsgs: any[] = data.messages || [];
+        if (serverMsgs.length > messages.length) {
+          setMessages(serverMsgs.map(m => ({
+            role: m.role as "user" | "assistant", content: m.content,
+            turns: m.turns, tokens: m.tokens, cost: m.cost, taskId: m.task_id,
+          })));
+          setLoading(false);
+          setLiveTurns([]);
+        }
+      } catch (_e) {}
+    };
+    window.addEventListener("focus", syncFromServer);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) syncFromServer(); });
+    return () => {
+      window.removeEventListener("focus", syncFromServer);
+    };
+  }, [convId, messages.length]);
+
+
+  // ── Actions ──────────────────────────────────────────────────────────────
+
+  const toggleNetwork = async () => { const next = !networkEnabled; await fetch(`${BASE_URL}/egress/toggle?enabled=${next}`, { method: "POST", headers: th }); setNetworkEnabled(next); };
+  const addDomain = async () => { if (!newDomain.trim()) return; await fetch(`${BASE_URL}/egress/allow?domain=${encodeURIComponent(newDomain.trim())}`, { method: "POST", headers: th }); setAllowedDomains(prev => [...prev, newDomain.trim()]); setNewDomain(""); };
+  const removeDomain = async (d: string) => { await fetch(`${BASE_URL}/egress/allow?domain=${encodeURIComponent(d)}`, { method: "DELETE", headers: th }); setAllowedDomains(prev => prev.filter(x => x !== d)); };
+
+  const approveHost = async (p: string) => { await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(p)}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); setHostApproved(prev => [...prev, p]); };
+  const denyHost = async (p: string) => { await fetch(`${BASE_URL}/host/deny?pattern=${encodeURIComponent(p)}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); };
+  const addHost = async () => { if (!newHostPattern.trim()) return; await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(newHostPattern.trim())}`, { method: "POST", headers: th }); setHostApproved(prev => [...prev, newHostPattern.trim()]); setNewHostPattern(""); };
+  const revokeHost = async (p: string) => { await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(p)}`, { method: "DELETE", headers: th }); setHostApproved(prev => prev.filter(x => x !== p)); };
+
+  const uploadAndAsk = async (file: File) => {
+    setUploading(file.name);
+    try {
+      const form = new FormData(); form.append("file", file);
+      const res = await fetch(`${BASE_URL}/rag/upload`, { method: "POST", body: form, headers: th });
+      if (!res.ok) throw new Error(await res.text());
+      setUploading(null);
+      setInput(`I just uploaded "${file.name}" to the knowledge base. Please search for its content and give me a summary.`);
+    } catch (err) {
+      setUploading(null);
+      const errStr = String(err);
+      let userMsg = `Failed to upload ${file.name}.`;
+      if (errStr.includes("dimension error") || errStr.includes("expected dim")) userMsg += "\n\n**Vector dimension mismatch** — go to Settings > Knowledge / RAG to check your embedding model.";
+      else userMsg += `\n\n\`${errStr.length > 200 ? errStr.slice(0, 200) + "..." : errStr}\``;
+      setMessages(prev => [...prev, { role: "assistant", content: userMsg }]);
     }
   };
 
+  const handleFileDrop = (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); const files = Array.from(e.dataTransfer.files); if (files.length > 0) uploadAndAsk(files[0]); };
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => { const files = Array.from(e.target.files || []); if (files.length > 0) uploadAndAsk(files[0]); };
+  const clearChat = async () => { await fetch(`${BASE_URL}/chat/${convId}`, { method: "DELETE", headers: th }); setMessages([]); setLiveTurns([]); };
+
+  const stopTask = async () => {
+    if (taskId) try { await fetch(`${BASE_URL}/tasks/${taskId}`, { method: "DELETE", headers: th }); } catch (_e) {}
+    closeStream(); setLoading(false); setLiveTurns([]);
+    setMessages(prev => [...prev, { role: "assistant", content: "Task cancelled." }]);
+  };
+
+  const switchConv = (id: string) => { setConvId(id); setMessages([]); setLiveTurns([]); window.history.replaceState(null, "", `/chat?conv=${encodeURIComponent(id)}`); };
+  const newChat = () => switchConv("chat-" + Date.now().toString(36));
+  const deleteConv = async (id: string) => {
+    try { await fetch(`${BASE_URL}/chat/${encodeURIComponent(id)}`, { method: "DELETE", headers: th }); setConversations(prev => prev.filter(c => c.id !== id)); if (id === convId) newChat(); } catch (_e) {}
+  };
+
+  const selectTask = async (id: string) => {
+    try { const r = await fetch(`${BASE_URL}/tasks/${encodeURIComponent(id)}`, { headers: th }); if (r.ok) setSelectedTask(await r.json()); } catch (_e) {}
+  };
+
+  // ── Send ─────────────────────────────────────────────────────────────────
+
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  const closeStream = useCallback(() => {
+    if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => { return () => closeStream(); }, [closeStream]);
+
   const send = async () => {
     if (!input.trim() || loading) return;
-    const goal = input.trim();
-    setInput("");
-    setLoading(true);
-    setCurrentTask(null);
-
-    setMessages(prev => [...prev, { role: "user", content: goal }]);
+    const msg = input.trim();
+    setInput(""); setLoading(true); setLiveTurns([]);
+    userScrolledUp.current = false;
+    setMessages(prev => [...prev, { role: "user", content: msg }]);
 
     try {
-      // Submit task
-      const res = await fetch(`${BASE_URL}/tasks`, {
+      const res = await fetch(`${BASE_URL}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal }),
+        headers: { "Content-Type": "application/json", ...th },
+        body: JSON.stringify({ message: msg, conversation_id: convId, enable_network: networkEnabled, allowed_domains: allowedDomains, execution_mode: execMode }),
       });
-      const created = await res.json();
-      const taskId = created.id || created.task_id;
+      const data = await res.json();
+      const tid = data.task_id;
+      setTaskId(tid);
+      refreshSidebar(); // Refresh after sending message (new conversation)
+      if (!tid) { setMessages(prev => [...prev, { role: "assistant", content: "Failed to create task." }]); setLoading(false); return; }
 
-      if (!taskId) {
-        setMessages(prev => [...prev, { role: "assistant", content: "Failed to create task." }]);
-        setLoading(false);
-        return;
-      }
+      // Stream task updates via SSE
+      closeStream();
+      const turns: Turn[] = [];
+      const es = new EventSource(`${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`);
+      eventSourceRef.current = es;
 
-      // Poll for live updates with timeout
-      let pollCount = 0;
-      const maxPolls = 150; // 150 * 800ms = 2 minutes max
-      pollRef.current = setInterval(async () => {
-        pollCount++;
+      es.onmessage = (event) => {
         try {
-          const r = await fetch(`${BASE_URL}/tasks/${taskId}`);
-          if (!r.ok) return;
-          const task: TaskResult = await r.json();
-          setCurrentTask(task);
+          const msg = JSON.parse(event.data);
 
-          if (["completed", "failed", "cancelled"].includes(task.status) || pollCount >= maxPolls) {
-            stopPolling();
-            setLoading(false);
-
-            const lastAssistant = [...(task.turns || [])].reverse().find(t => t.role === "assistant" && t.content);
-            const summary = lastAssistant?.content || `Task ${task.status}. ${task.total_turns || 0} turns, ${task.total_tokens || 0} tokens, $${(task.total_cost || 0).toFixed(4)}`;
-
-            setMessages(prev => [...prev, { role: "assistant", content: summary, task }]);
-            setCurrentTask(null);
+          if (msg.type === "turn") {
+            turns.push(msg.turn);
+            setLiveTurns([...turns]);
+            // Check host access on each turn
+            fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => setHostPending(d.pending || [])).catch(() => {});
           }
-        } catch {
-          // ignore poll errors
+
+          if (msg.type === "elicitation") {
+            setElicitation({ taskId: msg.task_id, question: msg.question });
+          }
+
+          if (msg.type === "done") {
+            closeStream();
+            setLoading(false);
+            setMessages(prev => [...prev, {
+              role: "assistant",
+              content: msg.answer || `Task ${msg.status}. ${msg.total_tokens || 0} tokens.`,
+              turns: msg.turns || turns,
+              tokens: msg.total_tokens,
+              cost: msg.total_cost,
+              taskId: tid,
+              bootstrapSources: msg.bootstrap_sources || [],
+            }]);
+            setLiveTurns([]);
+            setTaskId(null);
+            refreshSidebar(); // Refresh conversations/tasks after task completes
+          }
+
+          if (msg.type === "error") {
+            closeStream();
+            setLoading(false);
+            setMessages(prev => [...prev, { role: "assistant", content: msg.message || "Task failed" }]);
+          }
+        } catch (_e) {}
+      };
+
+      es.onerror = () => {
+        closeStream();
+        if (loading) {
+          // Fallback: SSE failed, fetch final state once
+          fetch(`${BASE_URL}/chat/${convId}/task/${tid}`, { headers: th }).then(r => r.json()).then(task => {
+            setLoading(false);
+            if (["completed", "failed", "cancelled"].includes(task.status)) {
+              setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
+            }
+            setLiveTurns([]); setTaskId(null);
+          }).catch(() => { setLoading(false); });
         }
-      }, 800);
+      };
 
     } catch (e) {
       setMessages(prev => [...prev, { role: "assistant", content: `Error: ${e}` }]);
@@ -102,152 +299,239 @@ export default function ChatPage() {
     }
   };
 
-  const renderTurn = (turn: Turn, i: number) => {
-    if (turn.role === "tool_call" && turn.tool_name) {
-      return (
-        <div key={i} className="flex items-start gap-2 text-xs">
-          <Wrench className="h-3.5 w-3.5 text-violet-400 mt-0.5 shrink-0" />
-          <div className="bg-violet-950/30 border border-violet-800/30 rounded-lg px-3 py-2 w-full">
-            <span className="text-violet-300 font-mono font-medium">{turn.tool_name}</span>
-            {turn.tool_args && (
-              <pre className="text-violet-400/70 mt-1 text-[10px] max-h-20 overflow-auto">{JSON.stringify(turn.tool_args, null, 2)}</pre>
-            )}
-          </div>
-        </div>
-      );
-    }
-    if (turn.role === "tool_result") {
-      const success = turn.tool_success !== false;
-      return (
-        <div key={i} className="flex items-start gap-2 text-xs ml-5">
-          {success ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-400 mt-0.5 shrink-0" />
-          ) : (
-            <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 shrink-0" />
-          )}
-          <pre className={`rounded-lg px-3 py-2 w-full max-h-32 overflow-auto text-[10px] ${success ? "bg-green-950/20 text-green-300/80" : "bg-red-950/20 text-red-300/80"}`}>
-            {(turn.tool_result || turn.content || "").slice(0, 500)}
-          </pre>
-        </div>
-      );
-    }
-    if (turn.role === "assistant" && turn.content) {
-      return (
-        <div key={i} className="flex items-start gap-2 text-xs">
-          <Bot className="h-3.5 w-3.5 text-violet-400 mt-0.5 shrink-0" />
-          <p className="text-slate-300 text-sm">{turn.content.slice(0, 300)}</p>
-        </div>
-      );
-    }
-    if (turn.role === "system" && turn.content) {
-      return (
-        <div key={i} className="text-[10px] text-amber-500/70 italic ml-5">{turn.content.slice(0, 200)}</div>
-      );
-    }
-    return null;
+  // ── Export ────────────────────────────────────────────────────────────────
+
+  const exportPDF = () => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const msgsHtml = messages.map(m => {
+      if (m.role === "user") return `<div class="msg"><div class="bubble user">${m.content}</div></div>`;
+      if (m.role === "assistant") return `<div class="msg"><div class="bubble bot">${m.content.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")}</div></div>`;
+      return "";
+    }).join("");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>KernelMCP Export</title><style>body{font-family:system-ui;background:#0f0f17;color:#e4e4ef;max-width:800px;margin:0 auto;padding:40px}.msg{margin:16px 0}.bubble{padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.6;white-space:pre-wrap}.user{background:#1e293b;max-width:80%}.bot{background:#1e1e2e;border:1px solid #2a2a3a}strong{color:#f1f5f9}@media print{body{background:#fff;color:#111}.user{background:#f1f5f9}.bot{background:#fafafa;border-color:#e2e8f0}}</style></head><body><h1 style="color:#a78bfa">KernelMCP Chat Export</h1>${msgsHtml}</body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 500);
   };
 
+  // ── Suggestions ──────────────────────────────────────────────────────────
+
+  const suggestions = [
+    "What is the weather in Paris?",
+    "Write a fibonacci script and run it",
+    "Remember that I prefer dark mode",
+    "Search my knowledge base for recent notes",
+    "Schedule a reminder in 5 minutes",
+    "What files are in my workspace?",
+  ];
+
+  // ── Render ───────────────────────────────────────────────────────────────
+
   return (
-    <div className="flex flex-col h-full max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
-        <Cpu className="h-6 w-6 text-violet-500" />
-        <div>
-          <h1 className="text-xl font-bold text-slate-100">Kernel Chat</h1>
-          <p className="text-xs text-slate-500">
-            Autonomous agent — plans, remembers, writes files, executes code, searches docs
-          </p>
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4 min-h-0">
-        {messages.length === 0 && !loading && (
-          <div className="text-center py-16">
-            <Cpu className="h-12 w-12 text-slate-700 mx-auto mb-3" />
-            <p className="text-slate-500 text-sm mb-2">The kernel orchestrates all 5 libraries autonomously.</p>
-            <p className="text-slate-600 text-xs">Try:</p>
-            <div className="flex flex-wrap justify-center gap-2 mt-2">
-              {["Write a Python script that calculates fibonacci numbers", "Remember that I prefer TypeScript over JavaScript", "Create a plan to build a REST API", "What files are in my workspace?"].map((s, i) => (
-                <button key={i} onClick={() => setInput(s)} className="text-xs bg-slate-800 hover:bg-violet-900/30 text-slate-400 hover:text-violet-300 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors">
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {messages.map((msg, i) => (
-          <div key={i}>
-            {msg.role === "user" && (
-              <div className="flex gap-3 justify-end">
-                <div className="max-w-[75%] bg-violet-900/40 border border-violet-800/50 rounded-xl px-4 py-3 text-sm text-violet-100">
-                  {msg.content}
-                </div>
-                <User className="h-5 w-5 text-slate-500 mt-1 shrink-0" />
-              </div>
-            )}
-            {msg.role === "assistant" && (
-              <div className="flex gap-3">
-                <Bot className="h-5 w-5 text-violet-500 mt-1 shrink-0" />
-                <div className="max-w-[85%] space-y-2">
-                  <div className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-200">
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                  </div>
-                  {/* Show ReAct turns for this task */}
-                  {msg.task && msg.task.turns && msg.task.turns.length > 0 && (
-                    <details className="bg-slate-800/50 border border-slate-700/50 rounded-lg">
-                      <summary className="px-3 py-2 text-xs text-slate-500 cursor-pointer hover:text-slate-300">
-                        <Zap className="h-3 w-3 inline mr-1" />
-                        {msg.task.turns.length} turns · {msg.task.total_tokens || 0} tokens · ${(msg.task.total_cost || 0).toFixed(4)}
-                      </summary>
-                      <div className="px-3 pb-3 space-y-2">
-                        {msg.task.turns.map((turn, j) => renderTurn(turn, j))}
-                      </div>
-                    </details>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Live task progress */}
-        {currentTask && (
-          <div className="flex gap-3">
-            <Bot className="h-5 w-5 text-violet-500 mt-1 shrink-0 animate-pulse" />
-            <div className="bg-slate-800 border border-violet-800/30 rounded-xl px-4 py-3 w-full max-w-[85%] space-y-2">
-              <div className="flex items-center gap-2 text-xs text-violet-400">
-                <Clock className="h-3 w-3 animate-spin" />
-                <span>{currentTask.status}...</span>
-                <span className="text-slate-600">{currentTask.turns?.length || 0} turns</span>
-              </div>
-              {(currentTask.turns || []).slice(-6).map((turn, j) => renderTurn(turn, j))}
-            </div>
-          </div>
-        )}
-
-        <div ref={endRef} />
-      </div>
-
-      {/* Input */}
-      <div className="flex gap-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
-          placeholder="Tell the kernel what to do..."
-          className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-          disabled={loading}
+    <div className="flex h-[calc(100vh-3rem)] md:h-[calc(100vh)] -m-4 -mb-4 md:-m-6 md:-mb-6">
+      {/* History sidebar */}
+      {showHistory && (
+        <ChatHistory
+          conversations={conversations} tasks={tasks} schedules={schedules} convId={convId}
+          onSwitchConv={switchConv} onNewChat={newChat} onDeleteConv={deleteConv}
+          onSelectTask={selectTask} onClose={() => setShowHistory(false)}
         />
-        <button
-          onClick={send}
-          disabled={loading || !input.trim()}
-          className="bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl px-4 py-3 transition-colors"
-        >
-          <Send className="h-5 w-5" />
-        </button>
+      )}
+
+      {/* Main chat area */}
+      <div className="flex-1 flex flex-col min-w-0 relative" onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleFileDrop}>
+        {/* Drag overlay */}
+        {dragOver && (
+          <div className="absolute inset-0 z-50 bg-violet-950/80 border-2 border-dashed border-violet-500 rounded-xl flex items-center justify-center backdrop-blur-sm">
+            <div className="text-center">
+              <FileText className="h-10 w-10 text-violet-400 mx-auto mb-2" />
+              <p className="text-violet-300 font-medium">Drop file to add to knowledge base</p>
+            </div>
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 px-4 py-2 shrink-0 border-b border-slate-800/40">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            {!showHistory && (
+              <button onClick={() => setShowHistory(true)} className="text-slate-500 hover:text-violet-400 p-1 transition-colors hidden md:block" title="Show history">
+                <PanelLeft className="h-4 w-4" />
+              </button>
+            )}
+            <div className="h-8 w-8 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0">
+              <Cpu className="h-4 w-4 text-violet-400" />
+            </div>
+            <div>
+              <h1 className="text-base md:text-lg font-semibold text-slate-100 leading-tight">Kernel Chat</h1>
+              <p className="text-[11px] text-slate-500 hidden sm:block">7 servers &middot; 80+ tools &middot; persistent memory</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setShowEgress(!showEgress)} className={`flex items-center gap-1 px-2 md:px-2.5 py-1.5 rounded-lg text-xs transition-all ${networkEnabled ? "bg-green-900/40 text-green-400 border border-green-700/60" : "bg-slate-800/80 text-slate-500 border border-slate-700/60"}`}>
+              {networkEnabled ? <Globe className="h-3.5 w-3.5" /> : <GlobeLock className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{networkEnabled ? "Web" : "Offline"}</span>
+            </button>
+            <button onClick={() => setShowHostAccess(!showHostAccess)} className={`flex items-center gap-1 px-2 md:px-2.5 py-1.5 rounded-lg text-xs transition-all ${hostPending.length > 0 ? "bg-amber-900/40 text-amber-400 border border-amber-700/60 animate-pulse" : "bg-slate-800/80 text-slate-500 border border-slate-700/60"}`}>
+              <Terminal className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Host</span>
+              {hostPending.length > 0 && <span className="bg-amber-500 text-black text-[10px] font-bold rounded-full h-4 w-4 flex items-center justify-center">{hostPending.length}</span>}
+            </button>
+            <button onClick={exportPDF} disabled={messages.length === 0} className="text-slate-600 hover:text-violet-400 disabled:opacity-30 p-1.5 transition-colors" title="Export">
+              <FileDown className="h-3.5 w-3.5" />
+            </button>
+            <button onClick={clearChat} className="text-slate-600 hover:text-red-400 p-1.5 transition-colors" title="Clear chat">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Panels */}
+        {showEgress && <EgressPanel networkEnabled={networkEnabled} allowedDomains={allowedDomains} newDomain={newDomain} setNewDomain={setNewDomain} onToggle={toggleNetwork} onAddDomain={addDomain} onRemoveDomain={removeDomain} />}
+        {showHostAccess && <HostPanel hostPending={hostPending} hostApproved={hostApproved} newHostPattern={newHostPattern} setNewHostPattern={setNewHostPattern} onApprove={approveHost} onDeny={denyHost} onAdd={addHost} onRevoke={revokeHost} />}
+
+        {/* Messages */}
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 scroll-smooth px-4">
+          {messages.length === 0 && !loading && (
+            <div className="flex flex-col items-center justify-center flex-1 py-16 px-4">
+              <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-violet-600/20 to-violet-800/20 border border-violet-700/30 flex items-center justify-center mb-5">
+                <Cpu className="h-7 w-7 text-violet-400" />
+              </div>
+              <h2 className="text-lg font-semibold text-slate-200 mb-1">What can I help with?</h2>
+              <p className="text-sm text-slate-500 mb-6 text-center max-w-md">Search the web, execute code, manage files, query your knowledge base, schedule tasks, and more.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+                {suggestions.map((s, i) => (
+                  <button key={i} onClick={() => setInput(s)} className="text-left text-xs bg-slate-800/60 hover:bg-violet-900/20 text-slate-400 hover:text-violet-300 px-3 py-2.5 rounded-xl border border-slate-700/50 hover:border-violet-700/40 transition-all">{s}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-5 py-4 min-h-min">
+            {messages.map((msg, i) => (
+              <div key={i} className="animate-in fade-in duration-300">
+                <ChatMessage msg={msg} />
+              </div>
+            ))}
+
+            {/* Live progress */}
+            {loading && liveTurns.length > 0 && (
+              <div className="flex gap-2.5">
+                <div className="h-7 w-7 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0 mt-0.5 animate-pulse">
+                  <Bot className="h-4 w-4 text-violet-400" />
+                </div>
+                <div className="bg-slate-800/40 border border-violet-800/20 rounded-2xl px-4 py-3 w-full md:max-w-[85%] space-y-2">
+                  <div className="flex items-center gap-2 text-xs text-violet-400">
+                    <Loader2 className="h-3 w-3 animate-spin" /> <span>Working...</span>
+                    <span className="text-slate-600">{liveTurns.length} steps</span>
+                  </div>
+                  <div className="space-y-2">{liveTurns.map((t, j) => <TurnItem key={j} turn={t} />)}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Inline host approval */}
+            {hostPending.length > 0 && hostPending.map(p => (
+              <div key={p.pattern} className="flex gap-2.5">
+                <div className="h-7 w-7 rounded-lg bg-amber-600/20 flex items-center justify-center shrink-0 mt-0.5">
+                  <ShieldAlert className="h-4 w-4 text-amber-400" />
+                </div>
+                <div className="bg-amber-950/20 border border-amber-700/40 rounded-2xl px-4 py-3 w-full md:max-w-[85%]">
+                  <p className="text-sm text-amber-300 font-medium mb-1">Permission requested</p>
+                  <code className="block bg-slate-900/80 text-amber-400 px-3 py-2 rounded-lg text-sm font-mono mb-3">{p.pattern}</code>
+                  <div className="flex gap-2">
+                    <button onClick={() => approveHost(p.pattern)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-lg text-xs font-medium transition-colors">Approve</button>
+                    <button onClick={() => denyHost(p.pattern)} className="bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white px-4 py-1.5 rounded-lg text-xs font-medium transition-colors">Deny</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Elicitation — kernel asking user a question */}
+            {elicitation && (
+              <div className="flex gap-2.5">
+                <div className="h-7 w-7 rounded-lg bg-blue-600/20 flex items-center justify-center shrink-0 mt-0.5">
+                  <Bot className="h-4 w-4 text-blue-400" />
+                </div>
+                <div className="bg-blue-950/20 border border-blue-700/40 rounded-2xl px-4 py-3 w-full md:max-w-[85%]">
+                  <p className="text-sm text-blue-300 font-medium mb-2">{elicitation.question}</p>
+                  <div className="flex gap-2">
+                    <input
+                      value={elicitResponse}
+                      onChange={e => setElicitResponse(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && elicitResponse.trim()) {
+                          fetch(`${BASE_URL}/chat/elicit/${elicitation.taskId}`, {
+                            method: "POST", headers: { "Content-Type": "application/json", ...th },
+                            body: JSON.stringify({ response: elicitResponse }),
+                          });
+                          setElicitation(null);
+                          setElicitResponse("");
+                        }
+                      }}
+                      placeholder="Type your answer..."
+                      className="flex-1 bg-slate-900/80 text-white px-3 py-1.5 rounded-lg text-sm border border-slate-700/50 focus:border-blue-500 outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        if (elicitResponse.trim()) {
+                          fetch(`${BASE_URL}/chat/elicit/${elicitation.taskId}`, {
+                            method: "POST", headers: { "Content-Type": "application/json", ...th },
+                            body: JSON.stringify({ response: elicitResponse }),
+                          });
+                          setElicitation(null);
+                          setElicitResponse("");
+                        }
+                      }}
+                      className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                    >Reply</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Thinking */}
+            {loading && liveTurns.length === 0 && hostPending.length === 0 && !elicitation && (
+              <div className="flex gap-2.5">
+                <div className="h-7 w-7 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0 mt-0.5 animate-pulse">
+                  <Bot className="h-4 w-4 text-violet-400" />
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                      <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <span className="text-xs text-slate-500">Thinking...</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div ref={endRef} />
+        </div>
+
+        {/* Scroll to bottom */}
+        {showScrollDown && (
+          <button onClick={() => { userScrolledUp.current = false; endRef.current?.scrollIntoView({ behavior: "smooth" }); }} className="absolute bottom-28 right-6 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/60 rounded-full p-2 shadow-xl transition-all z-10">
+            <ArrowDown className="h-4 w-4" />
+          </button>
+        )}
+
+        {/* Upload indicator */}
+        {uploading && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-violet-950/30 border border-violet-800/30 rounded-lg mx-4 mb-2 shrink-0">
+            <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />
+            <span className="text-xs text-violet-300">Uploading {uploading}...</span>
+          </div>
+        )}
+
+        {/* Input */}
+        <ChatInput input={input} setInput={setInput} loading={loading} execMode={execMode} setExecMode={setExecMode} onSend={send} onStop={stopTask} onFileSelect={handleFileSelect} uploading={uploading} />
       </div>
+
+      {/* Task modal */}
+      {selectedTask && <TaskModal task={selectedTask} onClose={() => setSelectedTask(null)} />}
     </div>
   );
 }
