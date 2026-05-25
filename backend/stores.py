@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -76,20 +77,21 @@ class ConversationStore:
 
     def add_message(self, ns: str, conv_id: str, role: str, content: str) -> None:
         conv = self.get_or_create(ns, conv_id)
-        conv["messages"].append({"role": role, "content": content})
+        conv["messages"].append({"role": role, "content": content, "timestamp": time.time() * 1000})
         if len(conv["messages"]) > self._max_msgs:
             conv["messages"] = conv["messages"][-self._max_msgs:]
         self._save(ns, conv_id, conv)
 
-    def add_answer(self, ns: str, conv_id: str, task_id: str, content: str, turns: list | None = None, tokens: int = 0, cost: float = 0) -> bool:
+    def add_answer(self, ns: str, conv_id: str, task_id: str, content: str, turns: list | None = None, tokens: int = 0, cost: float = 0, bootstrap_sources: list | None = None) -> bool:
         conv = self.get_or_create(ns, conv_id)
         if task_id in conv["answered_task_ids"]:
             return False
         conv["answered_task_ids"].add(task_id)
-        msg: dict = {"role": "assistant", "content": content}
+        msg: dict = {"role": "assistant", "content": content, "task_id": task_id, "timestamp": time.time() * 1000}
         if turns: msg["turns"] = turns
         if tokens: msg["tokens"] = tokens
         if cost: msg["cost"] = cost
+        if bootstrap_sources: msg["bootstrap_sources"] = bootstrap_sources
         conv["messages"].append(msg)
         self._save(ns, conv_id, conv)
         return True
@@ -169,20 +171,82 @@ class TaskRunner:
 
 
 class AuditCollector:
-    """Structured audit events with SSE streaming."""
+    """Structured audit events — SQLite-backed with SSE streaming."""
 
-    def __init__(self, max_events: int = 2000) -> None:
-        self._events: list[dict] = []
-        self._max = max_events
+    _AUDIT_DB = os.path.join(os.path.dirname(__file__), "data", "audit.db")
+
+    def __init__(self, max_memory: int = 500) -> None:
+        self._events: list[dict] = []  # in-memory recent cache for SSE replay
+        self._max_memory = max_memory
         self._subscribers: list[asyncio.Queue] = []
-        self._counter = 0
+        self._lock = threading.Lock()
+        os.makedirs(os.path.dirname(self._AUDIT_DB), exist_ok=True)
+        self._init_db()
+        self._load_recent()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._AUDIT_DB, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    def _init_db(self):
+        with self._lock:
+            conn = self._get_conn()
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL,
+                    source TEXT NOT NULL DEFAULT '',
+                    type TEXT NOT NULL DEFAULT '',
+                    detail TEXT DEFAULT '',
+                    data TEXT DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(ts);
+                CREATE INDEX IF NOT EXISTS idx_audit_source ON audit_events(source);
+                CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(type);
+            """)
+            conn.close()
+
+    def _load_recent(self):
+        """Load recent events into memory for SSE replay."""
+        with self._lock:
+            conn = self._get_conn()
+            rows = conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT ?", (self._max_memory,)).fetchall()
+            conn.close()
+        self._events = [self._row_to_dict(r) for r in reversed(rows)]
+
+    def _row_to_dict(self, row) -> dict:
+        return {
+            "id": row["id"], "ts": row["ts"], "source": row["source"],
+            "type": row["type"], "detail": row["detail"],
+            "data": json.loads(row["data"] or "{}"),
+        }
 
     def emit(self, source: str, event_type: str, data: dict | None = None, detail: str = "") -> None:
-        self._counter += 1
-        evt = {"id": self._counter, "ts": time.time(), "source": source, "type": event_type, "detail": detail, "data": data or {}}
+        ts = time.time()
+        data_json = json.dumps(data or {}, default=str)
+
+        # Write to SQLite
+        with self._lock:
+            conn = self._get_conn()
+            cursor = conn.execute(
+                "INSERT INTO audit_events (ts, source, type, detail, data) VALUES (?, ?, ?, ?, ?)",
+                (ts, source, event_type, detail, data_json)
+            )
+            evt_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+        evt = {"id": evt_id, "ts": ts, "source": source, "type": event_type, "detail": detail, "data": data or {}}
+
+        # Update in-memory cache
         self._events.append(evt)
-        if len(self._events) > self._max:
-            self._events = self._events[-self._max:]
+        if len(self._events) > self._max_memory:
+            self._events = self._events[-self._max_memory:]
+
+        # Push to SSE subscribers
         for q in self._subscribers:
             try: q.put_nowait(evt)
             except asyncio.QueueFull: pass
@@ -196,13 +260,74 @@ class AuditCollector:
         self._subscribers = [s for s in self._subscribers if s is not q]
 
     def get_recent(self, limit: int = 100, source: str | None = None) -> list[dict]:
-        events = self._events
-        if source: events = [e for e in events if e["source"] == source]
-        return events[-limit:]
+        """Get recent events. Uses DB for large queries, memory for small ones."""
+        if limit <= self._max_memory and not source:
+            return self._events[-limit:]
+        with self._lock:
+            conn = self._get_conn()
+            if source:
+                rows = conn.execute("SELECT * FROM audit_events WHERE source = ? ORDER BY id DESC LIMIT ?", (source, limit)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            conn.close()
+        return [self._row_to_dict(r) for r in reversed(rows)]
+
+    def query(self, source: str = "", event_type: str = "", since_ts: float = 0, limit: int = 200) -> list[dict]:
+        """Query events with filters — uses SQLite indexes."""
+        conditions = []
+        params: list = []
+        if source:
+            conditions.append("source = ?")
+            params.append(source)
+        if event_type:
+            conditions.append("type LIKE ?")
+            params.append(f"%{event_type}%")
+        if since_ts > 0:
+            conditions.append("ts >= ?")
+            params.append(since_ts)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+        with self._lock:
+            conn = self._get_conn()
+            rows = conn.execute(f"SELECT * FROM audit_events {where} ORDER BY id DESC LIMIT ?", params).fetchall()
+            conn.close()
+        return [self._row_to_dict(r) for r in reversed(rows)]
 
     def clear(self) -> None:
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute("DELETE FROM audit_events")
+            conn.commit()
+            conn.close()
         self._events.clear()
-        self._counter = 0
+
+    def count(self, since_ts: float = 0) -> int:
+        with self._lock:
+            conn = self._get_conn()
+            if since_ts > 0:
+                row = conn.execute("SELECT COUNT(*) as c FROM audit_events WHERE ts >= ?", (since_ts,)).fetchone()
+            else:
+                row = conn.execute("SELECT COUNT(*) as c FROM audit_events").fetchone()
+            conn.close()
+        return row["c"] if row else 0
+
+    def top_tools(self, limit: int = 10) -> list[dict]:
+        """Most-called tools — uses in-memory cache for speed."""
+        counts: dict[str, int] = {}
+        for e in self._events:
+            tool = e["data"].get("tool") or e["data"].get("tool_name")
+            if tool and any(t in e["type"] for t in ("tool_dispatch", "tool_called", "tool.called", "tool_result", "tool_succeeded", "tool.succeeded")):
+                counts[tool] = counts.get(tool, 0) + 1
+        return [{"name": n, "count": c} for n, c in sorted(counts.items(), key=lambda x: -x[1])[:limit]]
+
+    def top_models(self, limit: int = 5) -> list[dict]:
+        """Most-used models — uses in-memory cache."""
+        counts: dict[str, int] = {}
+        for e in self._events:
+            model = e["data"].get("model")
+            if model and any(t in e["type"] for t in ("response", "llm.response", "call_start", "llm.called")):
+                counts[model] = counts.get(model, 0) + 1
+        return [{"name": n, "count": c} for n, c in sorted(counts.items(), key=lambda x: -x[1])[:limit]]
 
 
 # Singletons

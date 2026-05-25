@@ -19,3 +19,8 @@ Thumbs.db
 *.md
 !README.md
 data/
+
+# Test output files
+test_graph.py
+test_graph_output*.txt
+Modelfile.*

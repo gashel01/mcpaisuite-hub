@@ -16,11 +16,11 @@ export const MODE_META: Record<DemoMode, { label: string; color: string; descrip
 
 /** Which nav pages are visible in each mode */
 export const MODE_PAGES: Record<DemoMode, string[]> = {
-  kernel:    ["/chat", "/agents", "/memory", "/knowledge", "/planning", "/sandbox", "/workspace", "/scheduler", "/audit", "/servers", "/constitution", "/cost", "/settings"],
-  memory:    ["/chat", "/memory", "/settings"],
+  kernel:    ["/chat", "/agents", "/knowledge", "/workspace", "/scheduler", "/observability", "/security", "/settings"],
+  memory:    ["/chat", "/knowledge", "/settings"],
   rag:       ["/chat", "/knowledge", "/settings"],
-  planning:  ["/chat", "/planning", "/settings"],
-  sandbox:   ["/chat", "/sandbox", "/settings"],
+  planning:  ["/chat", "/settings"],
+  sandbox:   ["/chat", "/settings"],
   workspace: ["/chat", "/workspace", "/settings"],
   scheduler: ["/chat", "/scheduler", "/settings"],
 };

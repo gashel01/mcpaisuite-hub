@@ -36,15 +36,15 @@ export default function ChatInput({ input, setInput, loading, execMode, setExecM
   };
 
   return (
-    <div className="shrink-0 px-4 pb-3 pt-2 border-t border-slate-800/40">
-      <div className="max-w-3xl mx-auto bg-slate-800/60 border border-slate-700/60 rounded-2xl px-3 py-2 backdrop-blur-sm">
+    <div className="shrink-0 px-4 pb-3 pt-2 border-t border-white/[0.04]">
+      <div className="max-w-3xl mx-auto bg-white/[0.03] border border-white/[0.06] rounded-2xl px-3 py-2 backdrop-blur-sm">
         <div className="flex items-end gap-2">
           <input type="file" ref={fileInputRef} onChange={onFileSelect} accept=".pdf,.docx,.txt,.md,.html,.csv,.json" className="hidden" />
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={loading || !!uploading}
             className="text-slate-500 hover:text-violet-400 disabled:opacity-40 p-1.5 mb-0.5 transition-colors"
-            title="Attach file"
+            data-tooltip="Attach file"
           >
             <Paperclip className="h-5 w-5" />
           </button>
@@ -61,7 +61,7 @@ export default function ChatInput({ input, setInput, loading, execMode, setExecM
           />
 
           {loading ? (
-            <button onClick={onStop} className="bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white rounded-xl p-2 mb-0.5 transition-all" title="Stop">
+            <button onClick={onStop} className="bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white rounded-xl p-2 mb-0.5 transition-all" data-tooltip="Stop">
               <Square className="h-4 w-4" />
             </button>
           ) : (
@@ -71,7 +71,7 @@ export default function ChatInput({ input, setInput, loading, execMode, setExecM
           )}
         </div>
         <div className="flex items-center justify-between mt-1.5 px-0.5">
-          <div className="flex items-center bg-slate-900/60 rounded-lg overflow-hidden border border-slate-700/40">
+          <div className="flex items-center bg-white/[0.02] rounded-lg overflow-hidden border border-white/[0.04]">
             {(["react", "ltp", "hybrid"] as const).map(m => (
               <button
                 key={m}

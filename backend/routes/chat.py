@@ -50,6 +50,10 @@ async def execute_task(task: Task, k) -> None:
         "answer": task.summary[:150] if task.summary else "",
     })
 
+    # Persist task to disk
+    from task_store import save_task as _persist_task
+    _persist_task(task)
+
     if task.status == TaskStatus.completed:
         k._stats.tasks_completed += 1
     else:
@@ -80,10 +84,10 @@ async def list_tasks(x_tenant_id: str = Header(default="")):
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str, x_tenant_id: str = Header(default="")):
     k = _require()
-    task = await k.get_task(task_id, namespace=ns(x_tenant_id))
+    task = k._tasks.get(task_id)  # Direct lookup (tasks may have sub-namespaces)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return {"id": task.id, "goal": task.goal, "status": task.status.value, "turns": flatten_turns(task), "total_tokens": task.total_tokens, "total_cost": task.total_cost, "total_turns": task.total_turns, "namespace": task.namespace}
+    return {"id": task.id, "goal": task.goal, "status": task.status.value, "turns": flatten_turns(task), "total_tokens": task.total_tokens, "total_cost": task.total_cost, "total_turns": task.total_turns, "namespace": task.namespace, "metadata": task.metadata.get("result", {})}
 
 
 @router.delete("/tasks/{task_id}")
@@ -94,6 +98,45 @@ async def cancel_task(task_id: str, x_tenant_id: str = Header(default="")):
         raise HTTPException(status_code=404, detail="Task not found")
     task_runner.cancel(task_id)
     return {"id": task_id, "status": "cancelled"}
+
+
+@router.post("/tasks/{task_id}/pause")
+async def pause_task(task_id: str, x_tenant_id: str = Header(default="")):
+    """Pause a running task after its current turn completes."""
+    k = _require()
+    task = await k.pause_task(task_id, namespace=ns(x_tenant_id))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"id": task_id, "status": task.status.value}
+
+
+@router.post("/tasks/{task_id}/resume")
+async def resume_task(task_id: str, body: dict = {}, x_tenant_id: str = Header(default="")):
+    """Resume a paused task. Optionally pass modified_output to inject before continuing."""
+    k = _require()
+    modified_output = body.get("modified_output")
+    task = await k.resume_task(task_id, modified_output=modified_output, namespace=ns(x_tenant_id))
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"id": task_id, "status": task.status.value, "modified": modified_output is not None}
+
+
+@router.post("/tasks/{task_id}/human-gate/{node_id}/approve")
+async def approve_human_gate(task_id: str, node_id: str, body: dict = {}, x_tenant_id: str = Header(default="")):
+    """Respond to a human gate: approve, deny, or feedback."""
+    from routes.api import _active_executors
+    executor = _active_executors.get(task_id)
+    if not executor:
+        raise HTTPException(status_code=404, detail="No active executor for this task")
+    action = body.get("action", "approve")  # "approve", "deny", "feedback"
+    modified = body.get("modified_output")
+    executor.resume_human_gate(node_id, action=action, modified_output=modified)
+    k = _require()
+    task = k._tasks.get(task_id)
+    if task:
+        from kernelmcp.core.models import TaskStatus
+        task.status = TaskStatus.running
+    return {"action": action, "node_id": node_id, "modified": modified is not None}
 
 
 @router.get("/tasks/{task_id}/turns")
@@ -141,6 +184,10 @@ async def chat(body: ChatMessageIn, x_tenant_id: str = Header(default="")):
     task = Task(goal=goal, namespace=chat_ns)
     task.metadata["conversation_id"] = conv_id
     task.metadata["original_message"] = body.message
+    # Pass budget caps from settings
+    from config import settings
+    task.metadata["max_cost"] = float(settings.get("max_cost", 1.0))
+    task.metadata["max_tokens"] = int(settings.get("max_tokens", 50000))
     k._tasks[task.id] = task
     await task_runner.submit(task.id, lambda: _chat_execute(task, k, chat_ns, conv_id))
     return {"task_id": task.id, "conversation_id": conv_id}
@@ -166,6 +213,7 @@ async def _chat_execute(task, k, chat_ns, conv_id):
             turns=flatten_turns(task),
             tokens=task.total_tokens,
             cost=task.total_cost,
+            bootstrap_sources=task.metadata.get("bootstrap_sources", []),
         )
         audit_collector.emit("chat", "answer_stored", {
             "conv_id": conv_id, "task_id": task.id, "namespace": chat_ns,
@@ -239,7 +287,20 @@ async def stream_task(conversation_id: str, task_id: str, x_tenant_id: str = Hea
 
 @router.get("/chat/{conversation_id}")
 async def get_conversation(conversation_id: str, x_tenant_id: str = Header(default="")):
-    return {"messages": conversations.get_messages(ns(x_tenant_id), conversation_id)}
+    k = _require()
+    chat_ns = ns(x_tenant_id)
+    msgs = conversations.get_messages(chat_ns, conversation_id)
+
+    # Check if there's a running task for this conversation
+    running_task_id = None
+    for tid, task in k._tasks.items():
+        if (task.metadata.get("conversation_id") == conversation_id
+                and task.namespace == chat_ns
+                and task.status.value == "running"):
+            running_task_id = tid
+            break
+
+    return {"messages": msgs, "running_task_id": running_task_id}
 
 
 @router.delete("/chat/{conversation_id}")

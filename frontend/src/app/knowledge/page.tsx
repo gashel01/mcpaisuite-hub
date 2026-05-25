@@ -2,788 +2,759 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { Database, Upload, Search, FileText, Loader2, CheckCircle2, AlertCircle, Trash2, RefreshCw, Hash, HardDrive, Network, ChevronDown, ChevronRight, X, Zap, Brain, FlaskConical, BarChart3 } from "lucide-react";
+import {
+  Upload, Brain, Network, Sparkles, Loader2, MessageSquare,
+  PanelRightOpen, PanelRightClose, Activity, FileText, Lightbulb,
+} from "lucide-react";
+import Link from "next/link";
 import { useTenant, tenantHeaders } from "@/context/tenant";
+import { BASE_URL } from "@/types";
+import type { SearchMode, GraphMode, SideTab, UnifiedNode, GraphData, GraphNode, GraphLink } from "./types";
+import { getTypeColor } from "./types";
+import { useKnowledgeData, useSearch, useUpload, useChunks } from "./hooks";
+import { TopLeftHUD, TopRightHUD, FocusModeIndicator, GraphBuildProgress, NodeDetail, SearchResults, FactPanel, DocumentPanel, IngestionStepper, AddFactDialog, GapDetector, CoverageHeatmap } from "./components";
 
 const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), { ssr: false });
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
-
-type SearchMode = "basic" | "self_rag" | "react";
-
-interface SearchResult {
-  content: string;
-  score: number;
-  metadata: Record<string, unknown>;
-}
-
-interface UploadEntry {
-  name: string;
-  size: number;
-  status: "uploading" | "done" | "error";
-  error?: string;
-}
-
-interface SourceInfo {
-  source: string;
-  chunks?: number;
-  chunk_count?: number;
-}
-
-interface RAGStats {
-  available: boolean;
-  embedder?: string;
-  vectorstore?: string;
-  embedding_model?: string;
-  total_chunks?: number;
-  sources?: string[];
-  source_stats?: SourceInfo[];
-  graph_available?: boolean;
-}
-
-interface ChunkInfo {
-  id: string;
-  content: string;
-  source: string;
-}
+const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
 
 export default function KnowledgePage() {
   const { tenant } = useTenant();
   const hdr = useMemo(() => tenantHeaders(tenant), [tenant]);
+
+  // ── Data hooks ────────────────────────────────────────────────────────
+
+  const data = useKnowledgeData(hdr);
+  const searchHook = useSearch(hdr);
+  const uploadHook = useUpload(hdr, () => { data.loadStats(); data.loadAllFacts(); data.checkGraphStatus(); });
+  const chunksHook = useChunks(hdr);
+
+  // ── UI state ──────────────────────────────────────────────────────────
+
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchMode, setSearchMode] = useState<SearchMode>("basic");
-  const [selfRagResult, setSelfRagResult] = useState<{ answer: string; iterations: number; support_score: number; completeness_score: number; chunks_used: number } | null>(null);
-  const [reactResult, setReactResult] = useState<{ answer: string; steps: { action: string; input: string; observation: string }[]; total_searches: number } | null>(null);
-  const [uploads, setUploads] = useState<UploadEntry[]>([]);
+  const [searchScope, setSearchScope] = useState<SearchMode>("all");
+  const [showSearchResults, setShowSearchResults] = useState(false);
+
+  const [graphMode, setGraphMode] = useState<GraphMode>("2d");
+  const [graphSearch, setGraphSearch] = useState("");
+  const [graphFilter, setGraphFilter] = useState<string | null>(null);
+  const [showFacts, setShowFacts] = useState(true);
+  const [showDocs, setShowDocs] = useState(true);
+  const [showEntities, setShowEntities] = useState(true);
+
+  const [selectedNode, setSelectedNode] = useState<UnifiedNode | null>(null);
+  const [focusedNode, setFocusedNode] = useState<string | null>(null);
+  const [focusDepth, setFocusDepth] = useState(1);
+  const [hoveredNode, setHoveredNode] = useState<any>(null);
+
+  // Brain editor state
+  const [showAddFact, setShowAddFact] = useState(false);
+  const [coverageEnabled, setCoverageEnabled] = useState(false);
+
+  const [sideTab, setSideTab] = useState<SideTab>("activity");
+  const [sideOpen, setSideOpen] = useState(true);
+
   const [dragOver, setDragOver] = useState(false);
-  const [stats, setStats] = useState<RAGStats | null>(null);
-  const [sources, setSources] = useState<SourceInfo[]>([]);
-  const [chunks, setChunks] = useState<ChunkInfo[]>([]);
-  const [chunksTotal, setChunksTotal] = useState(0);
-  const [showChunks, setShowChunks] = useState(false);
-  const [chunkSource, setChunkSource] = useState("");
-  const [activeTab, setActiveTab] = useState<"search" | "sources" | "chunks" | "graph" | "eval">("search");
-  const [evalRunning, setEvalRunning] = useState(false);
-  const [evalResults, setEvalResults] = useState<{ context_relevancy: number; context_precision: number; answer_relevancy: number; faithfulness: number; answer_correctness: number; samples: number } | null>(null);
-  const [evalQuery, setEvalQuery] = useState("");
-  const [evalAnswer, setEvalAnswer] = useState("");
-  const [graphNodes, setGraphNodes] = useState<{ id: string; name: string; type: string }[]>([]);
-  const [graphEdges, setGraphEdges] = useState<{ source: string; target: string; type: string }[]>([]);
-  const [graphExtracting, setGraphExtracting] = useState(false);
-  const [graphQuery, setGraphQuery] = useState("");
-  const [graphQueryResults, setGraphQueryResults] = useState<{ entities: { id: string; name: string; type: string }[]; relations: { source: string; target: string; type: string }[] } | null>(null);
+
   const fileRef = useRef<HTMLInputElement>(null);
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const graphRef = useRef<any>(null);
+  const [graphDim, setGraphDim] = useState({ width: 800, height: 600 });
 
-  // Load stats + sources — stable: only re-runs when tenant changes
-  const tenantRef = useRef(tenant);
-  tenantRef.current = tenant;
+  // ── Init ──────────────────────────────────────────────────────────────
 
-  const loadAll = useCallback(async () => {
-    try {
-      const [statsR, sourcesR] = await Promise.all([
-        fetch(`${BASE_URL}/rag/stats`).then(r => r.json()).catch(() => null),
-        fetch(`${BASE_URL}/rag/sources`).then(r => r.json()).catch(() => ({ sources: [] })),
-      ]);
-      if (statsR) setStats(statsR);
-      setSources(sourcesR.sources || []);
-    } catch (_e) { }
-  }, []);
-
-  useEffect(() => { loadAll(); }, [loadAll]);
-
-  const uploadFile = useCallback(async (file: File) => {
-    const entry: UploadEntry = { name: file.name, size: file.size, status: "uploading" };
-    setUploads(prev => [entry, ...prev]);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(`${BASE_URL}/rag/upload`, { method: "POST", body: form, headers: hdr });
-      if (!res.ok) throw new Error(await res.text());
-      setUploads(prev => prev.map(u => u.name === file.name ? { ...u, status: "done" } : u));
-      loadAll();
-    } catch (err) {
-      const errStr = String(err);
-      let msg = errStr;
-      if (errStr.includes("dimension error") || errStr.includes("expected dim")) {
-        msg = "Vector dimension mismatch - change the embedding model in Settings or recreate the Qdrant collection.";
-      }
-      setUploads(prev => prev.map(u => u.name === file.name ? { ...u, status: "error", error: msg } : u));
-    }
-  }, [loadAll]);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault(); setDragOver(false);
-    Array.from(e.dataTransfer.files).forEach(uploadFile);
-  }, [uploadFile]);
-
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    Array.from(e.target.files || []).forEach(uploadFile);
-    if (fileRef.current) fileRef.current.value = "";
-  }, [uploadFile]);
-
-  const searchDocs = async () => {
-    if (!query.trim() || searching) return;
-    setSearching(true);
-    setSelfRagResult(null);
-    setReactResult(null);
-    try {
-      const res = await fetch(`${BASE_URL}/rag/search/advanced`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...hdr },
-        body: JSON.stringify({ query, top_k: 10, mode: searchMode }),
-      });
-      const data = await res.json();
-      if (searchMode === "self_rag" && data.output) {
-        const out = typeof data.output === "string" ? JSON.parse(data.output) : data.output;
-        setSelfRagResult(out);
-        setResults([]);
-      } else if (searchMode === "react" && data.output) {
-        const out = typeof data.output === "string" ? JSON.parse(data.output) : data.output;
-        setReactResult(out);
-        setResults([]);
-      } else if (data.output) {
-        const out = typeof data.output === "string" ? JSON.parse(data.output) : data.output;
-        setResults(Array.isArray(out) ? out : data.results || []);
-      } else {
-        setResults(data.results || []);
-      }
-    } catch (_e) { setResults([]); }
-    setSearching(false);
-  };
-
-  const runEval = async () => {
-    if (evalRunning) return;
-    setEvalRunning(true);
-    try {
-      const samples = evalQuery.trim()
-        ? [{ query: evalQuery, answer: evalAnswer }]
-        : [{ query: "What is this about?", answer: "" }];
-      const res = await fetch(`${BASE_URL}/rag/eval`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...hdr },
-        body: JSON.stringify({ samples, top_k: 5 }),
-      });
-      const data = await res.json();
-      const out = data.output ? (typeof data.output === "string" ? JSON.parse(data.output) : data.output) : data;
-      setEvalResults(out);
-    } catch (_e) { setEvalResults(null); }
-    setEvalRunning(false);
-  };
-
-  const deleteSource = async (source: string) => {
-    try {
-      await fetch(`${BASE_URL}/rag/source?source=${encodeURIComponent(source)}`, { method: "DELETE", headers: hdr });
-      setSources(prev => prev.filter(s => s.source !== source));
-      loadAll();
-    } catch (_e) { }
-  };
-
-  const loadChunks = async (source?: string) => {
-    try {
-      const q = source ? `?source=${encodeURIComponent(source)}&limit=50` : "?limit=50";
-      const res = await fetch(`${BASE_URL}/rag/chunks${q}`, { headers: hdr });
-      const data = await res.json();
-      setChunks(data.chunks || []);
-      setChunksTotal(data.total || 0);
-      setChunkSource(source || "");
-      setShowChunks(true);
-      setActiveTab("chunks");
-    } catch (_e) { }
-  };
-
-  const loadGraph = async () => {
-    try {
-      const res = await fetch(`${BASE_URL}/rag/graph/data`, { headers: hdr });
-      const data = await res.json();
-      setGraphNodes(data.nodes || []);
-      setGraphEdges(data.edges || []);
-    } catch (_e) { }
-  };
-
-  const extractGraph = async () => {
-    setGraphExtracting(true);
-    try {
-      const res = await fetch(`${BASE_URL}/rag/graph/extract-all`, { method: "POST", headers: hdr });
-      if (res.ok) await loadGraph();
-    } catch (_e) { }
-    setGraphExtracting(false);
-  };
-
-  const queryGraph = async () => {
-    if (!graphQuery.trim()) return;
-    try {
-      const res = await fetch(`${BASE_URL}/rag/graph/query`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...hdr },
-        body: JSON.stringify({ query: graphQuery, depth: 2 }),
-      });
-      if (res.ok) setGraphQueryResults(await res.json());
-    } catch (_e) { }
-  };
-
-  const clearGraph = async () => {
-    try {
-      await fetch(`${BASE_URL}/rag/graph/clear`, { method: "DELETE", headers: hdr });
-      setGraphNodes([]);
-      setGraphEdges([]);
-      setGraphQueryResults(null);
-    } catch (_e) { }
-  };
-
-  const totalChunks = stats?.total_chunks ?? sources.reduce((sum, s) => sum + (s.chunks || s.chunk_count || 0), 0);
-
-  return (
-    <div className="mx-auto max-w-4xl space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-xl bg-violet-600/20 flex items-center justify-center">
-            <Database className="h-5 w-5 text-violet-400" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold text-slate-100">Knowledge Base</h1>
-            <p className="text-xs text-slate-500">
-              {stats?.available
-                ? `${stats.embedding_model || stats.embedder} · ${stats.vectorstore}`
-                : "RAG not connected"}
-            </p>
-          </div>
-        </div>
-        <button onClick={loadAll} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg text-xs border border-slate-700/60 transition-colors">
-          <RefreshCw className="h-3.5 w-3.5" /> Refresh
-        </button>
-      </div>
-
-      {/* Stats cards */}
-      {stats?.available && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard icon={Hash} label="Chunks" value={totalChunks != null ? String(totalChunks) : "--"} color="text-violet-400" />
-          <StatCard icon={HardDrive} label="Sources" value={String(sources.length)} color="text-green-400" />
-          <StatCard icon={Database} label="Embedder" value={stats.embedding_model?.split("/").pop() || stats.embedder || "--"} color="text-blue-400" />
-          <StatCard icon={Network} label="Graph" value={graphNodes.length > 0 ? `${graphNodes.length} entities` : "Not built"} color={graphNodes.length > 0 ? "text-amber-400" : "text-slate-600"} />
-        </div>
-      )}
-
-      {/* Infrastructure badges */}
-      {stats?.available && (
-        <div className="flex flex-wrap items-center gap-3 px-1">
-          <BackendBadge label="Vectorstore" active={stats.vectorstore?.replace("Store", "") || ""} options={["Qdrant", "Chroma", "PgVector", "Milvus", "Memory"]} />
-          <BackendBadge label="Embedder" active={stats.embedder?.replace("Embedder", "") || ""} options={["FastEmbed", "LiteLLM", "Ollama", "SentenceTransformers"]} />
-          <BackendBadge label="Graph" active={graphNodes.length > 0 ? "NetworkX" : ""} options={["NetworkX", "Neo4j"]} />
-          <BackendBadge label="Cache" active="" options={["Memory", "Redis"]} />
-          <BackendBadge label="Reranker" active="" options={["CrossEncoder", "Cohere", "Feedback"]} />
-        </div>
-      )}
-
-      {/* Drop zone */}
-      <div
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => fileRef.current?.click()}
-        className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${dragOver ? "border-violet-500 bg-violet-950/30" : "border-slate-700/50 hover:border-violet-700 hover:bg-slate-800/30"}`}
-      >
-        <Upload className={`h-6 w-6 mx-auto mb-2 ${dragOver ? "text-violet-400" : "text-slate-600"}`} />
-        <p className="text-sm text-slate-400">Drop files or <span className="text-violet-400 underline">browse</span></p>
-        <p className="text-[11px] text-slate-600 mt-0.5">PDF, DOCX, TXT, MD, HTML, CSV, JSON</p>
-        <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.txt,.md,.html,.csv,.json" onChange={handleFileSelect} className="hidden" />
-      </div>
-
-      {/* Upload history */}
-      {uploads.length > 0 && (
-        <div className="space-y-1.5">
-          {uploads.map((u, i) => (
-            <div key={i}>
-              <div className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/50 rounded-lg px-3 py-2">
-                <FileText className="h-4 w-4 text-slate-500 shrink-0" />
-                <span className="text-xs text-slate-300 flex-1 truncate">{u.name}</span>
-                <span className="text-[10px] text-slate-600">{(u.size / 1024).toFixed(0)} KB</span>
-                {u.status === "uploading" && <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />}
-                {u.status === "done" && <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />}
-                {u.status === "error" && <AlertCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />}
-              </div>
-              {u.status === "error" && u.error && (
-                <p className="text-[11px] text-red-400/80 px-3 pt-1">{u.error}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-700/50">
-        {(["search", "sources", "chunks", "graph", "eval"] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => {
-              setActiveTab(tab);
-              if (tab === "chunks" && chunks.length === 0) loadChunks();
-              if (tab === "graph" && graphNodes.length === 0) loadGraph();
-            }}
-            className={`px-4 py-2 text-xs font-medium capitalize transition-colors border-b-2 -mb-px ${activeTab === tab ? "border-violet-500 text-violet-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Search tab ──────────────────────────────────────────────────── */}
-      {activeTab === "search" && (
-        <div className="space-y-4">
-          {/* Search mode toggle */}
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-500 uppercase tracking-wide">Mode:</span>
-            {([
-              { id: "basic" as SearchMode, label: "Basic", icon: Search, desc: "Vector similarity" },
-              { id: "self_rag" as SearchMode, label: "Self-RAG", icon: Brain, desc: "Auto-critique + re-retrieve" },
-              { id: "react" as SearchMode, label: "ReAct", icon: Zap, desc: "Multi-step reasoning" },
-            ]).map(m => (
-              <button
-                key={m.id}
-                onClick={() => setSearchMode(m.id)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  searchMode === m.id
-                    ? "bg-violet-600/20 text-violet-300 border border-violet-600/40"
-                    : "bg-slate-800/40 text-slate-500 border border-slate-700/30 hover:text-slate-300"
-                }`}
-                title={m.desc}
-              >
-                <m.icon className="h-3.5 w-3.5" />
-                {m.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              value={query} onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && searchDocs()}
-              placeholder={searchMode === "react" ? "Ask a complex question..." : searchMode === "self_rag" ? "Ask a factual question..." : "Search your documents..."}
-              className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-violet-500/50"
-            />
-            <button onClick={searchDocs} disabled={searching || !query.trim()} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl px-4 py-2.5 transition-colors">
-              {searching ? <Loader2 className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5" />}
-            </button>
-          </div>
-
-          {/* Self-RAG result */}
-          {selfRagResult && (
-            <div className="bg-emerald-950/30 border border-emerald-700/40 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Brain className="h-4 w-4 text-emerald-400" />
-                <span className="text-xs font-medium text-emerald-300">Self-RAG Answer</span>
-                <span className="text-[10px] text-slate-500 ml-auto">{selfRagResult.iterations} iteration(s) · {selfRagResult.chunks_used} chunks</span>
-              </div>
-              <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{selfRagResult.answer}</p>
-              <div className="flex gap-4">
-                <div className="text-[10px]">
-                  <span className="text-slate-500">Support: </span>
-                  <span className={selfRagResult.support_score >= 7 ? "text-green-400" : selfRagResult.support_score >= 4 ? "text-amber-400" : "text-red-400"}>
-                    {selfRagResult.support_score}/10
-                  </span>
-                </div>
-                <div className="text-[10px]">
-                  <span className="text-slate-500">Completeness: </span>
-                  <span className={selfRagResult.completeness_score >= 7 ? "text-green-400" : selfRagResult.completeness_score >= 4 ? "text-amber-400" : "text-red-400"}>
-                    {selfRagResult.completeness_score}/10
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ReAct result */}
-          {reactResult && (
-            <div className="bg-amber-950/30 border border-amber-700/40 rounded-xl p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Zap className="h-4 w-4 text-amber-400" />
-                <span className="text-xs font-medium text-amber-300">ReAct Answer</span>
-                <span className="text-[10px] text-slate-500 ml-auto">{reactResult.total_searches} searches · {reactResult.steps.length} steps</span>
-              </div>
-              <p className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{reactResult.answer}</p>
-              <details className="text-[11px]">
-                <summary className="text-slate-500 cursor-pointer hover:text-slate-300">Reasoning steps</summary>
-                <div className="mt-2 space-y-1.5 pl-2 border-l border-slate-700/50">
-                  {reactResult.steps.map((s, i) => (
-                    <div key={i}>
-                      <span className="text-violet-400">{s.action}</span>
-                      <span className="text-slate-500"> → </span>
-                      <span className="text-slate-400">{s.input}</span>
-                      {s.observation && <p className="text-slate-600 pl-4 truncate">{s.observation}</p>}
-                    </div>
-                  ))}
-                </div>
-              </details>
-            </div>
-          )}
-
-          {/* Basic results */}
-          {results.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-[11px] text-slate-500">{results.length} results</p>
-              {results.map((r, i) => (
-                <div key={i} className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <span className="text-[11px] text-slate-500 font-mono truncate">
-                      {r.metadata?.source ? String(r.metadata.source).split(/[/\\]/).pop() : `Result ${i + 1}`}
-                    </span>
-                    {r.score > 0 && (
-                      <span className="text-[10px] bg-violet-500/20 text-violet-400 px-1.5 py-0.5 rounded shrink-0">
-                        {(r.score * 100).toFixed(0)}%
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{r.content}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          {results.length === 0 && !selfRagResult && !reactResult && query && !searching && (
-            <p className="text-sm text-slate-600 text-center py-8">No results found</p>
-          )}
-        </div>
-      )}
-
-      {/* ── Sources tab ─────────────────────────────────────────────────── */}
-      {activeTab === "sources" && (
-        <div className="space-y-2">
-          {sources.length === 0 ? (
-            <p className="text-sm text-slate-600 text-center py-8">No sources ingested yet</p>
-          ) : (
-            sources.map((s, i) => {
-              const name = (s.source || "").split(/[/\\]/).pop() || s.source;
-              const chunkCount = s.chunks || s.chunk_count || 0;
-              return (
-                <div key={i} className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/50 rounded-xl px-4 py-3 group">
-                  <FileText className="h-4 w-4 text-violet-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-slate-200 truncate">{name}</p>
-                    <p className="text-[10px] text-slate-500 truncate">{s.source}</p>
-                  </div>
-                  {chunkCount > 0 && (
-                    <button onClick={() => loadChunks(s.source)} className="text-[10px] bg-slate-700/60 text-slate-400 hover:text-violet-400 px-2 py-0.5 rounded transition-colors">
-                      {chunkCount} chunks
-                    </button>
-                  )}
-                  <button
-                    onClick={() => deleteSource(s.source)}
-                    className="opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 p-1 transition-all"
-                    title="Delete source"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
-      )}
-
-      {/* ── Chunks tab ──────────────────────────────────────────────────── */}
-      {activeTab === "chunks" && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">
-              {chunkSource ? `Chunks from: ${chunkSource.split(/[/\\]/).pop()}` : "All chunks"}
-              {chunksTotal > 0 && ` (${chunksTotal} total)`}
-            </p>
-            {chunkSource && (
-              <button onClick={() => loadChunks()} className="text-[10px] text-violet-400 hover:text-violet-300 transition-colors">
-                Show all
-              </button>
-            )}
-          </div>
-          {chunks.length === 0 ? (
-            <p className="text-sm text-slate-600 text-center py-8">No chunks found</p>
-          ) : (
-            chunks.map((c, i) => (
-              <div key={i} className="bg-slate-800/40 border border-slate-700/50 rounded-lg px-4 py-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[10px] text-slate-600 font-mono">{c.id?.slice(0, 12)}...</span>
-                  <span className="text-[10px] text-slate-500">{c.source?.split(/[/\\]/).pop()}</span>
-                </div>
-                <p className="text-xs text-slate-400 whitespace-pre-wrap leading-relaxed break-all overflow-hidden">{c.content}</p>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* ── Eval tab ────────────────────────────────────────────────────── */}
-      {activeTab === "eval" && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 mb-2">
-            <FlaskConical className="h-4 w-4 text-violet-400" />
-            <span className="text-sm font-medium text-slate-200">RAG Evaluation (RAGAS)</span>
-          </div>
-          <p className="text-xs text-slate-500">Evaluate retrieval quality with RAGAS metrics. Provide a test query and expected answer, or run with defaults.</p>
-
-          <div className="space-y-2">
-            <input
-              value={evalQuery} onChange={e => setEvalQuery(e.target.value)}
-              placeholder="Test query (e.g. 'What is the refund policy?')"
-              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-violet-500/50"
-            />
-            <input
-              value={evalAnswer} onChange={e => setEvalAnswer(e.target.value)}
-              placeholder="Expected answer (optional)"
-              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-violet-500/50"
-            />
-            <button
-              onClick={runEval} disabled={evalRunning}
-              className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-medium transition-colors"
-            >
-              {evalRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BarChart3 className="h-3.5 w-3.5" />}
-              {evalRunning ? "Evaluating..." : "Run Evaluation"}
-            </button>
-          </div>
-
-          {evalResults && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
-              {[
-                { label: "Context Relevancy", value: evalResults.context_relevancy, color: "violet" },
-                { label: "Context Precision", value: evalResults.context_precision, color: "blue" },
-                { label: "Answer Relevancy", value: evalResults.answer_relevancy, color: "emerald" },
-                { label: "Faithfulness", value: evalResults.faithfulness, color: "amber" },
-                { label: "Answer Correctness", value: evalResults.answer_correctness, color: "rose" },
-              ].map(m => (
-                <div key={m.label} className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-3 text-center">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">{m.label}</p>
-                  <p className={`text-lg font-bold text-${m.color}-400`}>
-                    {(m.value * 100).toFixed(0)}%
-                  </p>
-                  <div className="mt-1.5 h-1.5 bg-slate-700/50 rounded-full overflow-hidden">
-                    <div className={`h-full bg-${m.color}-500 rounded-full transition-all`} style={{ width: `${m.value * 100}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {!evalResults && !evalRunning && (
-            <div className="text-center py-8">
-              <FlaskConical className="h-8 w-8 text-slate-700 mx-auto mb-3" />
-              <p className="text-sm text-slate-500">Run an evaluation to see retrieval quality metrics</p>
-              <p className="text-xs text-slate-600 mt-1">Measures context relevancy, precision, faithfulness, and answer correctness</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Graph tab ───────────────────────────────────────────────────── */}
-      {activeTab === "graph" && (
-        <GraphTab
-          nodes={graphNodes}
-          edges={graphEdges}
-          extracting={graphExtracting}
-          onExtract={extractGraph}
-          onClear={clearGraph}
-          graphQuery={graphQuery}
-          setGraphQuery={setGraphQuery}
-          onQueryGraph={queryGraph}
-          queryResults={graphQueryResults}
-        />
-      )}
-    </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value, color }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; color: string }) {
-  return (
-    <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl px-3 py-3">
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className={`h-3.5 w-3.5 ${color}`} />
-        <span className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</span>
-      </div>
-      <p className="text-sm font-semibold text-slate-200 truncate">{value}</p>
-    </div>
-  );
-}
-
-function BackendBadge({ label, active, options }: { label: string; active: string; options: string[] }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-[10px] text-slate-600 uppercase tracking-wide">{label}:</span>
-      <div className="flex gap-1">
-        {options.map(opt => {
-          const isActive = active.toLowerCase() === opt.toLowerCase();
-          return (
-            <span
-              key={opt}
-              className={`text-[10px] px-1.5 py-0.5 rounded ${
-                isActive
-                  ? "bg-violet-600/30 text-violet-300 border border-violet-700/40"
-                  : "bg-slate-800/30 text-slate-600 border border-slate-700/20"
-              }`}
-            >
-              {opt}
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Color palette for entity types ─────────────────────────────────────────
-
-const TYPE_COLORS: Record<string, string> = {
-  Person: "#8b5cf6",
-  Organization: "#3b82f6",
-  Location: "#10b981",
-  Event: "#f59e0b",
-  Technology: "#06b6d4",
-  Concept: "#a78bfa",
-  Product: "#ec4899",
-  Date: "#64748b",
-};
-
-function getTypeColor(type: string): string {
-  return TYPE_COLORS[type] || "#a78bfa";
-}
-
-// ── Graph tab component ────────────────────────────────────────────────────
-
-function GraphTab({
-  nodes, edges, extracting, onExtract, onClear,
-  graphQuery, setGraphQuery, onQueryGraph, queryResults,
-}: {
-  nodes: { id: string; name: string; type: string }[];
-  edges: { source: string; target: string; type: string }[];
-  extracting: boolean;
-  onExtract: () => void;
-  onClear: () => void;
-  graphQuery: string;
-  setGraphQuery: (v: string) => void;
-  onQueryGraph: () => void;
-  queryResults: { entities: { id: string; name: string; type: string }[]; relations: { source: string; target: string; type: string }[] } | null;
-}) {
-  const graphData = useMemo(() => ({
-    nodes: nodes.map(n => ({ ...n, color: getTypeColor(n.type), val: 1 })),
-    links: edges.map(e => ({ source: e.source, target: e.target, type: e.type })),
-  }), [nodes, edges]);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
+  useEffect(() => { data.loadAll(); }, []); // eslint-disable-line
 
   useEffect(() => {
-    const el = containerRef.current;
+    const el = graphContainerRef.current;
     if (!el) return;
     const obs = new ResizeObserver(entries => {
-      const { width } = entries[0].contentRect;
-      setDimensions({ width, height: Math.max(400, Math.min(600, width * 0.6)) });
+      const { width, height } = entries[0].contentRect;
+      if (width > 0 && height > 0) setGraphDim({ width: Math.floor(width), height: Math.floor(height) });
     });
     obs.observe(el);
     return () => obs.disconnect();
+  }, [sideOpen]);
+
+  // ── Search handler ────────────────────────────────────────────────────
+
+  const handleSearch = useCallback(() => {
+    if (!query.trim()) return;
+    setShowSearchResults(true);
+    searchHook.search(query, searchScope);
+  }, [query, searchScope, searchHook]);
+
+  // ── Drag & drop ───────────────────────────────────────────────────────
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    Array.from(e.dataTransfer.files).forEach(uploadHook.uploadFile);
+  }, [uploadHook]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    Array.from(e.target.files || []).forEach(uploadHook.uploadFile);
+    if (fileRef.current) fileRef.current.value = "";
+  }, [uploadHook]);
+
+  // ── Focus mode ────────────────────────────────────────────────────────
+
+  const handleNodeFocus = useCallback((node: any) => {
+    setFocusedNode(prev => prev === node.id ? null : node.id);
+    if (graphRef.current && node.x !== undefined) {
+      if (graphMode === "2d") {
+        graphRef.current.centerAt(node.x, node.y, 600);
+        graphRef.current.zoom(3, 600);
+      } else if (graphRef.current.cameraPosition) {
+        graphRef.current.cameraPosition({ x: node.x, y: node.y, z: 200 }, node, 600);
+      }
+    }
+  }, [graphMode]);
+
+  // ── Insights ──────────────────────────────────────────────────────────
+
+  const insights = useMemo(() => {
+    const msgs: string[] = [];
+    const { allFacts, entityNodes } = data;
+    if (allFacts.length > 0 && entityNodes.length === 0) msgs.push("Build graph to find connections");
+    if (data.memoryStats?.avg_decay && data.memoryStats.avg_decay < 0.3) msgs.push("Knowledge aging — add fresh data");
+    const typeCounts: Record<string, number> = {};
+    entityNodes.forEach(n => { typeCounts[n.type] = (typeCounts[n.type] || 0) + 1; });
+    const sorted = Object.entries(typeCounts).sort(([, a], [, b]) => b - a);
+    if (sorted.length > 0) msgs.push(`Strongest: ${sorted[0][0]} (${sorted[0][1]})`);
+    const orphanCount = allFacts.filter(f => {
+      const words = f.content.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+      return !entityNodes.some(e => words.some(w => e.name.toLowerCase().includes(w)));
+    }).length;
+    if (orphanCount > 3) msgs.push(`${orphanCount} isolated facts`);
+    return msgs;
+  }, [data.allFacts, data.entityNodes, data.memoryStats]);
+
+  // ── Unified graph data ────────────────────────────────────────────────
+
+  const { unifiedData, allTypes } = useMemo(() => {
+    const nodes: GraphNode[] = [];
+    const links: GraphLink[] = [];
+    const searchLower = graphSearch.toLowerCase();
+    const { allFacts, entityNodes, entityEdges, sources } = data;
+
+    if (showEntities) {
+      for (const n of entityNodes) {
+        if (graphFilter && n.type !== graphFilter) continue;
+        nodes.push({ ...n, category: "entity", color: getTypeColor(n.type), val: 2, __opacity: 1, __selected: false, __category: "entity" });
+      }
+      for (const e of entityEdges) {
+        if (nodes.some(n => n.id === e.source) && nodes.some(n => n.id === e.target)) links.push({ ...e });
+      }
+    }
+
+    if (showFacts && allFacts.length > 0) {
+      for (const fact of allFacts) {
+        const factId = `fact_${fact.id}`;
+        if (graphFilter && graphFilter !== "Fact") continue;
+        nodes.push({
+          id: factId, name: fact.content.slice(0, 35) + (fact.content.length > 35 ? "..." : ""),
+          type: "Fact", category: "fact", content: fact.content, importance: fact.importance,
+          tags: fact.tags, factType: fact.fact_type,
+          color: "#f472b6", val: 0.8 + (fact.importance || 0.5) * 1.2,
+          __opacity: 1, __selected: false, __category: "fact",
+        });
+        const words = fact.content.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+        for (const entity of entityNodes) {
+          const ew = entity.name.toLowerCase().split(/\W+/);
+          if (words.some(w => ew.some(e => e.includes(w) || w.includes(e)))) {
+            links.push({ source: factId, target: entity.id, type: "mentions" });
+          }
+        }
+      }
+    }
+
+    if (showDocs && sources.length > 0) {
+      for (const src of sources) {
+        const docId = `doc_${src.source}`;
+        if (graphFilter && graphFilter !== "Document") continue;
+        const name = (src.source || "").split(/[/\\]/).pop() || src.source;
+        nodes.push({
+          id: docId, name, type: "Document", category: "document",
+          color: "#34d399", val: Math.min(3, 1.5 + (src.chunks || src.chunk_count || 0) * 0.05),
+          __opacity: 1, __selected: false, __category: "document",
+        });
+        // Link docs to entities — only to entities whose name appears in the source name (not ALL entities)
+        const srcLower = (src.source || "").toLowerCase();
+        for (const entity of entityNodes) {
+          const eName = entity.name.toLowerCase();
+          if (eName.length > 3 && srcLower.includes(eName)) {
+            links.push({ source: docId, target: entity.id, type: "contains" });
+          }
+        }
+        // If no specific matches, link to max 3 closest entities (by name similarity)
+        const docLinks = links.filter(l => l.source === docId);
+        if (docLinks.length === 0 && entityNodes.length > 0) {
+          const sample = entityNodes.slice(0, Math.min(3, entityNodes.length));
+          for (const entity of sample) {
+            links.push({ source: docId, target: entity.id, type: "contains" });
+          }
+        }
+      }
+    }
+
+    // Apply visibility: focus > search > selection
+    for (const n of nodes) {
+      const cc = links.filter(l => l.source === n.id || l.target === n.id).length;
+      n.val = Math.min(5, n.val + Math.min(cc * 0.15, 2));
+    }
+
+    return { unifiedData: { nodes, links } as GraphData, allTypes: [...new Set(nodes.map(n => n.type))].sort() };
+  }, [data.entityNodes, data.entityEdges, data.allFacts, data.sources, showFacts, showDocs, showEntities, graphFilter, graphSearch]);
+
+  // ── Focus visibility (computed separately to avoid graph re-render) ────
+  const focusSet = useMemo(() => {
+    if (!focusedNode || !unifiedData.links.length) return null;
+    const depthMap = new Map<string, number>();
+    depthMap.set(focusedNode, 0);
+    let frontier = new Set([focusedNode]);
+    for (let depth = 1; depth <= focusDepth; depth++) {
+      const next = new Set<string>();
+      for (const nodeId of frontier) {
+        for (const l of unifiedData.links) {
+          const src = typeof l.source === "string" ? l.source : (l.source as any)?.id;
+          const tgt = typeof l.target === "string" ? l.target : (l.target as any)?.id;
+          if (src === nodeId && !depthMap.has(tgt)) { depthMap.set(tgt, depth); next.add(tgt); }
+          if (tgt === nodeId && !depthMap.has(src)) { depthMap.set(src, depth); next.add(src); }
+        }
+      }
+      frontier = next;
+    }
+    return depthMap;
+  }, [focusedNode, focusDepth, unifiedData.links]);
+
+  // Compute node opacity dynamically (used in render callbacks, NOT in graphData)
+  const getNodeOpacity = useCallback((node: any): number => {
+    const id = node.id;
+    if (focusedNode) {
+      if (id === focusedNode) return 1;
+      const depth = focusSet?.get(id);
+      if (depth !== undefined) return Math.max(0.3, 1 - depth * 0.25);
+      return 0.03;
+    }
+    const searchLower = graphSearch.toLowerCase();
+    if (searchLower) {
+      const matches = node.name?.toLowerCase().includes(searchLower) || (node.content || "").toLowerCase().includes(searchLower);
+      if (!matches) return 0.05;
+    }
+    if (selectedNode && id !== selectedNode.id) {
+      const isNeighbor = unifiedData.links.some(l => {
+        const src = typeof l.source === "string" ? l.source : (l.source as any)?.id;
+        const tgt = typeof l.target === "string" ? l.target : (l.target as any)?.id;
+        return (src === selectedNode.id && tgt === id) || (tgt === selectedNode.id && src === id);
+      });
+      if (!isNeighbor) return 0.08;
+    }
+    return 1;
+  }, [focusedNode, focusSet, graphSearch, selectedNode, unifiedData.links]);
+
+  const getLinkOpacity = useCallback((link: any): number => {
+    if (!focusedNode) return 1;
+    const src = typeof link.source === "string" ? link.source : link.source?.id;
+    const tgt = typeof link.target === "string" ? link.target : link.target?.id;
+    const srcIn = focusSet?.has(src);
+    const tgtIn = focusSet?.has(tgt);
+    if (srcIn && tgtIn) return 0.6;
+    return 0.02;
+  }, [focusedNode, focusSet]);
+
+  // ── Node interactions ─────────────────────────────────────────────────
+
+  const handleNodeClick = useCallback((node: any) => {
+    // Click toggles focus mode on the node (isolate + connections)
+    setSelectedNode({
+      id: node.id, name: node.name, type: node.type,
+      category: node.category || node.__category,
+      content: node.content, importance: node.importance,
+      tags: node.tags, factType: node.factType,
+    });
+    // Toggle focus: click same node again to unfocus
+    setFocusedNode(prev => prev === node.id ? null : node.id);
+    if (graphRef.current && node.x !== undefined && focusedNode !== node.id) {
+      if (graphMode === "2d") {
+        graphRef.current.centerAt(node.x, node.y, 600);
+        graphRef.current.zoom(3, 600);
+      } else if (graphRef.current.cameraPosition) {
+        graphRef.current.cameraPosition({ x: node.x, y: node.y, z: 200 }, node, 600);
+      }
+    }
+  }, [focusedNode, graphMode]);
+
+  const handleNodeRightClick = useCallback((node: any) => {
+    // Right-click unfocuses (exits focus mode)
+    setFocusedNode(null);
+    setSelectedNode(null);
   }, []);
 
-  // Collect unique types for legend
-  const types = useMemo(() => {
-    const set = new Set(nodes.map(n => n.type));
-    return Array.from(set).sort();
-  }, [nodes]);
+  const handleNodeHover = useCallback((node: any) => {
+    setHoveredNode(node || null);
+  }, []);
+
+  const handleSidebarSelect = useCallback((node: UnifiedNode) => {
+    setSelectedNode(node);
+    setFocusedNode(node.id);
+    // Find the actual graph node to get x/y for centering
+    const graphNode = unifiedData.nodes.find((n: any) => n.id === node.id);
+    if (graphRef.current && graphNode && (graphNode as any).x !== undefined) {
+      if (graphMode === "2d") {
+        graphRef.current.centerAt((graphNode as any).x, (graphNode as any).y, 600);
+        graphRef.current.zoom(3, 600);
+      } else if (graphRef.current.cameraPosition) {
+        graphRef.current.cameraPosition({ x: (graphNode as any).x, y: (graphNode as any).y, z: 200 }, graphNode, 600);
+      }
+    }
+  }, [unifiedData.nodes, graphMode]);
+
+  const selectedNodeEdges = useMemo(() => {
+    if (!selectedNode) return [];
+    return unifiedData.links.filter(l =>
+      l.source === selectedNode.id || l.target === selectedNode.id ||
+      (l.source as any)?.id === selectedNode.id || (l.target as any)?.id === selectedNode.id
+    );
+  }, [selectedNode, unifiedData.links]);
+
+  // ── Derived state ─────────────────────────────────────────────────────
+
+  const totalFacts = data.memoryStats?.total_facts ?? data.allFacts.length;
+  const totalSources = data.sources.length;
+  const totalNodes = unifiedData.nodes.length;
+  const isEmpty = totalFacts === 0 && totalSources === 0 && data.entityNodes.length === 0;
+  const activeUploads = uploadHook.uploads.filter(u => u.status !== "done" && u.status !== "error");
+
+  // Activity feed
+  const activityFeed = useMemo(() => {
+    const items: { type: string; label: string; detail: string; time: number; color: string }[] = [];
+    for (const u of uploadHook.uploads.slice(0, 8)) {
+      items.push({ type: "upload", label: u.name, detail: u.status === "done" ? "ingested" : u.status === "error" ? u.error || "failed" : `${u.status}...`, time: u.ts, color: u.status === "done" ? "#34d399" : u.status === "error" ? "#f87171" : "#a78bfa" });
+    }
+    for (const f of data.allFacts.slice(0, 12)) {
+      items.push({ type: "fact", label: f.content.slice(0, 60), detail: `${f.fact_type || "fact"}${f.retrieval_count ? ` · ${f.retrieval_count} hits` : ""}`, time: 0, color: "#f472b6" });
+    }
+    return items;
+  }, [uploadHook.uploads, data.allFacts]);
+
+  // Contextual suggestion (uses graph staleness)
+  const contextualSuggestion = useMemo(() => {
+    if (isEmpty) return null;
+    const gs = data.graphStatus;
+    if (gs && gs.stale && gs.has_graph) {
+      const newCount = gs.new_chunks;
+      return { text: `Graph is stale — ${newCount} new chunk${newCount > 1 ? "s" : ""} since last build.`, action: "Update Graph" };
+    }
+    if (data.sources.length > 0 && data.entityNodes.length === 0) return { text: "Documents ingested! Build the graph to discover connections.", action: "Build Graph" };
+    if (data.allFacts.length > 5 && data.sources.length === 0) return { text: "Facts building up. Upload docs to create richer connections.", action: "Upload" };
+    return null;
+  }, [isEmpty, data.sources.length, data.entityNodes.length, data.allFacts.length, data.graphStatus]);
+
+  // ── Render ────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-4">
-      {/* Actions */}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={onExtract}
-          disabled={extracting}
-          className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-        >
-          {extracting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Network className="h-3.5 w-3.5" />}
-          {extracting ? "Extracting..." : "Build Graph"}
-        </button>
-        {nodes.length > 0 && (
-          <button onClick={onClear} className="text-xs text-slate-500 hover:text-red-400 px-2 py-1.5 transition-colors">
-            Clear
-          </button>
-        )}
-        <span className="text-[11px] text-slate-500 ml-auto">
-          {nodes.length} entities &middot; {edges.length} relations
-        </span>
-      </div>
+    <div
+      className="flex flex-col relative -m-4 md:-m-5"
+      style={{ height: "calc(100vh - 1rem)" }}
+      onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleDrop}
+    >
+      <input ref={fileRef} type="file" multiple accept=".pdf,.docx,.txt,.md,.html,.csv,.json" onChange={handleFileSelect} className="hidden" />
 
-      {/* 3D Graph visualization */}
-      {nodes.length > 0 && (
-        <div ref={containerRef} className="bg-[#080810] border border-slate-700/50 rounded-xl overflow-hidden">
-          <ForceGraph3D
-            width={dimensions.width}
-            height={dimensions.height}
-            graphData={graphData}
-            nodeLabel={(n: any) => `${n.name} (${n.type})`}
-            nodeColor={(n: any) => n.color || "#a78bfa"}
-            nodeRelSize={5}
-            nodeOpacity={0.9}
-            linkColor={() => "rgba(139, 92, 246, 0.3)"}
-            linkWidth={1}
-            linkDirectionalArrowLength={3}
-            linkDirectionalArrowRelPos={1}
-            linkLabel={(l: any) => l.type}
-            backgroundColor="#080810"
-            showNavInfo={false}
+      {/* Drag overlay */}
+      {dragOver && (
+        <div className="absolute inset-0 z-50 bg-violet-950/60 backdrop-blur-md flex items-center justify-center animate-fade-in">
+          <div className="text-center">
+            <div className="h-20 w-20 rounded-3xl bg-violet-500/20 border border-violet-500/30 flex items-center justify-center mx-auto mb-4 animate-bounce">
+              <Upload className="h-8 w-8 text-violet-400" />
+            </div>
+            <p className="text-lg font-medium text-violet-300">Drop files to feed the brain</p>
+            <p className="text-xs text-slate-500 mt-1">PDF, DOCX, TXT, MD, HTML, CSV, JSON</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Main layout ──────────────────────────────────────────────── */}
+      <div className="flex-1 min-h-0 flex">
+
+        {/* ── Graph area ────────────────────────────────────────────── */}
+        <div ref={graphContainerRef} className="flex-1 min-h-0 min-w-0 bg-[#040410] relative overflow-hidden">
+          {/* Ambient grid */}
+          <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: "radial-gradient(circle, #8b5cf6 1px, transparent 1px)", backgroundSize: "40px 40px" }} />
+
+          {/* Graph build progress */}
+          {data.extractProgress && <GraphBuildProgress progress={data.extractProgress} />}
+
+          {/* HUD: Top left */}
+          <TopLeftHUD
+            query={query} setQuery={setQuery}
+            searchScope={searchScope} setSearchScope={setSearchScope}
+            searching={searchHook.searching} onSearch={handleSearch}
+            totalFacts={totalFacts} totalSources={totalSources} totalNodes={totalNodes}
+            showEntities={showEntities} showFacts={showFacts} showDocs={showDocs}
+            onToggleEntities={() => setShowEntities(v => !v)}
+            onToggleFacts={() => setShowFacts(v => !v)}
+            onToggleDocs={() => setShowDocs(v => !v)}
+            stats={data.memoryStats} entityCount={data.entityNodes.length} insights={insights}
+            activeUploads={activeUploads}
           />
-          {/* Legend */}
-          {types.length > 1 && (
-            <div className="flex flex-wrap gap-2 px-3 py-2 border-t border-slate-800/60">
-              {types.map(t => (
-                <span key={t} className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: getTypeColor(t) }} />
-                  {t}
-                </span>
+
+          {/* HUD: Top right */}
+          <TopRightHUD
+            graphSearch={graphSearch} setGraphSearch={setGraphSearch}
+            graphMode={graphMode} setGraphMode={setGraphMode}
+            graphExtracting={data.graphExtracting} extractProgress={data.extractProgress}
+            graphStatus={data.graphStatus}
+            onExtractGraph={() => data.extractGraph(false)}
+            onUploadClick={() => fileRef.current?.click()} onRefresh={data.loadAll}
+            sideOpen={sideOpen}
+          />
+
+          {/* Focus indicator */}
+          {focusedNode && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 bg-black/70 backdrop-blur-xl border border-violet-500/30 rounded-2xl">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
+                <span className="text-[10px] text-violet-300 font-medium">Focus Mode</span>
+              </div>
+              <div className="w-px h-4 bg-white/10" />
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-slate-500">Depth</span>
+                <input
+                  type="range" min={1} max={5} value={focusDepth}
+                  onChange={e => setFocusDepth(parseInt(e.target.value))}
+                  className="w-16 h-1 accent-violet-500 cursor-pointer"
+                />
+                <span className="text-[10px] text-violet-300 font-bold w-3">{focusDepth}</span>
+              </div>
+              <div className="w-px h-4 bg-white/10" />
+              <span className="text-[8px] text-slate-600">Click node to focus · Right-click to exit</span>
+              <button onClick={() => { setFocusedNode(null); setSelectedNode(null); }} className="text-slate-500 hover:text-white transition-colors ml-1">
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          )}
+
+          {/* Hover tooltip */}
+          {hoveredNode && !focusedNode && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2.5 bg-black/80 backdrop-blur-xl border border-white/[0.1] rounded-xl shadow-2xl max-w-md pointer-events-none">
+              <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: hoveredNode.color || "#a78bfa" }} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-white font-semibold truncate">{hoveredNode.name}</span>
+                  <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-white/[0.06] text-slate-400 shrink-0">{hoveredNode.type}</span>
+                </div>
+                {hoveredNode.content && (
+                  <p className="text-[9px] text-slate-500 mt-0.5 line-clamp-2">{hoveredNode.content.slice(0, 150)}</p>
+                )}
+              </div>
+              <span className="text-[9px] text-slate-600 shrink-0">Click to focus</span>
+            </div>
+          )}
+
+          {/* Coverage heatmap toggle */}
+          <CoverageHeatmap enabled={coverageEnabled} onToggle={() => setCoverageEnabled(!coverageEnabled)} />
+
+          {/* Add Fact dialog */}
+          <AddFactDialog open={showAddFact} onClose={() => setShowAddFact(false)} onAdded={() => { setShowAddFact(false); data.loadAll(); }} />
+
+          {/* Type legend */}
+          {allTypes.length > 1 && (
+            <div className="absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-1 bg-black/50 backdrop-blur-md border border-white/[0.08] rounded-xl px-2 py-1.5 max-w-80">
+              <button onClick={() => setGraphFilter(null)} className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${!graphFilter ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>All</button>
+              {allTypes.map(t => (
+                <button key={t} onClick={() => setGraphFilter(graphFilter === t ? null : t)} className={`flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${graphFilter === t ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getTypeColor(t) }} />{t}
+                </button>
               ))}
             </div>
           )}
-        </div>
-      )}
 
-      {/* Graph query */}
-      <div className="flex gap-2">
-        <input
-          value={graphQuery} onChange={e => setGraphQuery(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && onQueryGraph()}
-          placeholder="Query the knowledge graph..."
-          className="flex-1 bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-violet-500/50"
-        />
-        <button onClick={onQueryGraph} disabled={!graphQuery.trim()} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl px-4 py-2 transition-colors">
-          <Search className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* Query results */}
-      {queryResults && (
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4 space-y-2">
-          <p className="text-xs text-slate-400">{queryResults.entities.length} entities, {queryResults.relations.length} relations</p>
-          {queryResults.entities.map((e, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: getTypeColor(e.type) }} />
-              <span className="text-[10px] text-slate-500">{e.type}</span>
-              <span className="text-sm text-slate-200">{e.name}</span>
+          {/* Contextual suggestion */}
+          {contextualSuggestion && !selectedNode && (
+            <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-3 py-2 bg-black/60 backdrop-blur-md border border-amber-500/20 rounded-xl max-w-xs animate-fade-in" style={{ right: sideOpen ? "calc(340px + 12px)" : "12px" }}>
+              <Lightbulb className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <span className="text-[10px] text-amber-200/80">{contextualSuggestion.text}</span>
+              <button
+                onClick={() => {
+                  if (contextualSuggestion.action === "Upload") fileRef.current?.click();
+                  else if (contextualSuggestion.action === "Update Graph") data.extractGraph(false); // incremental
+                  else data.extractGraph(false); // Build Graph — also incremental (first time builds all)
+                }}
+                className="shrink-0 text-[9px] font-medium text-amber-400 hover:text-amber-300 bg-amber-500/10 px-2 py-1 rounded-lg transition-all"
+              >
+                {contextualSuggestion.action}
+              </button>
             </div>
-          ))}
-          {queryResults.relations.map((r, i) => {
-            const srcName = queryResults.entities.find(e => e.id === r.source)?.name || r.source;
-            const tgtName = queryResults.entities.find(e => e.id === r.target)?.name || r.target;
-            return (
-              <div key={i} className="text-xs text-slate-400 pl-4">
-                {srcName} <span className="text-violet-500">--[{r.type}]--&gt;</span> {tgtName}
-              </div>
-            );
-          })}
-        </div>
-      )}
+          )}
 
-      {/* Empty state */}
-      {nodes.length === 0 && !extracting && (
-        <div className="text-center py-12">
-          <Network className="h-8 w-8 text-slate-700 mx-auto mb-3" />
-          <p className="text-sm text-slate-500">No graph data yet</p>
-          <p className="text-xs text-slate-600 mt-1">Click &quot;Build Graph&quot; to extract entities from your ingested documents</p>
+          {/* Selected node detail */}
+          {selectedNode && (
+            <NodeDetail
+              node={selectedNode}
+              edges={selectedNodeEdges}
+              allNodes={unifiedData.nodes}
+              onClose={() => setSelectedNode(null)}
+              onSearch={(q) => { setQuery(q); handleSearch(); }}
+              onFocus={() => handleNodeFocus({ id: selectedNode.id, x: 0, y: 0 })}
+              onNodeClick={handleNodeClick}
+            />
+          )}
+
+          {/* Graph renderer */}
+          {totalNodes > 0 ? (
+            graphMode === "2d" ? (
+              <ForceGraph2D
+                ref={graphRef} width={graphDim.width} height={graphDim.height}
+                graphData={unifiedData}
+                nodeLabel={() => ""}
+                nodeRelSize={2}
+                nodeCanvasObjectMode={() => "replace"}
+                nodeCanvasObject={(node: any, ctx: any, gs: number) => {
+                  const op = getNodeOpacity(node);
+                  if (op < 0.04) return; // Skip invisible nodes entirely
+                  const r = Math.sqrt(node.val || 1) * 2;
+                  const isFocusTarget = node.id === focusedNode;
+                  const isSel = node.id === selectedNode?.id;
+
+                  // Draw node circle
+                  ctx.beginPath();
+                  ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+                  ctx.globalAlpha = op;
+                  ctx.fillStyle = node.color || "#a78bfa";
+                  ctx.fill();
+
+                  // Glow ring for focused/selected nodes
+                  if (isFocusTarget || isSel) {
+                    ctx.strokeStyle = node.color || "#a78bfa";
+                    ctx.lineWidth = 0.8 / gs;
+                    ctx.shadowColor = node.color;
+                    ctx.shadowBlur = 12;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                  }
+
+                  // Label — only when zoomed in or for important nodes
+                  const fontSize = Math.max(10 / gs, 1.5);
+                  const isImportant = isFocusTarget || isSel || node.val > 3;
+                  if (op > 0.2 && (isImportant || gs > 0.8) && !(gs < 1.5 && fontSize < 2.5 && !isImportant)) {
+                    ctx.font = `${isImportant ? "bold " : ""}${fontSize}px Inter, system-ui, sans-serif`;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.globalAlpha = isImportant ? op : Math.min(op, 0.6);
+                    ctx.fillStyle = isImportant ? "#fff" : `rgba(226,232,240,${op * 0.7})`;
+                    const label = node.name.length > 24 ? node.name.slice(0, 22) + "…" : node.name;
+                    ctx.fillText(label, node.x, node.y + r + fontSize * 0.6);
+                  }
+                  ctx.globalAlpha = 1;
+                }}
+                linkColor={(l: any) => {
+                  const op = getLinkOpacity(l);
+                  if (op < 0.05) return "rgba(0,0,0,0)";
+                  const base = l.type === "mentions" ? [244,114,182] : l.type === "contains" ? [52,211,153] : [139,92,246];
+                  return `rgba(${base.join(",")},${(op * 0.15).toFixed(2)})`;
+                }}
+                linkWidth={(l: any) => getLinkOpacity(l) < 0.05 ? 0 : 0.5}
+                backgroundColor="rgba(0,0,0,0)"
+                onNodeClick={handleNodeClick}
+                onNodeRightClick={handleNodeRightClick}
+                onNodeHover={handleNodeHover}
+                cooldownTicks={150}
+                d3AlphaDecay={0.035}
+                d3VelocityDecay={0.4}
+                warmupTicks={80}
+                enableNodeDrag={true}
+                minZoom={0.3}
+                maxZoom={8}
+              />
+            ) : (
+              <ForceGraph3D
+                ref={graphRef} width={graphDim.width} height={graphDim.height}
+                graphData={unifiedData}
+                nodeLabel={(n: any) => {
+                  const op = getNodeOpacity(n);
+                  if (op < 0.1) return "";
+                  return n.content ? `${n.name}\n${n.content.slice(0, 80)}` : `${n.name} (${n.type})`;
+                }}
+                nodeColor={(n: any) => {
+                  const op = getNodeOpacity(n);
+                  const hex = n.color || "#a78bfa";
+                  // Convert hex to rgba with opacity
+                  const r = parseInt(hex.slice(1, 3), 16);
+                  const g = parseInt(hex.slice(3, 5), 16);
+                  const b = parseInt(hex.slice(5, 7), 16);
+                  return `rgba(${r},${g},${b},${op})`;
+                }}
+                nodeRelSize={2}
+                nodeOpacity={1}
+                nodeVisibility={(n: any) => getNodeOpacity(n) > 0.03}
+                linkColor={(l: any) => {
+                  const op = getLinkOpacity(l);
+                  if (op < 0.05) return "rgba(0,0,0,0)";
+                  const base = l.type === "mentions" ? [244,114,182] : l.type === "contains" ? [52,211,153] : [139,92,246];
+                  return `rgba(${base.join(",")},${(op * 0.15).toFixed(2)})`;
+                }}
+                linkWidth={(l: any) => getLinkOpacity(l) < 0.05 ? 0 : 0.3}
+                linkVisibility={(l: any) => getLinkOpacity(l) > 0.03}
+                backgroundColor="#040410"
+                showNavInfo={false}
+                onNodeClick={handleNodeClick}
+                onNodeRightClick={handleNodeRightClick}
+                onNodeHover={handleNodeHover}
+                cooldownTicks={150}
+                warmupTicks={80}
+              />
+            )
+          ) : isEmpty ? (
+            /* Empty state */
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center space-y-6 max-w-md">
+                <div className="relative w-40 h-40 mx-auto">
+                  {[0, 4, 8, 12].map((inset, i) => (
+                    <div key={i} className="absolute rounded-full border animate-pulse" style={{ inset: `${inset * 4}px`, borderColor: `rgba(139,92,246,${0.06 + i * 0.04})`, animationDelay: `${i * 0.4}s`, animationDuration: "3s" }} />
+                  ))}
+                  <div className="absolute inset-0 flex items-center justify-center"><Brain className="h-14 w-14 text-violet-500/20" /></div>
+                  <div className="absolute top-4 right-6 h-2 w-2 rounded-full bg-violet-500/40 animate-ping" style={{ animationDuration: "3s" }} />
+                  <div className="absolute bottom-6 left-4 h-1.5 w-1.5 rounded-full bg-pink-500/40 animate-ping" style={{ animationDuration: "4s", animationDelay: "1s" }} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-200">The brain is empty</h2>
+                  <p className="text-xs text-slate-500 mt-2">Upload documents or chat to start building knowledge.</p>
+                </div>
+                <div className="flex items-center justify-center gap-3">
+                  <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 bg-violet-600 hover:bg-violet-500 text-white rounded-2xl text-xs font-medium transition-all shadow-xl shadow-violet-500/25 active:scale-95">
+                    <Upload className="h-4 w-4" /> Upload
+                  </button>
+                  <Link href="/chat" className="flex items-center gap-2 px-5 py-2.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.1] text-slate-300 rounded-2xl text-xs font-medium transition-all">
+                    <MessageSquare className="h-4 w-4" /> Chat
+                  </Link>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Has data but no graph yet */
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center space-y-4">
+                <Network className="h-10 w-10 text-slate-800 mx-auto" />
+                <p className="text-xs text-slate-500">Click &ldquo;Build&rdquo; to extract entities &amp; discover connections</p>
+                <button onClick={() => data.extractGraph(false)} disabled={data.graphExtracting} className="inline-flex items-center gap-2 px-5 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-2xl text-xs font-medium shadow-xl shadow-violet-500/25 active:scale-95 transition-all">
+                  {data.graphExtracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Build Graph
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Sidebar toggle (when closed) */}
+          {!sideOpen && (
+            <button onClick={() => setSideOpen(true)} className="absolute top-3 right-3 z-20 p-2 bg-black/50 backdrop-blur-md border border-white/[0.08] rounded-xl text-slate-500 hover:text-slate-300 transition-all">
+              <PanelRightOpen className="h-4 w-4" />
+            </button>
+          )}
         </div>
-      )}
+
+        {/* ── Right sidebar ─────────────────────────────────────────── */}
+        {sideOpen && (
+          <div className="w-[340px] shrink-0 bg-[#08080f] border-l border-white/[0.04] flex flex-col min-h-0">
+            {/* Tabs */}
+            <div className="shrink-0 flex items-center gap-1 px-2 py-1.5 border-b border-white/[0.04]">
+              {([
+                { id: "activity" as SideTab, icon: Activity, label: "Activity" },
+                { id: "facts" as SideTab, icon: Brain, label: `Facts (${data.allFacts.length})` },
+                { id: "documents" as SideTab, icon: FileText, label: `Docs (${totalSources})` },
+                { id: "health" as SideTab, icon: Sparkles, label: "Health" },
+              ]).map(t => (
+                <button key={t.id} onClick={() => setSideTab(t.id)}
+                  className={`flex items-center gap-1 px-2 py-1 text-[9px] font-medium rounded-lg transition-all ${sideTab === t.id ? "bg-violet-500/15 text-violet-300" : "text-slate-600 hover:text-slate-400"}`}>
+                  <t.icon className="h-2.5 w-2.5" />{t.label}
+                </button>
+              ))}
+              <div className="flex-1" />
+              <button onClick={() => setSideOpen(false)} className="text-slate-700 hover:text-slate-400 transition-colors p-0.5">
+                <PanelRightClose className="h-3 w-3" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+              {/* Search results (overlay) */}
+              {showSearchResults && (
+                <SearchResults
+                  query={query}
+                  searching={searchHook.searching}
+                  facts={searchHook.searchFacts}
+                  docResults={searchHook.docResults}
+                  selfRagResult={searchHook.selfRagResult}
+                  onClose={() => setShowSearchResults(false)}
+                  onSelectFact={(node) => setSelectedNode(node)}
+                />
+              )}
+
+              {/* Activity */}
+              {sideTab === "activity" && (
+                <div className="p-3 space-y-1 flex-1">
+                  {activeUploads.length > 0 && (
+                    <div className="mb-3 space-y-2">
+                      <p className="text-[9px] text-slate-600 uppercase tracking-wider font-medium">Processing</p>
+                      {activeUploads.map(u => <IngestionStepper key={u.id} entry={u} />)}
+                    </div>
+                  )}
+                  {activityFeed.length === 0 && <p className="text-[10px] text-slate-600 text-center py-8">No activity yet.</p>}
+                  {activityFeed.map((item, i) => (
+                    <div key={i} className="flex items-start gap-2 py-1.5 border-b border-white/[0.02] last:border-0 hover:bg-white/[0.01] rounded-lg px-1 transition-colors">
+                      <div className="h-5 w-5 rounded-md flex items-center justify-center shrink-0 mt-0.5" style={{ backgroundColor: item.color + "15" }}>
+                        {item.type === "upload" ? <FileText className="h-2.5 w-2.5" style={{ color: item.color }} /> : <Brain className="h-2.5 w-2.5" style={{ color: item.color }} />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] text-slate-300 truncate">{item.label}</p>
+                        <p className="text-[8px] text-slate-600">{item.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Facts */}
+              {sideTab === "facts" && (
+                <FactPanel
+                  facts={data.allFacts}
+                  onDelete={data.deleteFact}
+                  onSelect={handleSidebarSelect}
+                />
+              )}
+
+              {/* Documents */}
+              {sideTab === "documents" && (
+                <DocumentPanel
+                  sources={data.sources}
+                  sourceChunks={chunksHook.sourceChunks}
+                  onUploadClick={() => fileRef.current?.click()}
+                  onLoadChunks={(source, sourceId) => chunksHook.loadChunks(source, sourceId)}
+                  onDeleteSource={data.deleteSource}
+                  onSelectNode={handleSidebarSelect}
+                />
+              )}
+
+              {sideTab === "health" && (
+                <div className="flex flex-col h-full">
+                  <GapDetector onNavigateToNode={(nodeId) => {
+                    const node = unifiedData.nodes.find((n: any) => n.name === nodeId || n.id === nodeId);
+                    if (node) handleSidebarSelect(node);
+                  }} />
+                  <div className="shrink-0 p-3 border-t border-white/[0.04]">
+                    <button
+                      onClick={() => setShowAddFact(true)}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-[10px] font-medium transition-all active:scale-95"
+                    >
+                      <Brain className="h-3 w-3" /> Add Fact Manually
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

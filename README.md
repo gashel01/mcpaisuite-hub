@@ -24,7 +24,7 @@ Opens at:
 - Frontend: http://localhost:3007
 - Backend API: http://localhost:8007
 - API docs (Swagger): http://localhost:8007/docs
-- SearXNG: http://localhost:8888
+- SearXNG: http://localhost:9999
 
 ### Local
 
@@ -205,7 +205,7 @@ Open http://localhost:3000.
 
 ## SearXNG
 
-The bundled SearXNG instance provides web search capabilities to the kernel's tools. It runs on port 8888 and is configured via `searxng/settings.yml`. The backend connects to it internally at `http://searxng:8080`.
+The bundled SearXNG instance provides web search capabilities to the kernel's tools. It runs on port 9999 and is configured via `searxng/settings.yml`. The backend connects to it internally at `http://searxng:8080`.
 
 ---
 

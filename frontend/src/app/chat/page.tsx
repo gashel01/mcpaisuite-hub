@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Cpu, Globe, GlobeLock, Trash2, FileDown, Terminal, ShieldAlert,
-  FileText, Loader2, ArrowDown, Bot, PanelLeft,
+  FileText, Loader2, ArrowDown, Bot, PanelLeft, Search, X,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
 import { BASE_URL } from "@/types";
@@ -12,7 +12,9 @@ import type { ChatMsg, Turn, TaskInfo, ConvInfo, ScheduledJob } from "@/types";
 import ChatMessage from "@/components/chat-message";
 import ChatInput from "@/components/chat-input";
 import ChatHistory from "@/components/chat-history";
+import CodePanel from "@/components/code-panel";
 import TaskModal from "@/components/task-modal";
+import { useCodeRunner } from "@/context/code-runner";
 import EgressPanel from "@/components/egress-panel";
 import HostPanel from "@/components/host-panel";
 import { TurnItem } from "@/components/turns";
@@ -30,7 +32,8 @@ export default function ChatPage() {
   const [convId, setConvId] = useState(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      return params.get("conv") || "default";
+      // Priority: URL param > last used conv > default
+      return params.get("conv") || localStorage.getItem("kernelmcp_last_conv") || "default";
     }
     return "default";
   });
@@ -56,6 +59,11 @@ export default function ChatPage() {
   const [hostPending, setHostPending] = useState<{ namespace: string; pattern: string }[]>([]);
   const [newHostPattern, setNewHostPattern] = useState("");
 
+  // Search in conversation
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [loadingConv, setLoadingConv] = useState(false);
+
   // History
   const [showHistory, setShowHistory] = useState(true);
   const [conversations, setConversations] = useState<ConvInfo[]>([]);
@@ -64,6 +72,15 @@ export default function ChatPage() {
   const [selectedTask, setSelectedTask] = useState<TaskInfo | null>(null);
   const [elicitation, setElicitation] = useState<{ taskId: string; question: string } | null>(null);
   const [elicitResponse, setElicitResponse] = useState("");
+  const [showCodeEditor, setShowCodeEditor] = useState(false);
+  const { editorRequest, clearEditorRequest } = useCodeRunner();
+
+  // Open code panel when "Edit" is clicked on a code block
+  useEffect(() => {
+    if (editorRequest) {
+      setShowCodeEditor(true);
+    }
+  }, [editorRequest]);
 
 
   // ── Auto-scroll ──────────────────────────────────────────────────────────
@@ -90,14 +107,16 @@ export default function ChatPage() {
   const refreshSidebar = () => {
     const h = { headers: th };
     fetch(`${BASE_URL}/conversations`, h).then(r => r.json()).then(d => setConversations(d.conversations || [])).catch(() => {});
-    fetch(`${BASE_URL}/tasks`, h).then(r => r.json()).then(d => setTasks(d.tasks || [])).catch(() => {});
-    fetch(`${BASE_URL}/schedules`, h).then(r => r.json()).then(d => setSchedules(d.jobs || [])).catch(() => {});
   };
 
   useEffect(() => {
-    refreshSidebar(); // Load once on mount — no polling
-    return () => {};
-  }, []);
+    refreshSidebar(); // Load on mount
+    // Poll conversations every 15s while running, otherwise every 60s
+    const interval = setInterval(() => {
+      refreshSidebar();
+    }, loading ? 15000 : 60000);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   useEffect(() => {
     fetch(`${BASE_URL}/egress`, { headers: th }).then(r => r.json()).then(d => { setNetworkEnabled(d.enabled || false); setAllowedDomains(d.allowed_domains || []); }).catch(() => {});
@@ -108,6 +127,80 @@ export default function ChatPage() {
     fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => { setHostApproved(d.approved || []); setHostPending(d.pending || []); }).catch(() => {});
   }, []);
 
+  // ── SSE stream management ────────────────────────────────────────────────
+
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  const closeStream = useCallback(() => {
+    if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => { return () => closeStream(); }, [closeStream]);
+
+  // Reconnect to a running task's SSE stream
+  const reconnectToTask = useCallback((tid: string) => {
+    closeStream();
+    setLoading(true);
+    setTaskId(tid);
+    setLiveTurns([]);
+    const turns: Turn[] = [];
+    let taskDone = false;
+    const es = new EventSource(`${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "turn") {
+          turns.push(msg.turn);
+          setLiveTurns([...turns]);
+        }
+        if (msg.type === "elicitation") {
+          setElicitation({ taskId: msg.task_id, question: msg.question });
+        }
+        if (msg.type === "done") {
+          taskDone = true;
+          closeStream();
+          setLoading(false);
+          setMessages(prev => [...prev, {
+            role: "assistant",
+            content: msg.answer || `Task ${msg.status}. ${msg.total_tokens || 0} tokens.`,
+            turns: msg.turns || turns,
+            tokens: msg.total_tokens, cost: msg.total_cost, taskId: tid,
+            bootstrapSources: msg.bootstrap_sources || [],
+            timestamp: Date.now(),
+          }]);
+          setLiveTurns([]);
+          setTaskId(null);
+          refreshSidebar();
+        }
+        if (msg.type === "error") {
+          taskDone = true;
+          closeStream();
+          setLoading(false);
+          setMessages(prev => [...prev, { role: "assistant", content: msg.message || "Task failed" }]);
+          setLiveTurns([]);
+          setTaskId(null);
+          refreshSidebar();
+        }
+      } catch (_e) {}
+    };
+
+    es.onerror = () => {
+      closeStream();
+      if (taskDone) return;
+      // Fallback: fetch final state
+      fetch(`${BASE_URL}/chat/${convId}/task/${tid}`, { headers: th }).then(r => r.json()).then(task => {
+        setLoading(false);
+        if (["completed", "failed", "cancelled"].includes(task.status)) {
+          setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
+        }
+        setLiveTurns([]); setTaskId(null); refreshSidebar();
+      }).catch(() => { setLoading(false); setLiveTurns([]); setTaskId(null); });
+    };
+  }, [convId, closeStream, th]);
+
   // Load conversation messages — always sync from server
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -115,17 +208,33 @@ export default function ChatPage() {
       const urlConv = params.get("conv");
       if (urlConv && urlConv !== convId) setConvId(urlConv);
     }
+    setLoadingConv(true);
     fetch(`${BASE_URL}/chat/${encodeURIComponent(convId)}`, { headers: th }).then(r => r.json()).then(data => {
-      if (data.messages && data.messages.length > 0) {
-        const serverMsgs = data.messages.map((m: any) => ({
-          role: m.role as "user" | "assistant", content: m.content,
-          turns: m.turns, tokens: m.tokens, cost: m.cost, taskId: m.task_id,
-        }));
-        setMessages(serverMsgs);
+      const serverMsgs: ChatMsg[] = (data.messages || []).map((m: any) => ({
+        role: m.role as "user" | "assistant", content: m.content,
+        turns: m.turns, tokens: m.tokens, cost: m.cost, taskId: m.task_id,
+        bootstrapSources: m.bootstrap_sources,
+        timestamp: m.timestamp || undefined,
+      }));
+      setMessages(serverMsgs);
+      setLoadingConv(false);
+
+      // Check if there's a running task for this conversation
+      const runningTaskId = data.running_task_id;
+      if (runningTaskId && !eventSourceRef.current) {
+        // Reconnect to the running task's stream
+        reconnectToTask(runningTaskId);
+      } else if (!eventSourceRef.current) {
         setLoading(false);
         setLiveTurns([]);
+        setTaskId(null);
       }
-    }).catch(() => {});
+    }).catch(() => {
+      setLoadingConv(false);
+      if (!eventSourceRef.current) {
+        setLoading(false);
+      }
+    });
   }, [convId]);
 
   // Sync conversation on window focus + navigation return
@@ -140,6 +249,7 @@ export default function ChatPage() {
           setMessages(serverMsgs.map(m => ({
             role: m.role as "user" | "assistant", content: m.content,
             turns: m.turns, tokens: m.tokens, cost: m.cost, taskId: m.task_id,
+            bootstrapSources: m.bootstrap_sources, timestamp: m.timestamp,
           })));
           setLoading(false);
           setLiveTurns([]);
@@ -160,7 +270,7 @@ export default function ChatPage() {
   const addDomain = async () => { if (!newDomain.trim()) return; await fetch(`${BASE_URL}/egress/allow?domain=${encodeURIComponent(newDomain.trim())}`, { method: "POST", headers: th }); setAllowedDomains(prev => [...prev, newDomain.trim()]); setNewDomain(""); };
   const removeDomain = async (d: string) => { await fetch(`${BASE_URL}/egress/allow?domain=${encodeURIComponent(d)}`, { method: "DELETE", headers: th }); setAllowedDomains(prev => prev.filter(x => x !== d)); };
 
-  const approveHost = async (p: string) => { await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(p)}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); setHostApproved(prev => [...prev, p]); };
+  const approveHost = async (p: string, guardNs?: string) => { await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(p)}${guardNs ? `&guard_ns=${encodeURIComponent(guardNs)}` : ""}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); setHostApproved(prev => [...prev, p]); };
   const denyHost = async (p: string) => { await fetch(`${BASE_URL}/host/deny?pattern=${encodeURIComponent(p)}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); };
   const addHost = async () => { if (!newHostPattern.trim()) return; await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(newHostPattern.trim())}`, { method: "POST", headers: th }); setHostApproved(prev => [...prev, newHostPattern.trim()]); setNewHostPattern(""); };
   const revokeHost = async (p: string) => { await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(p)}`, { method: "DELETE", headers: th }); setHostApproved(prev => prev.filter(x => x !== p)); };
@@ -189,11 +299,34 @@ export default function ChatPage() {
 
   const stopTask = async () => {
     if (taskId) try { await fetch(`${BASE_URL}/tasks/${taskId}`, { method: "DELETE", headers: th }); } catch (_e) {}
-    closeStream(); setLoading(false); setLiveTurns([]);
-    setMessages(prev => [...prev, { role: "assistant", content: "Task cancelled." }]);
+    closeStream(); setLoading(false);
+    // Keep the turns that were already executed — don't clear them
+    setMessages(prev => [...prev, {
+      role: "assistant",
+      content: "Task stopped by user.",
+      turns: liveTurns.length > 0 ? liveTurns : undefined,
+      tokens: liveTurns.reduce((s: number, t: any) => s + (t.tokens_used || 0), 0) || undefined,
+    } as any]);
+    setLiveTurns([]);
   };
 
-  const switchConv = (id: string) => { setConvId(id); setMessages([]); setLiveTurns([]); window.history.replaceState(null, "", `/chat?conv=${encodeURIComponent(id)}`); };
+  const switchConv = (id: string) => {
+    // Close any running stream and reset loading state
+    closeStream();
+    setLoading(false);
+    setLoadingConv(true);
+    setLiveTurns([]);
+    setTaskId(null);
+    setElicitation(null);
+    setMessages([]);
+    setSearchOpen(false);
+    setSearchQuery("");
+    userScrolledUp.current = false;
+    setConvId(id);
+    window.history.replaceState(null, "", `/chat?conv=${encodeURIComponent(id)}`);
+    // Persist last conv for re-open
+    if (typeof window !== "undefined") localStorage.setItem("kernelmcp_last_conv", id);
+  };
   const newChat = () => switchConv("chat-" + Date.now().toString(36));
   const deleteConv = async (id: string) => {
     try { await fetch(`${BASE_URL}/chat/${encodeURIComponent(id)}`, { method: "DELETE", headers: th }); setConversations(prev => prev.filter(c => c.id !== id)); if (id === convId) newChat(); } catch (_e) {}
@@ -205,21 +338,12 @@ export default function ChatPage() {
 
   // ── Send ─────────────────────────────────────────────────────────────────
 
-  const eventSourceRef = useRef<EventSource | null>(null);
-
-  const closeStream = useCallback(() => {
-    if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
-  }, []);
-
-  // Cleanup on unmount
-  useEffect(() => { return () => closeStream(); }, [closeStream]);
-
   const send = async () => {
     if (!input.trim() || loading) return;
     const msg = input.trim();
     setInput(""); setLoading(true); setLiveTurns([]);
     userScrolledUp.current = false;
-    setMessages(prev => [...prev, { role: "user", content: msg }]);
+    setMessages(prev => [...prev, { role: "user", content: msg, timestamp: Date.now() }]);
 
     try {
       const res = await fetch(`${BASE_URL}/chat`, {
@@ -230,12 +354,20 @@ export default function ChatPage() {
       const data = await res.json();
       const tid = data.task_id;
       setTaskId(tid);
+      if (typeof window !== "undefined") localStorage.setItem("kernelmcp_last_conv", convId);
       refreshSidebar(); // Refresh after sending message (new conversation)
       if (!tid) { setMessages(prev => [...prev, { role: "assistant", content: "Failed to create task." }]); setLoading(false); return; }
 
       // Stream task updates via SSE
       closeStream();
       const turns: Turn[] = [];
+      let taskDone = false;
+
+      // Poll host access requests every 2s while running (agent may block on request_host_access)
+      const hostPoll = setInterval(() => {
+        fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => setHostPending(d.pending || [])).catch(() => {});
+      }, 2000);
+
       const es = new EventSource(`${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`);
       eventSourceRef.current = es;
 
@@ -255,8 +387,11 @@ export default function ChatPage() {
           }
 
           if (msg.type === "done") {
+            taskDone = true;
             closeStream();
+            clearInterval(hostPoll);
             setLoading(false);
+            setHostPending([]);
             setMessages(prev => [...prev, {
               role: "assistant",
               content: msg.answer || `Task ${msg.status}. ${msg.total_tokens || 0} tokens.`,
@@ -272,8 +407,11 @@ export default function ChatPage() {
           }
 
           if (msg.type === "error") {
+            taskDone = true;
             closeStream();
+            clearInterval(hostPoll);
             setLoading(false);
+            setHostPending([]);
             setMessages(prev => [...prev, { role: "assistant", content: msg.message || "Task failed" }]);
           }
         } catch (_e) {}
@@ -281,16 +419,17 @@ export default function ChatPage() {
 
       es.onerror = () => {
         closeStream();
-        if (loading) {
-          // Fallback: SSE failed, fetch final state once
-          fetch(`${BASE_URL}/chat/${convId}/task/${tid}`, { headers: th }).then(r => r.json()).then(task => {
-            setLoading(false);
-            if (["completed", "failed", "cancelled"].includes(task.status)) {
-              setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
-            }
-            setLiveTurns([]); setTaskId(null);
-          }).catch(() => { setLoading(false); });
-        }
+        clearInterval(hostPoll);
+        if (taskDone) return;
+        // Fallback: SSE failed, fetch final state once
+        fetch(`${BASE_URL}/chat/${convId}/task/${tid}`, { headers: th }).then(r => r.json()).then(task => {
+          setLoading(false);
+          if (["completed", "failed", "cancelled"].includes(task.status)) {
+            setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
+          }
+          setLiveTurns([]); setTaskId(null);
+          refreshSidebar();
+        }).catch(() => { setLoading(false); setLiveTurns([]); setTaskId(null); });
       };
 
     } catch (e) {
@@ -330,13 +469,13 @@ export default function ChatPage() {
   return (
     <div className="flex h-[calc(100vh-3rem)] md:h-[calc(100vh)] -m-4 -mb-4 md:-m-6 md:-mb-6">
       {/* History sidebar */}
-      {showHistory && (
-        <ChatHistory
-          conversations={conversations} tasks={tasks} schedules={schedules} convId={convId}
-          onSwitchConv={switchConv} onNewChat={newChat} onDeleteConv={deleteConv}
-          onSelectTask={selectTask} onClose={() => setShowHistory(false)}
-        />
-      )}
+      <ChatHistory
+        conversations={conversations} convId={convId}
+        runningConvId={loading ? convId : null}
+        open={showHistory}
+        onSwitchConv={switchConv} onNewChat={newChat} onDeleteConv={deleteConv}
+        onClose={() => setShowHistory(false)}
+      />
 
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0 relative" onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleFileDrop}>
@@ -351,77 +490,116 @@ export default function ChatPage() {
         )}
 
         {/* Header */}
-        <div className="flex flex-wrap items-center gap-2 md:gap-3 px-4 py-2 shrink-0 border-b border-slate-800/40">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 px-4 py-2.5 shrink-0 border-b border-white/[0.04] bg-white/[0.01]">
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
             {!showHistory && (
-              <button onClick={() => setShowHistory(true)} className="text-slate-500 hover:text-violet-400 p-1 transition-colors hidden md:block" title="Show history">
+              <button onClick={() => setShowHistory(true)} className="text-slate-600 hover:text-violet-400 p-1 transition-colors hidden md:block" data-tooltip="Show history">
                 <PanelLeft className="h-4 w-4" />
               </button>
             )}
-            <div className="h-8 w-8 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0">
+            <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/20 to-violet-800/10 border border-violet-500/15 flex items-center justify-center shrink-0">
               <Cpu className="h-4 w-4 text-violet-400" />
             </div>
             <div>
-              <h1 className="text-base md:text-lg font-semibold text-slate-100 leading-tight">Kernel Chat</h1>
-              <p className="text-[11px] text-slate-500 hidden sm:block">7 servers &middot; 80+ tools &middot; persistent memory</p>
+              <h1 className="text-sm font-semibold text-slate-100 leading-tight">Kernel Chat</h1>
+              <p className="text-[10px] text-slate-600 hidden sm:block">Full orchestrator &middot; 80+ tools</p>
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => setShowEgress(!showEgress)} className={`flex items-center gap-1 px-2 md:px-2.5 py-1.5 rounded-lg text-xs transition-all ${networkEnabled ? "bg-green-900/40 text-green-400 border border-green-700/60" : "bg-slate-800/80 text-slate-500 border border-slate-700/60"}`}>
+            <a href="/security" data-tooltip={networkEnabled ? "Web enabled" : "Web disabled"} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${networkEnabled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40" : "bg-white/[0.03] text-slate-500 border border-white/[0.06] hover:text-slate-300"}`}>
               {networkEnabled ? <Globe className="h-3.5 w-3.5" /> : <GlobeLock className="h-3.5 w-3.5" />}
               <span className="hidden sm:inline">{networkEnabled ? "Web" : "Offline"}</span>
-            </button>
-            <button onClick={() => setShowHostAccess(!showHostAccess)} className={`flex items-center gap-1 px-2 md:px-2.5 py-1.5 rounded-lg text-xs transition-all ${hostPending.length > 0 ? "bg-amber-900/40 text-amber-400 border border-amber-700/60 animate-pulse" : "bg-slate-800/80 text-slate-500 border border-slate-700/60"}`}>
+            </a>
+            <a href="/security" data-tooltip="Host access" className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${hostPending.length > 0 ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse" : "bg-white/[0.03] text-slate-500 border border-white/[0.06] hover:text-slate-300"}`}>
               <Terminal className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Host</span>
-              {hostPending.length > 0 && <span className="bg-amber-500 text-black text-[10px] font-bold rounded-full h-4 w-4 flex items-center justify-center">{hostPending.length}</span>}
+              {hostPending.length > 0 && <span className="bg-amber-500 text-black text-[10px] font-bold rounded-full h-4 min-w-[16px] flex items-center justify-center">{hostPending.length}</span>}
+            </a>
+            <div className="w-px h-4 bg-white/[0.06] mx-0.5" />
+            <button onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) setSearchQuery(""); }} className={`p-1.5 transition-colors ${searchOpen ? "text-violet-400" : "text-slate-600 hover:text-violet-400"}`} data-tooltip="Search">
+              <Search className="h-3.5 w-3.5" />
             </button>
-            <button onClick={exportPDF} disabled={messages.length === 0} className="text-slate-600 hover:text-violet-400 disabled:opacity-30 p-1.5 transition-colors" title="Export">
+            <button onClick={exportPDF} disabled={messages.length === 0} className="text-slate-600 hover:text-violet-400 disabled:opacity-20 disabled:cursor-not-allowed p-1.5 transition-colors" data-tooltip="Export">
               <FileDown className="h-3.5 w-3.5" />
             </button>
-            <button onClick={clearChat} className="text-slate-600 hover:text-red-400 p-1.5 transition-colors" title="Clear chat">
+            <button onClick={clearChat} className="text-slate-600 hover:text-red-400 p-1.5 transition-colors" data-tooltip="Clear chat">
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
 
-        {/* Panels */}
-        {showEgress && <EgressPanel networkEnabled={networkEnabled} allowedDomains={allowedDomains} newDomain={newDomain} setNewDomain={setNewDomain} onToggle={toggleNetwork} onAddDomain={addDomain} onRemoveDomain={removeDomain} />}
-        {showHostAccess && <HostPanel hostPending={hostPending} hostApproved={hostApproved} newHostPattern={newHostPattern} setNewHostPattern={setNewHostPattern} onApprove={approveHost} onDeny={denyHost} onAdd={addHost} onRevoke={revokeHost} />}
+        {/* Security panels removed — managed in /security page */}
+
+        {/* Search bar */}
+        {searchOpen && (
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-white/[0.04] bg-white/[0.01] animate-fade-in">
+            <Search className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+            <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search in conversation..."
+              className="flex-1 bg-transparent text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none" autoFocus />
+            {searchQuery && <span className="text-[10px] text-slate-500">{messages.filter(m => m.content.toLowerCase().includes(searchQuery.toLowerCase())).length} found</span>}
+            <button onClick={() => { setSearchOpen(false); setSearchQuery(""); }} className="text-slate-600 hover:text-slate-300"><X className="h-3.5 w-3.5" /></button>
+          </div>
+        )}
 
         {/* Messages */}
         <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 scroll-smooth px-4">
-          {messages.length === 0 && !loading && (
-            <div className="flex flex-col items-center justify-center flex-1 py-16 px-4">
-              <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-violet-600/20 to-violet-800/20 border border-violet-700/30 flex items-center justify-center mb-5">
-                <Cpu className="h-7 w-7 text-violet-400" />
+          {/* Loading skeleton when switching conversations */}
+          {loadingConv && messages.length === 0 && (
+            <div className="space-y-5 py-4">
+              {[0, 1, 2, 3].map(i => (
+                <div key={i} className={`flex gap-2.5 ${i % 2 === 0 ? "justify-end" : ""} animate-stagger`} style={{ animationDelay: `${i * 100}ms` }}>
+                  {i % 2 !== 0 && <div className="h-7 w-7 rounded-lg bg-white/[0.03] shrink-0" />}
+                  <div className={`${i % 2 === 0 ? "w-48" : "w-64"} rounded-2xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-2`}>
+                    <div className="skeleton h-3 w-full" />
+                    <div className="skeleton h-3 w-3/4" />
+                    {i % 2 !== 0 && <div className="skeleton h-3 w-1/2" />}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {messages.length === 0 && !loading && !loadingConv && (
+            <div className="flex flex-col items-center justify-center flex-1 py-20 px-4 animate-fade-in">
+              <div className="relative mb-6">
+                <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-violet-600/15 to-violet-900/10 border border-violet-500/15 flex items-center justify-center animate-glow">
+                  <Cpu className="h-7 w-7 text-violet-400" />
+                </div>
+                <div className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-emerald-400 border-2 border-[#0a0a10] animate-pulse" />
               </div>
-              <h2 className="text-lg font-semibold text-slate-200 mb-1">What can I help with?</h2>
-              <p className="text-sm text-slate-500 mb-6 text-center max-w-md">Search the web, execute code, manage files, query your knowledge base, schedule tasks, and more.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+              <h2 className="text-xl font-bold text-slate-100 mb-2 animate-stagger" style={{ animationDelay: "100ms" }}>What can I help with?</h2>
+              <p className="text-sm text-slate-500 mb-8 text-center max-w-md leading-relaxed animate-stagger" style={{ animationDelay: "200ms" }}>Search the web, execute code, manage files, query your knowledge base, schedule tasks, and more.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-lg">
                 {suggestions.map((s, i) => (
-                  <button key={i} onClick={() => setInput(s)} className="text-left text-xs bg-slate-800/60 hover:bg-violet-900/20 text-slate-400 hover:text-violet-300 px-3 py-2.5 rounded-xl border border-slate-700/50 hover:border-violet-700/40 transition-all">{s}</button>
+                  <button key={i} onClick={() => setInput(s)} className="group text-left text-[13px] bg-white/[0.02] hover:bg-violet-500/[0.06] text-slate-400 hover:text-violet-300 px-4 py-3 rounded-xl border border-white/[0.06] hover:border-violet-500/20 transition-all duration-200 hover:scale-[1.02] animate-stagger" style={{ animationDelay: `${i * 80}ms` }}>
+                    <span className="text-slate-600 group-hover:text-violet-500 mr-1.5 transition-colors">&rarr;</span>
+                    {s}
+                  </button>
                 ))}
               </div>
             </div>
           )}
 
           <div className="space-y-5 py-4 min-h-min">
-            {messages.map((msg, i) => (
-              <div key={i} className="animate-in fade-in duration-300">
-                <ChatMessage msg={msg} />
-              </div>
-            ))}
+            {messages.map((msg, i) => {
+              const matchesSearch = !searchQuery || msg.content.toLowerCase().includes(searchQuery.toLowerCase());
+              if (searchQuery && !matchesSearch) return <div key={i} className="opacity-20 transition-opacity duration-300"><ChatMessage msg={msg} /></div>;
+              return (
+                <div key={i}>
+                  <ChatMessage msg={msg} />
+                </div>
+              );
+            })}
 
             {/* Live progress */}
             {loading && liveTurns.length > 0 && (
-              <div className="flex gap-2.5">
-                <div className="h-7 w-7 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0 mt-0.5 animate-pulse">
+              <div className="flex gap-2.5 animate-msg-assistant">
+                <div className="h-7 w-7 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0 mt-0.5 animate-glow">
                   <Bot className="h-4 w-4 text-violet-400" />
                 </div>
                 <div className="bg-slate-800/40 border border-violet-800/20 rounded-2xl px-4 py-3 w-full md:max-w-[85%] space-y-2">
                   <div className="flex items-center gap-2 text-xs text-violet-400">
-                    <Loader2 className="h-3 w-3 animate-spin" /> <span>Working...</span>
+                    <Loader2 className="h-3 w-3 animate-spin" /> <span className="animate-thinking">Working...</span>
                     <span className="text-slate-600">{liveTurns.length} steps</span>
                   </div>
                   <div className="space-y-2">{liveTurns.map((t, j) => <TurnItem key={j} turn={t} />)}</div>
@@ -439,7 +617,7 @@ export default function ChatPage() {
                   <p className="text-sm text-amber-300 font-medium mb-1">Permission requested</p>
                   <code className="block bg-slate-900/80 text-amber-400 px-3 py-2 rounded-lg text-sm font-mono mb-3">{p.pattern}</code>
                   <div className="flex gap-2">
-                    <button onClick={() => approveHost(p.pattern)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-lg text-xs font-medium transition-colors">Approve</button>
+                    <button onClick={() => approveHost(p.pattern, p.namespace)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-lg text-xs font-medium transition-colors">Approve</button>
                     <button onClick={() => denyHost(p.pattern)} className="bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white px-4 py-1.5 rounded-lg text-xs font-medium transition-colors">Deny</button>
                   </div>
                 </div>
@@ -491,18 +669,18 @@ export default function ChatPage() {
 
             {/* Thinking */}
             {loading && liveTurns.length === 0 && hostPending.length === 0 && !elicitation && (
-              <div className="flex gap-2.5">
-                <div className="h-7 w-7 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0 mt-0.5 animate-pulse">
+              <div className="flex gap-2.5 animate-msg-assistant">
+                <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-violet-600/20 to-violet-800/10 border border-violet-500/15 flex items-center justify-center shrink-0 mt-0.5 animate-glow">
                   <Bot className="h-4 w-4 text-violet-400" />
                 </div>
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                      <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                <div className="bg-white/[0.02] border border-white/[0.06] rounded-2xl px-4 py-3 animate-glow">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex gap-1.5">
+                      <div className="h-2 w-2 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <div className="h-2 w-2 rounded-full bg-violet-400/80 animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <div className="h-2 w-2 rounded-full bg-violet-400/60 animate-bounce" style={{ animationDelay: "300ms" }} />
                     </div>
-                    <span className="text-xs text-slate-500">Thinking...</span>
+                    <span className="text-xs text-slate-500 font-medium animate-thinking">Thinking...</span>
                   </div>
                 </div>
               </div>
@@ -513,7 +691,7 @@ export default function ChatPage() {
 
         {/* Scroll to bottom */}
         {showScrollDown && (
-          <button onClick={() => { userScrolledUp.current = false; endRef.current?.scrollIntoView({ behavior: "smooth" }); }} className="absolute bottom-28 right-6 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/60 rounded-full p-2 shadow-xl transition-all z-10">
+          <button onClick={() => { userScrolledUp.current = false; endRef.current?.scrollIntoView({ behavior: "smooth" }); }} className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-violet-600/90 hover:bg-violet-500 hover:scale-110 text-white rounded-full p-2.5 shadow-lg shadow-violet-500/25 transition-all z-10 animate-scale-in backdrop-blur-sm">
             <ArrowDown className="h-4 w-4" />
           </button>
         )}
@@ -529,6 +707,9 @@ export default function ChatPage() {
         {/* Input */}
         <ChatInput input={input} setInput={setInput} loading={loading} execMode={execMode} setExecMode={setExecMode} onSend={send} onStop={stopTask} onFileSelect={handleFileSelect} uploading={uploading} />
       </div>
+
+      {/* Code editor panel */}
+      {showCodeEditor && <CodePanel onClose={() => setShowCodeEditor(false)} tenant={tenant} />}
 
       {/* Task modal */}
       {selectedTask && <TaskModal task={selectedTask} onClose={() => setSelectedTask(null)} />}

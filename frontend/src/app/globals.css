@@ -3,28 +3,42 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #0f0f14;
-  --bg-secondary: #16161e;
-  --bg-tertiary: #1e1e2a;
-  --border: #2a2a3a;
-  --text-primary: #e4e4ef;
-  --text-secondary: #9090a8;
+  --bg-primary: #0a0a10;
+  --bg-secondary: #12121c;
+  --bg-tertiary: #1a1a28;
+  --bg-elevated: #1e1e2e;
+  --border: #1e1e30;
+  --border-strong: #2a2a40;
+  --text-primary: #e8e8f4;
+  --text-secondary: #9494b0;
+  --text-muted: #5c5c78;
   --accent: #8b5cf6;
   --accent-hover: #7c3aed;
+  --accent-glow: rgba(139, 92, 246, 0.15);
 }
 
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* Selection */
+::selection {
+  background: rgba(139, 92, 246, 0.3);
+  color: #fff;
+}
+
+/* Scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2a2a3a transparent;
+  scrollbar-color: #1e1e30 transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 *::-webkit-scrollbar-track {
@@ -33,18 +47,251 @@ body {
 
 *::-webkit-scrollbar-thumb {
   background-color: #2a2a3a;
-  border-radius: 3px;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #3a3a4a;
+}
+
+/* Mode selector colors — static classes so Tailwind includes them */
+.mode-violet { --mode-color: 139 92 246; }
+.mode-sky { --mode-color: 56 189 248; }
+.mode-emerald { --mode-color: 52 211 153; }
+.mode-amber { --mode-color: 251 191 35; }
+.mode-rose { --mode-color: 251 113 133; }
+.mode-cyan { --mode-color: 34 211 238; }
+.mode-orange { --mode-color: 251 146 60; }
+
+.mode-btn {
+  background: rgb(var(--mode-color) / 0.08);
+  border: 1px solid rgb(var(--mode-color) / 0.18);
+}
+.mode-btn:hover {
+  border-color: rgb(var(--mode-color) / 0.35);
+}
+.mode-icon {
+  color: rgb(var(--mode-color));
+}
+.mode-active {
+  background: rgb(var(--mode-color) / 0.12);
+  color: rgb(var(--mode-color));
+}
+
+/* Smooth page transitions */
+main {
+  animation: page-in 0.2s ease-out;
+}
+
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in { animation: slide-in 0.25s ease-out; }
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-right { animation: slide-in-right 0.2s ease-out; }
+
+/* Settings page animations */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in { animation: fade-in 0.2s ease-out; }
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.animate-slide-up { animation: slide-up 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in { animation: scale-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* Chat animations */
+@keyframes msg-in-right {
+  from { opacity: 0; transform: translateX(16px) scale(0.97); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes msg-in-left {
+  from { opacity: 0; transform: translateX(-16px) scale(0.97); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+.animate-msg-user { animation: msg-in-right 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+.animate-msg-assistant { animation: msg-in-left 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+
+@keyframes sidebar-in {
+  from { opacity: 0; transform: translateX(-100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-sidebar-in { animation: sidebar-in 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+.animate-thinking { animation: thinking-pulse 2s ease-in-out infinite; }
+
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-stagger { animation: stagger-in 0.25s ease-out backwards; }
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(139, 92, 246, 0); }
+  50% { box-shadow: 0 0 16px rgba(139, 92, 246, 0.15); }
+}
+.animate-glow { animation: glow-pulse 2s ease-in-out infinite; }
+
+@keyframes tab-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-tab-in { animation: tab-in 0.25s ease-out; }
+
+/* Skeleton loading shimmer */
+.skeleton {
+  background: linear-gradient(90deg, #1e1e2e 25%, #2a2a3a 50%, #1e1e2e 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Glow effect for active elements */
+.glow-violet {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.15), 0 0 40px rgba(139, 92, 246, 0.05);
+}
+
+/* Card hover lift */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  border-color: rgba(139, 92, 246, 0.2);
+}
+
+/* Tooltip base */
+[data-tooltip] {
+  position: relative;
+}
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #e8e8f4;
+  background: #1e1e2e;
+  border: 1px solid #2a2a40;
+  border-radius: 6px;
+  white-space: normal;
+  word-wrap: break-word;
+  z-index: 9999;
+  pointer-events: none;
+  animation: tooltip-in 0.15s ease;
+  max-width: min(320px, 80vw);
+  line-height: 1.4;
+}
+/* Prevent overflow off right edge */
+[data-tooltip]:last-child:hover::after,
+[data-tooltip][data-tooltip-left]:hover::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+@keyframes tooltip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @layer base {
   input,
   textarea,
   select {
-    @apply bg-[#1e1e2a] border border-[#2a2a3a] text-[#e4e4ef] rounded-lg px-3 py-2 outline-none
-      focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors;
+    @apply bg-[#1a1a28] border border-[#1e1e30] text-[#e8e8f4] rounded-lg px-3 py-2 outline-none
+      focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30 transition-all duration-150;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-slate-600;
   }
 
   button {
-    @apply transition-colors duration-150;
+    @apply transition-all duration-150;
   }
+
+  /* Better focus ring for all interactive elements */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    @apply outline-none ring-2 ring-violet-500/40 ring-offset-1 ring-offset-[#0a0a10];
+  }
+}
+
+/* ── LLM Thinking blocks ───────────────────────────────────────────── */
+.thinking-block {
+  margin: 0.5rem 0;
+  border-left: 2px solid rgba(139, 92, 246, 0.3);
+  padding-left: 0.75rem;
+}
+.thinking-block summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: rgba(139, 92, 246, 0.6);
+  list-style: none;
+}
+.thinking-block summary::-webkit-details-marker { display: none; }
+.thinking-block[open] summary { margin-bottom: 0.25rem; }
+.thinking-block > :not(summary) {
+  font-size: 0.7rem;
+  color: rgba(148, 163, 184, 0.6);
+  font-style: italic;
+}
+
+/* ── React Flow: selected edge highlight ───────────────────────────── */
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: rgba(139, 92, 246, 0.9) !important;
+  stroke-width: 3 !important;
+  filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.4));
+}
+.react-flow__edge.selected .react-flow__edge-textbg {
+  fill: rgba(139, 92, 246, 0.15) !important;
+}
+.react-flow__edge.selected .react-flow__edge-text {
+  fill: rgba(139, 92, 246, 1) !important;
+}
+
+/* Node selection outline override (xyflow default is blue) */
+.react-flow__node.selected {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.react-flow__node.selected > div {
+  outline: none !important;
 }

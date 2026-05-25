@@ -14,7 +14,7 @@ from kernelmcp.events import kernel_event_bus, KernelEvent, KernelEventType
 from config import llm_config, litellm_kwargs, resolve_url, load_json, is_docker, \
     DEFAULT_NAMESPACE, DATA_DIR, EGRESS_CONFIG_PATH, settings
 from stores import conversations, audit_collector
-from routes import chat as chat_routes, rag as rag_routes, api as api_routes
+from routes import chat as chat_routes, rag as rag_routes, api as api_routes, stream as stream_routes, metrics as metrics_routes, alerts as alerts_routes, traces as traces_routes, constitution as constitution_routes, regression as regression_routes, eval as eval_routes, marketplace as marketplace_routes
 
 # ── App ──────────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,14 @@ kernel = None
 app.include_router(chat_routes.router)
 app.include_router(rag_routes.router)
 app.include_router(api_routes.router)
+app.include_router(stream_routes.router)
+app.include_router(metrics_routes.router)
+app.include_router(alerts_routes.router)
+app.include_router(traces_routes.router)
+app.include_router(constitution_routes.router)
+app.include_router(regression_routes.router)
+app.include_router(eval_routes.router)
+app.include_router(marketplace_routes.router)
 
 
 # ── Startup ──────────────────────────────────────────────────────────────────
@@ -131,7 +139,18 @@ async def startup():
     # 5. sandboxmcp — uses settings for backend config
     def _sandbox_factory():
         from sandboxmcp import SandboxFactory
+        # Workspace path for Docker mount (read-only)
+        # Docker-in-Docker: the sandbox Docker container is created by the HOST Docker daemon.
+        # So we must pass the HOST path, not the container path.
+        # WORKSPACE_HOST_PATH should be set to the absolute host path that maps to /app/data/workspace
+        ws_host = os.getenv("WORKSPACE_HOST_PATH", "")
+        if not ws_host:
+            # Auto-detect: if /app/data is a docker volume mount, find the host path
+            # Fallback: use the container path (works for process backend, not docker)
+            ws_host = os.getenv("WORKSPACE_ROOT", "/app/data/workspace")
+        ws_root = ws_host
         return SandboxFactory.create(
+            default_backend=os.getenv("SANDBOXMCP_BACKEND", "process"),
             enable_network=True,
             enable_host_access=settings.get("host_exec_enabled", True),
             host_auto_approve=settings.get("auto_approve", False),
@@ -139,6 +158,8 @@ async def startup():
             audit=settings.get("sandbox_audit_store", "sqlite"),
             sqlite_path="/app/data/sandboxmcp.db",
             timeout_seconds=60,
+            workspace_path=ws_root,
+            hardened=False,  # Disable read-only rootfs + seccomp — needed for subprocess/TestClient
         )
 
     # 6. schedulermcp — uses settings
@@ -180,7 +201,7 @@ async def startup():
     kernel = KernelFactory.create(
         llm_model=resolved_model, local_model=resolved_model, fast_model=resolved_model,
         api_key=api_key, base_url=base_url, enable_routing=True,
-        max_turns=settings.get("max_turns", 10),
+        max_turns=int(os.getenv("KERNELMCP_MAX_TURNS", str(settings.get("max_turns", 20)))),
         max_tokens_per_task=settings.get("max_tokens", 50000),
         namespace=DEFAULT_NAMESPACE,
         memory_pipeline=pipelines.get("memory"), planning_pipeline=pipelines.get("planning"),
@@ -198,10 +219,67 @@ async def startup():
     # Wire RAG LLM function for advanced tools (Self-RAG, ReAct)
     kernel.orchestrator.set_rag_llm_fn(_planner_llm_complete)
 
+    # Load persisted tasks from disk
+    from task_store import load_all_tasks as _load_tasks
+    # Migrate JSON files → SQLite (one-time, safe to re-run)
+    from task_store import migrate_json_files
+    migrate_json_files()
+
+    persisted = _load_tasks()
+    if persisted:
+        kernel._tasks.update(persisted)
+        print(f"[STARTUP] loaded {len(persisted)} persisted tasks", flush=True)
+
+    # Pre-warm embedding models (download + load once at startup, not per-query)
+    async def _warmup_embeddings():
+        # 1. Warm up RAG (FastEmbed + Qdrant)
+        try:
+            rag = pipelines.get("rag")
+            if rag and hasattr(rag, 'search'):
+                print("[STARTUP] warming up RAG embedding model...", flush=True)
+                await rag.search("warmup", top_k=1)
+                print("[STARTUP] RAG embedding model ready", flush=True)
+        except Exception as exc:
+            print(f"[STARTUP] RAG warmup failed (non-critical): {exc}", flush=True)
+
+        # 2. Warm up Memory (ChromaDB embedding)
+        try:
+            mem = pipelines.get("memory")
+            if mem:
+                print("[STARTUP] warming up memory/ChromaDB embedding model...", flush=True)
+                # Force ChromaDB to download and cache its model
+                if hasattr(mem, 'query_memory'):
+                    await mem.query_memory("warmup", namespace="default", top_k=1)
+                elif hasattr(mem, 'search'):
+                    await mem.search("warmup", top_k=1)
+                print("[STARTUP] memory embedding model ready", flush=True)
+        except Exception as exc:
+            print(f"[STARTUP] memory warmup failed (non-critical): {exc}", flush=True)
+    asyncio.create_task(_warmup_embeddings())
+
+    # Push egress config to orchestrator at startup
+    try:
+        from config import EGRESS_CONFIG_PATH, DATA_DIR
+        import json as _json
+        egress_cfg = _json.loads(EGRESS_CONFIG_PATH.read_text()) if EGRESS_CONFIG_PATH.exists() else {}
+        # Load tenant domains
+        tenant_domains = []
+        egress_tenant_file = DATA_DIR / f"egress_{DEFAULT_NAMESPACE}.json"
+        if egress_tenant_file.exists():
+            tenant_domains = _json.loads(egress_tenant_file.read_text()).get("allowed_domains", [])
+        kernel._engine._orchestrator._egress_config = {
+            "enabled": egress_cfg.get("enabled", False),
+            "allowed_domains": tenant_domains,
+        }
+        print(f"[STARTUP] egress config: enabled={egress_cfg.get('enabled', False)}, domains={len(tenant_domains)}", flush=True)
+    except Exception as exc:
+        print(f"[STARTUP] egress config load failed: {exc}", flush=True)
+
     # Share kernel with route modules
     chat_routes.kernel = kernel
     rag_routes.kernel = kernel
     api_routes.kernel = kernel
+    stream_routes.kernel = kernel
 
     # Wire scheduler
     if pipelines.get("scheduler"):
@@ -234,6 +312,11 @@ async def startup():
         kernel._engine._orchestrator._host_guards[DEFAULT_NAMESPACE] = default_guard
 
     print(f"[STARTUP] Kernel ready ({kernel.orchestrator.connected_count}/6 servers, model={resolved_model})", flush=True)
+
+    # Start alerting engine background loop
+    from alerting import alert_engine
+    await alert_engine.start()
+    print(f"[STARTUP] Alerting engine started ({len(alert_engine.rules)} rules)", flush=True)
 
     # Forward sub-lib event buses to KernelEventBus
     async def _forward_sublib_events(source_name, event_bus_attr):

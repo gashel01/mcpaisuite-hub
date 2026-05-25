@@ -29,7 +29,7 @@ DEFAULT_SETTINGS = {
     "memory_importance_threshold": 0.5, "memory_max_results": 10, "memory_default_tags": "",
     "scheduler_tick_interval": 15, "scheduler_max_concurrent": 5, "scheduler_enabled": True,
     "rag_chunk_size": 512, "rag_chunk_overlap": 50, "rag_top_k": 5,
-    "rag_embedding_model": "BAAI/bge-small-en-v1.5",
+    "rag_embedding_model": "BAAI/bge-base-en-v1.5",
     # Infrastructure backends
     "memory_backend": "sqlite", "memory_semantic_backend": "chroma", "memory_redis_url": "", "memory_decay_mode": "exponential",
     "memory_neo4j_uri": "", "memory_neo4j_user": "neo4j", "memory_neo4j_password": "",

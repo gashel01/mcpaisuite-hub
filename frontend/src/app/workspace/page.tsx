@@ -22,8 +22,13 @@ import {
   ArrowLeft,
   FolderPlus,
   Plus,
+  HardDrive,
+  AlertCircle,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
+import PageHeader from "@/components/page-header";
+import EmptyState from "@/components/empty-state";
+import { renderMarkdown } from "@/components/markdown";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
 
@@ -121,7 +126,14 @@ export default function WorkspacePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const showToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const headers: Record<string, string> = activeTenant
     ? { "X-Tenant-Id": activeTenant }
@@ -145,6 +157,7 @@ export default function WorkspacePage() {
       setFiles(sorted);
     } catch (_e) {
       setFiles([]);
+      setError("Failed to load files");
     }
   }, [currentPath, activeTenant]);
 
@@ -176,12 +189,12 @@ export default function WorkspacePage() {
     );
   }, [loadFiles, loadStats, loadCheckpoints]);
 
-  // Auto-refresh every 10s
+  // Auto-refresh every 60s
   useEffect(() => {
     const id = setInterval(() => {
       loadFiles();
       loadStats();
-    }, 10000);
+    }, 60000);
     return () => clearInterval(id);
   }, [loadFiles, loadStats]);
 
@@ -218,8 +231,9 @@ export default function WorkspacePage() {
       setEditMode(false);
       loadFiles();
       loadStats();
+      showToast("File saved");
     } catch (_e) {
-      // ignore
+      showToast("Failed to save file", "error");
     } finally {
       setSaving(false);
     }
@@ -238,7 +252,8 @@ export default function WorkspacePage() {
       setNewFolderName("");
       setShowNewFolder(false);
       loadFiles();
-    } catch (_e) { /* ignore */ }
+      showToast("Folder created");
+    } catch (_e) { showToast("Failed to create folder", "error"); }
   };
 
   const deleteFile = async (path: string) => {
@@ -251,8 +266,9 @@ export default function WorkspacePage() {
       setDeleteConfirm(null);
       loadFiles();
       loadStats();
+      showToast("File deleted");
     } catch (_e) {
-      // ignore
+      showToast("Failed to delete", "error");
     }
   };
 
@@ -295,6 +311,7 @@ export default function WorkspacePage() {
         );
         loadFiles();
         loadStats();
+        showToast(`Uploaded ${file.name}`);
       } catch (err) {
         setUploads((prev) =>
           prev.map((u) =>
@@ -332,8 +349,10 @@ export default function WorkspacePage() {
         headers,
       });
       loadFiles();
+      loadStats();
+      showToast("Checkpoint restored");
     } catch (_e) {
-      // ignore
+      showToast("Failed to restore checkpoint", "error");
     }
   };
 
@@ -359,151 +378,104 @@ export default function WorkspacePage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 md:space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <FolderOpen className="h-5 w-5 md:h-6 md:w-6 text-violet-500" />
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-slate-100">
-              Workspace
-            </h1>
-            <p className="text-xs text-slate-500">
-              {stats?.available
-                ? `${stats.total_files ?? 0} files \u00b7 ${formatSize(stats.total_size ?? 0)}`
-                : "Workspace not connected"}
-              {stats?.languages && Object.keys(stats.languages).length > 0 && (
-                <span className="ml-1.5 text-slate-600">
-                  {Object.keys(stats.languages).slice(0, 4).join(", ")}
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
+    <div className="flex flex-col h-full relative" onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl border text-xs font-medium animate-slide-in shadow-xl backdrop-blur-md ${
+          toast.type === "success" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-red-500/10 border-red-500/20 text-red-300"
+        }`}>{toast.message}</div>
+      )}
 
-        <div className="flex items-center gap-2">
-          {/* New Folder */}
-          <button
-            onClick={() => setShowNewFolder(!showNewFolder)}
-            className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg px-3 py-1.5 text-sm transition-colors"
-          >
-            <FolderPlus size={14} />
-            <span className="hidden sm:inline">New Folder</span>
-          </button>
-
-          {/* Refresh */}
-          <button
-            onClick={() => {
-              loadFiles();
-              loadStats();
-              loadCheckpoints();
-            }}
-            className="flex items-center gap-1.5 bg-[#16161e] border border-[#2a2a3a] hover:border-violet-600 text-slate-400 hover:text-slate-200 rounded-lg px-3 py-1.5 text-sm transition-colors"
-          >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-            <span className="hidden sm:inline">Refresh</span>
-          </button>
-        </div>
-      </div>
-
-      {/* New Folder inline form */}
-      {showNewFolder && (
-        <div className="flex gap-2 items-center bg-[#16161e] border border-violet-600/50 rounded-xl px-4 py-3">
-          <FolderPlus size={18} className="text-violet-400 shrink-0" />
-          <input
-            autoFocus
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") setShowNewFolder(false); }}
-            placeholder={currentPath ? `New folder in ${currentPath}/...` : "New folder name..."}
-            className="flex-1 bg-transparent border-none outline-none text-sm text-slate-100 placeholder-slate-500"
-          />
-          <button onClick={createFolder} disabled={!newFolderName.trim()} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg px-3 py-1 text-xs transition-colors">
-            Create
-          </button>
-          <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); }} className="text-slate-500 hover:text-slate-300">
-            <X size={14} />
-          </button>
+      {/* Drag overlay */}
+      {dragOver && (
+        <div className="absolute inset-0 z-50 bg-violet-950/60 backdrop-blur-md flex items-center justify-center">
+          <div className="text-center"><Upload className="h-10 w-10 text-violet-400 mx-auto mb-3 animate-bounce" /><p className="text-lg font-medium text-violet-300">Drop files here</p></div>
         </div>
       )}
 
-      {/* Upload drop zone */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => fileRef.current?.click()}
-        className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${
-          dragOver
-            ? "border-violet-500 bg-violet-950/30"
-            : "border-[#2a2a3a] hover:border-violet-700 hover:bg-[#1a1a24]"
-        }`}
-      >
-        <Upload
-          className={`h-6 w-6 mx-auto mb-2 ${
-            dragOver ? "text-violet-400" : "text-slate-600"
-          }`}
-        />
-        <p className="text-sm text-slate-400">
-          Drop files here or{" "}
-          <span className="text-violet-400 underline">browse</span>
-        </p>
-        <p className="text-xs text-slate-600 mt-0.5">
-          Files will be saved to{" "}
-          {currentPath ? `/${currentPath}` : "workspace root"}
-        </p>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          onChange={handleFileSelect}
-          className="hidden"
-        />
+      {/* Header bar */}
+      <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-white/[0.04]">
+        <FolderOpen className="h-4 w-4 text-violet-400 shrink-0" />
+        <h1 className="text-sm font-semibold text-slate-200">Workspace</h1>
+
+        {/* Stats pills */}
+        {stats && (
+          <div className="flex items-center gap-1.5 ml-2">
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-violet-500/8 border border-violet-500/15 rounded-md">
+              <FileText className="h-2.5 w-2.5 text-violet-400" />
+              <span className="text-[9px] font-medium text-violet-300">{stats.total_files ?? 0}</span>
+            </div>
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-500/8 border border-emerald-500/15 rounded-md">
+              <HardDrive className="h-2.5 w-2.5 text-emerald-400" />
+              <span className="text-[9px] font-medium text-emerald-300">{formatSize(stats.total_size ?? 0)}</span>
+            </div>
+            {checkpoints.length > 0 && (
+              <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-500/8 border border-amber-500/15 rounded-md">
+                <Clock className="h-2.5 w-2.5 text-amber-400" />
+                <span className="text-[9px] font-medium text-amber-300">{checkpoints.length} cp</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex-1" />
+
+        {/* Actions */}
+        <button onClick={() => setShowNewFolder(!showNewFolder)} className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] rounded-lg transition-all">
+          <FolderPlus className="h-3 w-3" /> New Folder
+        </button>
+        <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] rounded-lg transition-all">
+          <Upload className="h-3 w-3" /> Upload
+        </button>
+        <button onClick={() => { loadFiles(); loadStats(); loadCheckpoints(); }} className="p-1.5 text-slate-600 hover:text-slate-300 transition-colors">
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+        </button>
+        <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => { Array.from(e.target.files || []).forEach(f => uploadFile(f)); if (fileRef.current) fileRef.current.value = ""; }} />
       </div>
 
+      {/* Error */}
+      {error && (
+        <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 border-b border-red-500/10 bg-red-500/[0.03] text-[10px] text-red-300">
+          <AlertCircle className="h-3 w-3" /><span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-300"><X size={12} /></button>
+        </div>
+      )}
+
+      {/* New Folder inline form */}
+      {showNewFolder && (
+        <div className="shrink-0 flex gap-2 items-center px-4 py-2 border-b border-violet-500/20 bg-violet-500/[0.03] animate-fade-in">
+          <FolderPlus size={14} className="text-violet-400 shrink-0" />
+          <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") createFolder(); if (e.key === "Escape") setShowNewFolder(false); }}
+            placeholder={currentPath ? `New folder in ${currentPath}/...` : "New folder name..."}
+            className="flex-1 bg-transparent border-none outline-none text-xs text-slate-200 placeholder-slate-600" />
+          <button onClick={createFolder} disabled={!newFolderName.trim()} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-md px-2.5 py-1 text-[10px] transition-colors">Create</button>
+          <button onClick={() => { setShowNewFolder(false); setNewFolderName(""); }} className="text-slate-600 hover:text-slate-300"><X size={12} /></button>
+        </div>
+      )}
+
       {/* Upload progress */}
-      {uploads.length > 0 && (
-        <div className="space-y-1.5">
-          {uploads.slice(0, 5).map((u, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 bg-[#16161e] border border-[#2a2a3a] rounded-lg px-3 py-2"
-            >
-              <FileText className="h-4 w-4 text-slate-500 shrink-0" />
-              <span className="text-sm text-slate-300 flex-1 truncate">
-                {u.name}
-              </span>
-              <span className="text-xs text-slate-600">
-                {formatSize(u.size)}
-              </span>
-              {u.status === "uploading" && (
-                <Loader2 className="h-4 w-4 text-violet-400 animate-spin" />
-              )}
-              {u.status === "done" && (
-                <span className="text-xs text-emerald-400">Done</span>
-              )}
-              {u.status === "error" && (
-                <span className="text-xs text-red-400" title={u.error}>
-                  Failed
-                </span>
-              )}
+      {uploads.length > 0 && uploads[0].status === "uploading" && (
+        <div className="shrink-0 px-4 py-1.5 border-b border-violet-500/10 bg-violet-500/[0.02]">
+          {uploads.slice(0, 3).map((u, i) => (
+            <div key={i} className="flex items-center gap-2 text-[10px]">
+              <FileText className="h-3 w-3 text-slate-500 shrink-0" />
+              <span className="text-slate-300 flex-1 truncate">{u.name}</span>
+              <span className="text-slate-600">{formatSize(u.size)}</span>
+              {u.status === "uploading" && <Loader2 className="h-3 w-3 text-violet-400 animate-spin" />}
+              {u.status === "done" && <span className="text-emerald-400">Done</span>}
+              {u.status === "error" && <span className="text-red-400">Failed</span>}
             </div>
           ))}
         </div>
       )}
 
-      {/* Breadcrumbs + Search */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <nav className="flex items-center gap-1 text-sm overflow-x-auto">
-          <button
-            onClick={() => navigateTo("")}
+      {/* Breadcrumbs + Search bar */}
+      <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 border-b border-white/[0.04]">
+        <nav className="flex items-center gap-1 text-[11px] overflow-x-auto flex-1">
+          <button onClick={() => navigateTo("")}
             className={`px-1.5 py-0.5 rounded transition-colors shrink-0 ${
-              !currentPath
-                ? "text-violet-400 font-medium"
-                : "text-slate-400 hover:text-slate-200"
+              !currentPath ? "text-violet-400 font-medium" : "text-slate-400 hover:text-slate-200"
             }`}
           >
             Home
@@ -529,42 +501,24 @@ export default function WorkspacePage() {
           })}
         </nav>
 
-        {/* Search filter */}
-        <div className="relative">
-          <Search
-            size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-600"
-          />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter files..."
-            className="bg-[#16161e] border border-[#2a2a3a] rounded-lg pl-8 pr-3 py-1.5 text-sm text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-violet-500 w-full sm:w-48"
-          />
+        {/* Search */}
+        <div className="relative shrink-0">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600" />
+          <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Filter..."
+            className="w-32 pl-7 pr-2 py-1 bg-white/[0.02] border border-white/[0.06] rounded-lg text-[10px] text-slate-300 placeholder:text-slate-700 focus:outline-none focus:border-violet-500/30 focus:w-48 transition-all" />
         </div>
       </div>
 
-      {/* File browser + Preview */}
-      <div className="flex flex-col lg:flex-row gap-4">
+      {/* File browser + Preview — full height */}
+      <div className="flex flex-1 min-h-0">
         {/* File list */}
-        <div
-          className={`bg-[#16161e] border border-[#2a2a3a] rounded-xl overflow-hidden flex-1 transition-all ${
-            selectedFile ? "lg:w-1/2" : "w-full"
-          }`}
-        >
+        <div className={`border-r border-white/[0.04] overflow-y-auto transition-all ${selectedFile ? "w-1/2" : "flex-1"}`}>
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-6 w-6 text-violet-400 animate-spin" />
             </div>
           ) : filteredFiles.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 px-4">
-              <FolderOpen className="h-10 w-10 text-slate-700 mb-3" />
-              <p className="text-sm text-slate-500 text-center">
-                {searchQuery
-                  ? "No files match your filter"
-                  : "No files yet. Upload files or use the chat to create them."}
-              </p>
-            </div>
+            <EmptyState icon={FolderOpen} title="No files yet" description="Files created by the agent (code, reports, exports) appear here automatically." action={{ label: "Open Chat", href: "/chat" }} />
           ) : (
             <>
               {/* Desktop table */}
@@ -607,14 +561,15 @@ export default function WorkspacePage() {
                       </tr>
                     )}
 
-                    {filteredFiles.map((f) => (
+                    {filteredFiles.map((f, fi) => (
                       <tr
                         key={f.path}
+                        style={{ animationDelay: `${fi * 20}ms` }}
                         onClick={() => {
                           if (f.is_dir) navigateTo(f.path);
                           else openFile(f.path);
                         }}
-                        className={`cursor-pointer hover:bg-[#1e1e2a] transition-colors border-b border-[#2a2a3a]/50 ${
+                        className={`animate-stagger cursor-pointer hover:bg-[#1e1e2a] transition-colors border-b border-[#2a2a3a]/50 ${
                           selectedFile?.path === f.path
                             ? "bg-violet-600/10"
                             : ""
@@ -698,14 +653,15 @@ export default function WorkspacePage() {
                   </button>
                 )}
 
-                {filteredFiles.map((f) => (
+                {filteredFiles.map((f, fi) => (
                   <div
                     key={f.path}
+                    style={{ animationDelay: `${fi * 20}ms` }}
                     onClick={() => {
                       if (f.is_dir) navigateTo(f.path);
                       else openFile(f.path);
                     }}
-                    className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#1e1e2a] transition-colors ${
+                    className={`animate-stagger flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#1e1e2a] transition-colors ${
                       selectedFile?.path === f.path ? "bg-violet-600/10" : ""
                     }`}
                   >
@@ -758,7 +714,7 @@ export default function WorkspacePage() {
 
         {/* File preview panel */}
         {selectedFile && (
-          <div className="bg-[#16161e] border border-[#2a2a3a] rounded-xl overflow-hidden lg:w-1/2 animate-in slide-in-from-right-4 duration-200">
+          <div className="w-1/2 flex flex-col min-h-0 overflow-hidden animate-slide-in-right">
             {/* Preview header */}
             <div className="flex items-center justify-between border-b border-[#2a2a3a] px-4 py-3">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -828,7 +784,7 @@ export default function WorkspacePage() {
             </div>
 
             {/* Preview content */}
-            <div className="max-h-[60vh] overflow-auto">
+            <div className="flex-1 min-h-0 overflow-auto">
               {editMode ? (
                 <textarea
                   value={editContent}
@@ -836,20 +792,26 @@ export default function WorkspacePage() {
                   className="w-full h-[55vh] bg-transparent text-sm text-slate-300 font-mono p-4 focus:outline-none resize-none leading-relaxed"
                   spellCheck={false}
                 />
+              ) : selectedFile.path.endsWith(".md") || selectedFile.path.endsWith(".mdx") ? (
+                <div className="p-4 prose-kernel text-sm">
+                  {renderMarkdown(selectedFile.content || "")}
+                </div>
+              ) : selectedFile.path.match(/\.(png|jpg|jpeg|gif|svg|webp)$/i) ? (
+                <div className="p-4 flex items-center justify-center">
+                  <img src={`${BASE}/workspace/file?path=${encodeURIComponent(selectedFile.path)}&raw=true`} alt={fileName(selectedFile.path)} className="max-h-[50vh] rounded-lg" />
+                </div>
+              ) : selectedFile.path.endsWith(".json") ? (
+                <pre className="p-4 text-sm text-slate-300 font-mono whitespace-pre overflow-x-auto">
+                  {(() => { try { return JSON.stringify(JSON.parse(selectedFile.content || ""), null, 2); } catch { return selectedFile.content; } })()}
+                </pre>
               ) : (
                 <div className="relative">
                   <div className="flex text-sm font-mono leading-relaxed">
-                    {/* Line numbers */}
                     <div className="select-none px-3 py-4 text-right text-slate-700 border-r border-[#2a2a3a] bg-[#12121a] shrink-0">
-                      {(selectedFile.content || "")
-                        .split("\n")
-                        .map((_, i) => (
-                          <div key={i} className="h-[1.625rem]">
-                            {i + 1}
-                          </div>
-                        ))}
+                      {(selectedFile.content || "").split("\n").map((_, i) => (
+                        <div key={i} className="h-[1.625rem]">{i + 1}</div>
+                      ))}
                     </div>
-                    {/* Code */}
                     <pre className="flex-1 p-4 overflow-x-auto text-slate-300 whitespace-pre">
                       {selectedFile.content || "(empty file)"}
                     </pre>

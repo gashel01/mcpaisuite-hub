@@ -27,6 +27,10 @@ COPY memorymcp/pyproject.toml memorymcp/README.md /tmp/memorymcp/
 RUN mkdir -p /tmp/memorymcp/memorymcp && touch /tmp/memorymcp/memorymcp/__init__.py \
     && pip install --no-cache-dir --no-deps /tmp/memorymcp && rm -rf /tmp/memorymcp
 
+COPY ltpmcp/pyproject.toml ltpmcp/README.md /tmp/ltpmcp/
+RUN mkdir -p /tmp/ltpmcp/ltpmcp && touch /tmp/ltpmcp/ltpmcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/ltpmcp && rm -rf /tmp/ltpmcp
+
 COPY planningmcp/pyproject.toml planningmcp/README.md /tmp/planningmcp/
 RUN mkdir -p /tmp/planningmcp/planningmcp && touch /tmp/planningmcp/planningmcp/__init__.py \
     && pip install --no-cache-dir --no-deps /tmp/planningmcp && rm -rf /tmp/planningmcp
@@ -35,9 +39,14 @@ COPY workspacemcp/pyproject.toml workspacemcp/README.md /tmp/workspacemcp/
 RUN mkdir -p /tmp/workspacemcp/workspacemcp && touch /tmp/workspacemcp/workspacemcp/__init__.py \
     && pip install --no-cache-dir --no-deps /tmp/workspacemcp && rm -rf /tmp/workspacemcp
 
+COPY websearchmcp/pyproject.toml websearchmcp/README.md /tmp/websearchmcp/
+RUN mkdir -p /tmp/websearchmcp/websearchmcp && touch /tmp/websearchmcp/websearchmcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/websearchmcp && rm -rf /tmp/websearchmcp
+
 COPY sandboxmcp/pyproject.toml sandboxmcp/README.md /tmp/sandboxmcp/
 RUN mkdir -p /tmp/sandboxmcp/sandboxmcp && touch /tmp/sandboxmcp/sandboxmcp/__init__.py \
-    && pip install --no-cache-dir --no-deps /tmp/sandboxmcp && rm -rf /tmp/sandboxmcp
+    && pip install --no-cache-dir --no-deps /tmp/sandboxmcp && rm -rf /tmp/sandboxmcp \
+    && pip install --no-cache-dir docker>=7.0
 
 COPY schedulermcp/pyproject.toml schedulermcp/README.md /tmp/schedulermcp/
 RUN mkdir -p /tmp/schedulermcp/schedulermcp && touch /tmp/schedulermcp/schedulermcp/__init__.py \
@@ -47,6 +56,10 @@ COPY ragmcp/pyproject.toml ragmcp/README.md /tmp/ragmcp/
 RUN mkdir -p /tmp/ragmcp/ragmcp && touch /tmp/ragmcp/ragmcp/__init__.py \
     && pip install --no-cache-dir "/tmp/ragmcp[fastembed,qdrant]" && rm -rf /tmp/ragmcp
 
+COPY evalmcp/pyproject.toml evalmcp/README.md /tmp/evalmcp/
+RUN mkdir -p /tmp/evalmcp/evalmcp && touch /tmp/evalmcp/evalmcp/__init__.py \
+    && pip install --no-cache-dir --no-deps /tmp/evalmcp && rm -rf /tmp/evalmcp
+
 COPY kernelmcp/pyproject.toml kernelmcp/README.md /tmp/kernelmcp/
 RUN mkdir -p /tmp/kernelmcp/kernelmcp && touch /tmp/kernelmcp/kernelmcp/__init__.py \
     && pip install --no-cache-dir --no-deps /tmp/kernelmcp && rm -rf /tmp/kernelmcp
@@ -54,11 +67,14 @@ RUN mkdir -p /tmp/kernelmcp/kernelmcp && touch /tmp/kernelmcp/kernelmcp/__init__
 # ── Layer 2: source code (changes often → fast rebuild) ──────────────────
 # Just copy Python source into the already-installed site-packages
 COPY memorymcp/memorymcp/ /usr/local/lib/python3.11/site-packages/memorymcp/
+COPY ltpmcp/ltpmcp/ /usr/local/lib/python3.11/site-packages/ltpmcp/
 COPY planningmcp/planningmcp/ /usr/local/lib/python3.11/site-packages/planningmcp/
 COPY workspacemcp/workspacemcp/ /usr/local/lib/python3.11/site-packages/workspacemcp/
+COPY websearchmcp/websearchmcp/ /usr/local/lib/python3.11/site-packages/websearchmcp/
 COPY sandboxmcp/sandboxmcp/ /usr/local/lib/python3.11/site-packages/sandboxmcp/
 COPY schedulermcp/schedulermcp/ /usr/local/lib/python3.11/site-packages/schedulermcp/
 COPY ragmcp/ragmcp/ /usr/local/lib/python3.11/site-packages/ragmcp/
+COPY evalmcp/evalmcp/ /usr/local/lib/python3.11/site-packages/evalmcp/
 COPY kernelmcp/kernelmcp/ /usr/local/lib/python3.11/site-packages/kernelmcp/
 
 # ── Layer 3: demo app (changes most often → always fast) ─────────────────

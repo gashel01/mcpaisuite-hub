@@ -11,6 +11,14 @@ from kernelmcp.events import kernel_event_bus, KernelEvent, KernelEventType
 
 from config import ns, llm_config, settings, litellm_kwargs, save_json, load_json, \
     LLM_CONFIG_PATH, SETTINGS_PATH, EGRESS_CONFIG_PATH, DATA_DIR, DEFAULT_SETTINGS, is_docker
+from task_store import save_task as _persist_task, load_all_tasks as _load_persisted_tasks
+
+_SCHEDULES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "schedules")
+os.makedirs(_SCHEDULES_DIR, exist_ok=True)
+
+# In-memory egress state (mutable container to survive module-level issues)
+_egress_state = {"enabled": False}
+
 from pydantic import BaseModel
 from models import LLMConfigIn, ConstitutionBody, WebhookBody, SpawnAgentRequest, SettingsIn
 from stores import audit_collector
@@ -45,6 +53,125 @@ async def get_config():
 async def stats():
     k = _require()
     return (await k.get_stats()).model_dump()
+
+
+class ToolCallRequest(BaseModel):
+    tool: str
+    args: dict = {}
+
+
+@router.post("/api/tool")
+async def call_tool(body: ToolCallRequest, x_tenant_id: str = Header(default="")):
+    """Generic MCP tool dispatcher — calls any kernel tool by name."""
+    k = _require()
+    tool_name = body.tool
+    args = body.args
+    namespace = ns(x_tenant_id)
+
+    # Built-in tools that map to kernel methods directly
+    if tool_name == "get_analytics":
+        stats_data = (await k.get_stats()).model_dump()
+        # Enrich with top tools and models from audit
+        top_tools = audit_collector.top_tools(limit=10)
+        top_models = audit_collector.top_models(limit=5)
+        stats_data["top_tools"] = top_tools
+        stats_data["top_models"] = top_models
+        total_tasks = stats_data["tasks_completed"] + stats_data["tasks_failed"]
+        stats_data["avg_tokens_per_task"] = (
+            stats_data["total_tokens"] / max(total_tasks, 1)
+        )
+        # Compute avg duration from actual tasks
+        all_tasks = [t for t in k._tasks.values() if t.namespace == namespace or t.namespace.startswith(f"{namespace}__")]
+        durations = [t.duration_ms for t in all_tasks if hasattr(t, "duration_ms") and t.duration_ms and t.duration_ms > 0]
+        stats_data["avg_duration_ms"] = round(sum(durations) / max(len(durations), 1)) if durations else 0
+        return {"result": stats_data}
+
+    if tool_name == "list_tasks":
+        # Include tasks from sub-namespaces (e.g. demo__run_xxx)
+        all_tasks = list(k._tasks.values())
+        tasks_list = [t for t in all_tasks if t.namespace == namespace or t.namespace.startswith(f"{namespace}__") or t.namespace.startswith(f"{namespace}")]
+        tasks_list.sort(key=lambda t: t.created_at.timestamp() if t.created_at else 0, reverse=True)
+        def _task_label(t):
+            # Prefer original_message for chat tasks (goal includes conversation context)
+            om = t.metadata.get("original_message", "") if isinstance(t.metadata, dict) else ""
+            if om:
+                return om[:200]
+            g = t.goal or ""
+            # Strip conversation context prefix
+            if "[Current message]" in g:
+                return g.split("[Current message]")[-1].strip()[:200]
+            return g[:200]
+        return {"result": {"tasks": [
+            {"task_id": t.id, "query": _task_label(t), "status": t.status.value,
+             "created_at": t.created_at.timestamp() if t.created_at else 0,
+             "duration_ms": round(t.duration_ms) if hasattr(t, "duration_ms") else None,
+             "source": "chat" if t.metadata.get("conversation_id") else "taskforce",
+             "tokens": t.total_tokens, "cost": round(t.total_cost, 6)}
+            for t in tasks_list[:100]
+        ]}}
+
+    if tool_name == "get_trace":
+        task_id = args.get("task_id", "")
+        task = k._tasks.get(task_id)  # Direct lookup, no namespace filter
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        from models import flatten_turns
+        return {"result": {"turns": flatten_turns(task)}}
+
+    if tool_name == "compare_runs":
+        task_a_id = args.get("task_a", "")
+        task_b_id = args.get("task_b", "")
+        a = await k.get_task(task_a_id, namespace=namespace)
+        b = await k.get_task(task_b_id, namespace=namespace)
+        if not a or not b:
+            raise HTTPException(status_code=404, detail="Task not found")
+        diff = {
+            "status": {"a": a.status.value, "b": b.status.value},
+            "turns": {"a": a.total_turns, "b": b.total_turns},
+            "tokens": {"a": a.total_tokens, "b": b.total_tokens},
+            "cost": {"a": round(a.total_cost, 6), "b": round(b.total_cost, 6)},
+        }
+        return {"result": {"task_a": task_a_id, "task_b": task_b_id, "diff": diff}}
+
+    if tool_name == "improve":
+        dry_run = args.get("dry_run", True)
+        # Simple meta-analysis based on recent tasks
+        tasks_list = await k.list_tasks(namespace)
+        total = len(tasks_list)
+        failed = sum(1 for t in tasks_list if t.status.value == "failed")
+        result = {
+            "total_runs": total,
+            "failed_runs": failed,
+            "slow_runs": 0,
+            "expensive_runs": 0,
+            "suggestions": [],
+        }
+        if failed > 0 and total > 0:
+            fail_rate = failed / total
+            if fail_rate > 0.3:
+                result["suggestions"].append({
+                    "type": "constitution",
+                    "content": "Add error handling guidelines to the constitution",
+                    "rationale": f"{failed}/{total} tasks failed ({fail_rate:.0%}). The agent may need clearer instructions on retry strategies.",
+                    "confidence": min(0.5 + fail_rate, 0.95),
+                })
+        if total > 5:
+            result["suggestions"].append({
+                "type": "tool_config",
+                "content": "Consider enabling LTP mode for structured tasks",
+                "rationale": "With enough task history, LTP compilation can reduce token usage by 40-60% on structured tasks.",
+                "confidence": 0.7,
+            })
+        if not dry_run:
+            return {"result": {"applied": len(result["suggestions"]), "details": [s["content"] for s in result["suggestions"]]}}
+        return {"result": result}
+
+    # Fallback: try to execute via orchestrator
+    try:
+        tool_result = await k.orchestrator.execute_tool(tool_name, args, namespace)
+        return {"result": tool_result}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Tool '{tool_name}' failed: {exc}")
 
 
 @router.get("/servers")
@@ -333,13 +460,20 @@ async def save_settings(body: SettingsIn):
 @router.get("/constitution")
 async def get_constitution():
     k = _require()
-    return {"rules": k._engine._constitution.rules}
+    c = k._engine._constitution
+    return {
+        "rules": c.user_rules if hasattr(c, 'user_rules') else c.rules,
+        "meta_rules": c.meta_rules if hasattr(c, 'meta_rules') else [],
+        "effective": c.render() if hasattr(c, 'render') else c.rules,
+    }
 
 
 @router.post("/constitution")
 async def update_constitution(body: ConstitutionBody):
     k = _require()
     k._engine._constitution.update_rules(body.rules)
+    # Propagate dynamic layers only (meta + user) to agent runtime
+    k._engine._llm._custom_agent_rules = k._engine._constitution.render_dynamic_rules()
     return {"rules": body.rules, "updated": True}
 
 
@@ -371,15 +505,24 @@ async def get_egress(x_tenant_id: str = Header(default="")):
     net = _get_egress()
     tenant_ns = ns(x_tenant_id)
     tenant_domains = _get_tenant_egress(tenant_ns)
-    return {"enabled": net._enabled if net else False, "allowed_domains": list(tenant_domains)}
+    return {"enabled": _egress_state["enabled"], "allowed_domains": list(tenant_domains)}
 
 
 @router.post("/egress/toggle")
-async def toggle_egress(enabled: bool = Query(...)):
+async def toggle_egress(enabled: bool = Query(None)):
+    if enabled is None:
+        enabled = not _egress_state["enabled"]
+    _egress_state["enabled"] = enabled
     net = _get_egress()
     if net: net._enabled = enabled
     save_json(EGRESS_CONFIG_PATH, {"enabled": enabled})
-    return {"enabled": enabled}
+    # Push config to orchestrator for egress guard
+    if kernel:
+        orch = kernel._engine._orchestrator
+        if not hasattr(orch, '_egress_config'):
+            orch._egress_config = {}
+        orch._egress_config["enabled"] = enabled
+    return {"enabled": _egress_state["enabled"]}
 
 
 @router.post("/egress/allow")
@@ -388,10 +531,15 @@ async def allow_domain(domain: str = Query(...), x_tenant_id: str = Header(defau
     tenant_domains = _get_tenant_egress(tenant_ns)
     tenant_domains.add(domain)
     _tenant_egress[tenant_ns] = tenant_domains
-    # Also add to global so sandbox allows it
     net = _get_egress()
     if net: net._global_allowed = getattr(net, "_global_allowed", set()) | {domain}
     _save_tenant_egress(tenant_ns)
+    # Push to orchestrator
+    if kernel:
+        orch = kernel._engine._orchestrator
+        if not hasattr(orch, '_egress_config'):
+            orch._egress_config = {}
+        orch._egress_config["allowed_domains"] = list(tenant_domains)
     return {"domain": domain}
 
 
@@ -402,6 +550,11 @@ async def remove_domain(domain: str = Query(...), x_tenant_id: str = Header(defa
     tenant_domains.discard(domain)
     _tenant_egress[tenant_ns] = tenant_domains
     _save_tenant_egress(tenant_ns)
+    if kernel:
+        orch = kernel._engine._orchestrator
+        if not hasattr(orch, '_egress_config'):
+            orch._egress_config = {}
+        orch._egress_config["allowed_domains"] = list(tenant_domains)
     return {"removed": domain}
 
 
@@ -417,27 +570,51 @@ def _get_host_guard(tenant_ns: str = "default"):
 async def get_host_access(x_tenant_id: str = Header(default="")):
     tenant_ns = ns(x_tenant_id)
     g = _get_host_guard(tenant_ns)
-    if not g: return {"approved": [], "pending": []}
-    # Extract pending requests from the HostGuard's _pending dict (key = "namespace:pattern")
+    approved = list(getattr(g, "_approved", getattr(g, "approved", []))) if g else []
+    # Aggregate pending from ALL namespace guards (agent runs use sub-namespaces)
     pending = []
-    for key in list(getattr(g, "_pending", {}).keys()):
-        parts = key.split(":", 1)
-        pattern = parts[1] if len(parts) > 1 else parts[0]
-        pending.append({"pattern": pattern, "key": key})
-    return {"approved": list(getattr(g, "_approved", getattr(g, "approved", []))), "pending": pending}
+    if kernel:
+        orch = kernel._engine._orchestrator
+        for guard_ns, guard in getattr(orch, '_host_guards', {}).items():
+            if guard_ns.startswith(tenant_ns):
+                for key in list(getattr(guard, "_pending", {}).keys()):
+                    parts = key.split(":", 1)
+                    pattern = parts[1] if len(parts) > 1 else parts[0]
+                    pending.append({"pattern": pattern, "key": key, "namespace": guard_ns})
+    return {"approved": approved, "pending": pending}
 
 
 @router.post("/host/approve")
-async def approve_host(pattern: str = Query(...), x_tenant_id: str = Header(default="")):
+async def approve_host(pattern: str = Query(...), guard_ns: str = Query(None), x_tenant_id: str = Header(default="")):
     tenant_ns = ns(x_tenant_id)
-    g = _get_host_guard(tenant_ns)
-    if not g: raise HTTPException(503, "No host guard")
     if pattern == "*": raise HTTPException(400, "Wildcard not allowed")
-    # Resolve the pending future so the blocked request_access() call continues
-    if hasattr(g, "approve_access"):
-        g.approve_access(tenant_ns, pattern)
-    else:
-        g._approved.append(pattern)
+    # Try to find the guard with the pending request (might be in a sub-namespace)
+    approved = False
+    if kernel and guard_ns:
+        orch = kernel._engine._orchestrator
+        g = getattr(orch, '_host_guards', {}).get(guard_ns)
+        if g and hasattr(g, "approve_access"):
+            g.approve_access(guard_ns, pattern)
+            approved = True
+    if not approved:
+        # Fallback: try all guards that match the tenant
+        if kernel:
+            orch = kernel._engine._orchestrator
+            for gns, guard in getattr(orch, '_host_guards', {}).items():
+                if gns.startswith(tenant_ns) and hasattr(guard, "_pending"):
+                    for key in list(guard._pending.keys()):
+                        if pattern in key:
+                            guard.approve_access(gns, pattern)
+                            approved = True
+                            break
+                if approved: break
+    if not approved:
+        g = _get_host_guard(tenant_ns)
+        if not g: raise HTTPException(503, "No host guard")
+        if hasattr(g, "approve_access"):
+            g.approve_access(tenant_ns, pattern)
+        else:
+            g._approved.append(pattern)
     save_json(DATA_DIR / f"host_config_{tenant_ns}.json", {"approved": list(getattr(g, "_approved", getattr(g, "approved", [])))})
     return {"approved": pattern}
 
@@ -463,35 +640,401 @@ async def deny_host(pattern: str = Query(...), x_tenant_id: str = Header(default
     return {"denied": pattern}
 
 
+@router.post("/host/block-safe")
+async def block_safe_pattern(pattern: str = Query(...), x_tenant_id: str = Header(default="")):
+    """Remove a pattern from safe (auto-allowed) list and add to blocked."""
+    g = _get_host_guard(ns(x_tenant_id))
+    if not g:
+        raise HTTPException(503, "No host guard")
+    # Remove from safe/always_allowed
+    always = getattr(g, '_always_allowed', [])
+    if isinstance(always, list):
+        try: always.remove(pattern)
+        except ValueError: pass
+    elif isinstance(always, set):
+        always.discard(pattern)
+    # Add to blocked
+    blocked = getattr(g, '_blocked', getattr(g, '_denied', []))
+    if isinstance(blocked, list) and pattern not in blocked:
+        blocked.append(pattern)
+    elif isinstance(blocked, set):
+        blocked.add(pattern)
+    audit_collector.emit("host", "safe_pattern_blocked", {"pattern": pattern})
+    return {"blocked": pattern}
+
+
+@router.post("/host/unblock")
+async def unblock_pattern(pattern: str = Query(...), x_tenant_id: str = Header(default="")):
+    """Remove a pattern from blocked list."""
+    g = _get_host_guard(ns(x_tenant_id))
+    if not g:
+        raise HTTPException(503, "No host guard")
+    blocked = getattr(g, '_blocked', getattr(g, '_denied', []))
+    if isinstance(blocked, list):
+        try: blocked.remove(pattern)
+        except ValueError: pass
+    elif isinstance(blocked, set):
+        blocked.discard(pattern)
+    audit_collector.emit("host", "pattern_unblocked", {"pattern": pattern})
+    return {"unblocked": pattern}
+
+
+# ── Vault (Secrets Management) ──────────────────────────────────────────────
+
+@router.get("/vault/secrets")
+async def list_vault_secrets(x_tenant_id: str = Header(default="")):
+    k = _require()
+    orch = k._engine._orchestrator
+    v = getattr(orch.sandbox, '_vault', None) if hasattr(orch, 'sandbox') and orch.sandbox else None
+    if not v:
+        return {"keys": []}
+    keys = await v.list_keys(ns(x_tenant_id) or "default")
+    return {"keys": keys}
+
+@router.post("/vault/secrets")
+async def add_vault_secret(body: dict, x_tenant_id: str = Header(default="")):
+    k = _require()
+    orch = k._engine._orchestrator
+    v = getattr(orch.sandbox, '_vault', None) if hasattr(orch, 'sandbox') and orch.sandbox else None
+    if not v:
+        raise HTTPException(503, "Vault not available")
+    key = body.get("key", "").strip()
+    value = body.get("value", "")
+    if not key:
+        raise HTTPException(400, "Key required")
+    await v.set_secret(ns(x_tenant_id) or "default", key, value)
+    audit_collector.emit("vault", "secret_added", {"key": key})
+    return {"key": key, "added": True}
+
+@router.delete("/vault/secrets")
+async def delete_vault_secret(key: str = Query(...), x_tenant_id: str = Header(default="")):
+    k = _require()
+    orch = k._engine._orchestrator
+    v = getattr(orch.sandbox, '_vault', None) if hasattr(orch, 'sandbox') and orch.sandbox else None
+    if not v:
+        raise HTTPException(503, "Vault not available")
+    await v.delete_secret(ns(x_tenant_id) or "default", key)
+    audit_collector.emit("vault", "secret_deleted", {"key": key})
+    return {"key": key, "deleted": True}
+
+
+# ── Security Settings ───────────────────────────────────────────────────────
+
+@router.post("/security/settings")
+async def update_security_settings(body: dict):
+    """Update security settings (code safety, host access, sandbox limits)."""
+    k = _require()
+    orch = k._engine._orchestrator
+    result = {}
+
+    # Code safety: reject_dangerous
+    if "reject_dangerous" in body:
+        val = bool(body["reject_dangerous"])
+        if hasattr(orch, 'sandbox') and orch.sandbox:
+            v = getattr(orch.sandbox, '_validator', None)
+            if v:
+                v.reject_dangerous = val
+                result["reject_dangerous"] = val
+
+    # Code safety: auto_fix
+    if "auto_fix" in body:
+        val = bool(body["auto_fix"])
+        if hasattr(orch, 'sandbox') and orch.sandbox:
+            v = getattr(orch.sandbox, '_validator', None)
+            if v:
+                v.auto_fix_enabled = val
+                result["auto_fix"] = val
+
+    # Host: auto_approve
+    if "auto_approve" in body:
+        val = bool(body["auto_approve"])
+        hg = getattr(orch, '_host_guard', None) or getattr(orch, 'host_guard', None)
+        if hg:
+            hg._auto_approve = val
+            result["auto_approve"] = val
+
+    # Sandbox: timeout, max_ram
+    if "sandbox_timeout" in body:
+        val = int(body["sandbox_timeout"])
+        if hasattr(orch, 'sandbox') and orch.sandbox:
+            orch.sandbox._timeout = val
+            result["sandbox_timeout"] = val
+
+    if "sandbox_max_ram" in body:
+        val = int(body["sandbox_max_ram"])
+        if hasattr(orch, 'sandbox') and orch.sandbox:
+            orch.sandbox._max_ram_mb = val
+            result["sandbox_max_ram"] = val
+
+    # Code safety: toggle individual patterns
+    if "disable_pattern" in body:
+        name = str(body["disable_pattern"])
+        if hasattr(orch, 'sandbox') and orch.sandbox:
+            v = getattr(orch.sandbox, '_validator', None)
+            if v and hasattr(v, 'disable_pattern'):
+                v.disable_pattern(name)
+                result["disabled_pattern"] = name
+
+    if "enable_pattern" in body:
+        name = str(body["enable_pattern"])
+        if hasattr(orch, 'sandbox') and orch.sandbox:
+            v = getattr(orch.sandbox, '_validator', None)
+            if v and hasattr(v, 'enable_pattern'):
+                v.enable_pattern(name)
+                result["enabled_pattern"] = name
+
+    # DLP: toggle individual patterns
+    if "disable_dlp_pattern" in body:
+        name = str(body["disable_dlp_pattern"])
+        if not hasattr(k, '_disabled_dlp_patterns'):
+            k._disabled_dlp_patterns = set()
+        k._disabled_dlp_patterns.add(name)
+        result["disabled_dlp_pattern"] = name
+
+    if "enable_dlp_pattern" in body:
+        name = str(body["enable_dlp_pattern"])
+        if hasattr(k, '_disabled_dlp_patterns'):
+            k._disabled_dlp_patterns.discard(name)
+        result["enabled_dlp_pattern"] = name
+
+    # Sandbox: network mode
+    if "sandbox_network" in body:
+        val = bool(body["sandbox_network"])
+        if hasattr(orch, 'sandbox') and orch.sandbox:
+            backend = getattr(orch.sandbox, '_backend', None)
+            if backend and hasattr(backend, '_network_mode'):
+                backend._network_mode = "bridge" if val else "none"
+                result["sandbox_network"] = val
+            ng = getattr(orch.sandbox, '_network', None)
+            if ng and hasattr(ng, '_enabled'):
+                # Sync network guard with sandbox network mode
+                pass
+
+    audit_collector.emit("security", "settings_changed", result)
+    return {"updated": result}
+
+
+# ── Security Posture & Audit ────────────────────────────────────────────────
+
+@router.get("/security/posture")
+async def security_posture(x_tenant_id: str = Header(default="")):
+    k = _require()
+    namespace = ns(x_tenant_id)
+    orch = k._engine._orchestrator
+
+    # Egress
+    _eg_ns = ns(x_tenant_id)
+    _eg_domains = list(_get_tenant_egress(_eg_ns))
+    egress_data = {"enabled": _egress_state["enabled"], "allowed_domains": _eg_domains, "pending_count": 0}
+
+    # Host
+    host_data = {"approved_count": 0, "pending_count": 0, "blocked_count": 0, "auto_approve": False,
+                 "approved_patterns": [], "blocked_patterns": [], "safe_patterns": []}
+    hg = getattr(orch, '_host_guards', {}).get(namespace) or getattr(orch, '_host_guards', {}).get("default")
+    if not hg and hasattr(orch, 'sandbox'):
+        hg = getattr(orch.sandbox, '_host_guard', None)
+    if hg:
+        host_data["approved_patterns"] = list(getattr(hg, '_approved', []))
+        host_data["approved_count"] = len(host_data["approved_patterns"])
+        host_data["blocked_patterns"] = list(getattr(hg, '_blocked', []))
+        host_data["blocked_count"] = len(host_data["blocked_patterns"])
+        host_data["safe_patterns"] = list(getattr(hg, '_always_allowed', []))
+        host_data["auto_approve"] = getattr(hg, '_auto_approve', False)
+        pending = getattr(hg, '_pending', {})
+        host_data["pending_count"] = len(pending)
+
+    # Validator
+    validator_data = {"reject_dangerous": True, "auto_fix": True, "disabled_patterns": []}
+    if hasattr(orch, 'sandbox') and orch.sandbox:
+        v = getattr(orch.sandbox, '_validator', None)
+        if v:
+            validator_data["reject_dangerous"] = getattr(v, 'reject_dangerous', True)
+            validator_data["auto_fix"] = getattr(v, 'auto_fix_enabled', True)
+            validator_data["disabled_patterns"] = list(getattr(v, '_disabled_patterns', set()))
+
+    # Sandbox limits
+    sandbox_data = {"timeout": 60, "max_ram_mb": 512, "network_enabled": True}
+    if hasattr(orch, 'sandbox') and orch.sandbox:
+        sandbox_data["timeout"] = getattr(orch.sandbox, '_timeout', 60)
+        sandbox_data["max_ram_mb"] = getattr(orch.sandbox, '_max_ram_mb', 512)
+        backend = getattr(orch.sandbox, '_backend', None)
+        if backend:
+            sandbox_data["network_enabled"] = getattr(backend, '_network_mode', 'none') != 'none'
+
+    # Constitution
+    const_data = {"rules_count": 0, "has_custom_rules": False, "rules": "", "effective": "", "active_templates": []}
+    if hasattr(k._engine, '_constitution') and k._engine._constitution:
+        c = k._engine._constitution
+        rules = getattr(c, '_user_rules', '') or getattr(c, '_rules', '') or ''
+        const_data["rules"] = rules
+        const_data["rules_count"] = len([l for l in rules.split('\n') if l.strip()]) if rules else 0
+        const_data["has_custom_rules"] = bool(rules.strip())
+        const_data["effective"] = getattr(c, 'render', lambda: rules)() if hasattr(c, 'render') else rules
+        # Detect active templates by header markers
+        _TPL_IDS = {"Safety First": "safety", "Privacy & Data": "privacy", "Code Quality": "quality", "Web Safety": "web", "French Output": "language", "Concise Mode": "concise", "Always Plan": "planning", "Workspace Hygiene": "workspace"}
+        const_data["active_templates"] = [tid for label, tid in _TPL_IDS.items() if f"## {label}" in rules]
+
+    # Vault
+    vault_data = {"secret_count": 0}
+    if hasattr(orch, 'sandbox') and orch.sandbox:
+        v = getattr(orch.sandbox, '_vault', None)
+        if v:
+            # Try to count secrets across known namespaces
+            try:
+                keys = getattr(v, 'list_keys', lambda ns: [])(namespace)
+                if asyncio.iscoroutine(keys): keys = await keys
+                vault_data["secret_count"] = len(keys) if keys else 0
+            except: pass
+
+    return {
+        "egress": egress_data,
+        "host": host_data,
+        "validator": validator_data,
+        "sandbox": sandbox_data,
+        "constitution": const_data,
+        "vault": vault_data,
+        "dlp": {"patterns_count": 14, "enabled": True, "disabled_patterns": list(getattr(k, '_disabled_dlp_patterns', set()))},
+    }
+
+
+@router.get("/security/audit")
+async def security_audit(x_tenant_id: str = Header(default=""), limit: int = 200):
+    security_types = {"host_denied", "host_approved", "egress_blocked", "egress_approved",
+                      "code_rejected", "code_validated", "secret_detected", "dlp_scan",
+                      "approval_granted", "approval_denied", "sandbox_blocked"}
+    security_sources = {"sandbox", "validator", "host", "egress", "workspace", "dlp"}
+
+    all_events = audit_collector.get_recent(limit=500)
+    # Filter events that are security-relevant (by source or type)
+    filtered = [e for e in all_events if e.get("source", "") in security_sources or e.get("type", "") in security_types][:limit]
+
+    # Compute stats
+    blocked = sum(1 for e in filtered if any(w in e.get("type", "") for w in ("denied", "rejected", "blocked")))
+    approved = sum(1 for e in filtered if any(w in e.get("type", "") for w in ("approved", "granted")))
+    secrets = sum(1 for e in filtered if "secret" in e.get("type", "") or "dlp" in e.get("type", ""))
+
+    return {
+        "events": filtered,
+        "stats": {"total": len(filtered), "blocked": blocked, "approved": approved, "secrets_detected": secrets}
+    }
+
+
 # ── Schedules ────────────────────────────────────────────────────────────────
 
 @router.get("/schedules")
-async def list_schedules(x_tenant_id: str = Header(default="")):
+async def list_schedules(x_tenant_id: str = Header(default=""), status: str = ""):
     k = _require()
     sched = k._engine._orchestrator.scheduler
     if not sched: return {"jobs": []}
     try:
         tenant_ns = ns(x_tenant_id)
         all_jobs = await sched.list_jobs(namespace=tenant_ns)
-        # Only return pending/active jobs — completed ones show in task history
-        jobs = [j for j in all_jobs if getattr(j, "status", "") not in ("completed", "cancelled", "failed")]
+        # Fallback: if no jobs found for this namespace, try without namespace filter
+        if not all_jobs:
+            all_jobs = await sched.list_jobs(namespace="")
+        if status:
+            all_jobs = [j for j in all_jobs if (getattr(j, "status", "").value if hasattr(getattr(j, "status", ""), "value") else str(getattr(j, "status", ""))) == status]
+
+        def _serialize_result(r):
+            if not r: return None
+            return {
+                "run_id": getattr(r, "run_id", ""),
+                "success": getattr(r, "success", True),
+                "output": (getattr(r, "output", "") or "")[:500],
+                "error": (getattr(r, "error", "") or "")[:500],
+                "started_at": getattr(r, "started_at", "").isoformat() if hasattr(getattr(r, "started_at", None), "isoformat") else None,
+                "completed_at": getattr(r, "completed_at", "").isoformat() if hasattr(getattr(r, "completed_at", None), "isoformat") else None,
+                "duration_ms": getattr(r, "duration_ms", 0),
+                "tokens_used": getattr(r, "tokens_used", 0),
+                "cost": getattr(r, "cost", 0),
+            }
+
         def _serialize(j):
-            st = getattr(j, "schedule_type", "once")
-            status = getattr(j, "status", "scheduled")
+            st = getattr(j, "job_type", getattr(j, "schedule_type", "once"))
+            status_val = getattr(j, "status", "scheduled")
             nr = getattr(j, "next_run", None)
+            lr = getattr(j, "last_run", None)
+            ca = getattr(j, "created_at", None)
             return {
                 "id": j.id,
                 "goal": j.goal,
                 "schedule_type": st.value if hasattr(st, "value") else str(st),
-                "status": status.value if hasattr(status, "value") else str(status),
-                "next_run": nr.isoformat() if nr else None,
+                "status": status_val.value if hasattr(status_val, "value") else str(status_val),
+                "next_run": nr.isoformat() if hasattr(nr, "isoformat") else None,
+                "last_run": lr.isoformat() if hasattr(lr, "isoformat") else None,
+                "created_at": ca.isoformat() if hasattr(ca, "isoformat") else None,
                 "run_count": getattr(j, "run_count", 0),
                 "namespace": getattr(j, "namespace", ""),
+                "enabled": getattr(j, "enabled", True),
+                "cron": getattr(j, "cron", None) or None,
+                "interval_seconds": getattr(j, "interval_seconds", None) or None,
+                "delay_seconds": getattr(j, "delay_seconds", None) or None,
+                "watch_command": getattr(j, "watch_command", None) or None,
+                "watch_condition": getattr(j, "watch_condition", None) or None,
+                "watch_interval": getattr(j, "watch_interval", None) or None,
+                "watch_last_value": getattr(j, "watch_last_value", None) or None,
+                "consecutive_failures": getattr(j, "consecutive_failures", 0),
+                "max_failures": getattr(j, "max_failures", 3),
+                "retry_count": getattr(j, "retry_count", 0),
+                "max_retries": getattr(j, "max_retries", 3),
+                "next_retry_at": getattr(j, "next_retry_at", "").isoformat() if hasattr(getattr(j, "next_retry_at", None), "isoformat") else None,
+                "max_runs": getattr(j, "max_runs", 0),
+                "tags": getattr(j, "tags", []),
+                "metadata": getattr(j, "metadata", {}),
+                "webhook_url": getattr(j, "webhook_url", None) or None,
+                "last_result": _serialize_result(getattr(j, "last_result", None)),
+                "history": [_serialize_result(r) for r in (getattr(j, "history", None) or [])[-20:]],
             }
-        return {"jobs": [_serialize(j) for j in jobs]}
+        return {"jobs": [_serialize(j) for j in all_jobs]}
     except Exception as exc:
         print(f"[SCHEDULES] list error: {exc}", flush=True)
         return {"jobs": []}
+
+
+@router.get("/schedules/stats")
+async def schedule_stats(x_tenant_id: str = Header(default="")):
+    k = _require()
+    sched = k._engine._orchestrator.scheduler
+    if not sched: return {"total_jobs": 0, "active_jobs": 0, "paused_jobs": 0, "completed_jobs": 0, "total_runs": 0, "total_failures": 0}
+    try:
+        s = await sched.stats()
+        return {
+            "total_jobs": getattr(s, "total_jobs", 0),
+            "active_jobs": getattr(s, "active_jobs", 0),
+            "paused_jobs": getattr(s, "paused_jobs", 0),
+            "completed_jobs": getattr(s, "completed_jobs", 0),
+            "total_runs": getattr(s, "total_runs", 0),
+            "total_failures": getattr(s, "total_failures", 0),
+        }
+    except Exception as exc:
+        print(f"[SCHEDULES] stats error: {exc}", flush=True)
+        return {"total_jobs": 0, "active_jobs": 0, "paused_jobs": 0, "completed_jobs": 0, "total_runs": 0, "total_failures": 0}
+
+
+@router.post("/schedules/{job_id}/action")
+async def schedule_action(job_id: str, body: dict, x_tenant_id: str = Header(default="")):
+    k = _require()
+    sched = k._engine._orchestrator.scheduler
+    if not sched: raise HTTPException(503, "Scheduler not available")
+    action = body.get("action", "")
+    namespace = ns(x_tenant_id)
+    try:
+        if action == "pause":
+            await sched.pause(job_id)
+            return {"success": True, "action": "paused"}
+        elif action == "resume":
+            await sched.resume(job_id)
+            return {"success": True, "action": "resumed"}
+        elif action == "cancel":
+            await sched.cancel(job_id)
+            return {"success": True, "action": "cancelled"}
+        elif action == "retry":
+            result = await sched.execute_job(job_id)
+            return {"success": True, "action": "retried", "result": str(result)[:200] if result else None}
+        else:
+            raise HTTPException(400, f"Unknown action: {action}")
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
 
 
 # ── Workspace ────────────────────────────────────────────────────────────────
@@ -504,10 +1047,23 @@ def _get_ws(x_tenant_id: str = ""):
 
 
 @router.get("/workspace/files")
-async def list_files(path: str = Query(""), recursive: bool = Query(False), x_tenant_id: str = Header(default="")):
+async def list_files(path: str = Query(""), recursive: bool = Query(False), include_agent: bool = Query(False), x_tenant_id: str = Header(default="")):
     ws, n = _get_ws(x_tenant_id)
     entries = await ws.list_files(path, recursive=recursive, namespace=n)
-    return {"files": [{"path": e.path, "size": e.size, "is_dir": e.is_dir, "modified": e.modified.isoformat() if e.modified else None} for e in entries]}
+    files = [{"path": e.path, "size": e.size, "is_dir": e.is_dir, "modified": e.modified.isoformat() if e.modified else None, "namespace": n} for e in entries]
+    # Optionally include files from persistent workspace namespaces
+    if include_agent and hasattr(ws, 'list_tenants'):
+        try:
+            all_ns = ws.list_tenants() if callable(ws.list_tenants) else []
+            for sub_ns in all_ns:
+                if sub_ns.startswith(f"{n}__ws_") and sub_ns != n:
+                    sub_entries = await ws.list_files(path, recursive=recursive, namespace=sub_ns)
+                    ws_label = sub_ns.replace(f"{n}__ws_", "")
+                    for e in sub_entries:
+                        files.append({"path": e.path, "size": e.size, "is_dir": e.is_dir, "modified": e.modified.isoformat() if e.modified else None, "namespace": sub_ns, "workspace": ws_label})
+        except Exception:
+            pass
+    return {"files": files}
 
 
 @router.get("/workspace/file")
@@ -572,7 +1128,7 @@ async def workspace_stats(x_tenant_id: str = Header(default="")):
 async def list_checkpoints(x_tenant_id: str = Header(default="")):
     ws, n = _get_ws(x_tenant_id)
     cps = await ws.list_checkpoints(namespace=n)
-    return {"checkpoints": [{"id": c.id, "label": c.label, "file_path": c.file_path, "created_at": c.created_at.isoformat()} for c in cps]}
+    return {"checkpoints": [{"id": c.id, "label": c.label, "workspace_id": c.workspace_id, "status": c.status.value if hasattr(c.status, "value") else str(c.status), "created_at": c.created_at.isoformat()} for c in cps]}
 
 
 @router.post("/workspace/checkpoints/{checkpoint_id}/restore")
@@ -589,6 +1145,163 @@ async def list_tenants():
     if not ws: return {"tenants": []}
     return {"tenants": ws.list_tenants() if hasattr(ws, "list_tenants") else ["default"]}
 
+
+# ── Tool Management ─────────────────────────────────────────────────────────
+
+@router.get("/tools")
+async def list_tools():
+    """List all available tools (built-in + external MCP + LangChain)."""
+    k = _require()
+    orch = k._engine._orchestrator
+    tools = orch.get_tool_registry()
+
+    # Categorize tools
+    built_in = []
+    mcp_external = []
+    langchain = []
+
+    for t in tools:
+        name = t.get("name", "")
+        if "__" in name and name.split("__")[0] not in ("query", "store", "get", "set", "list", "create", "delete", "search"):
+            prefix = name.split("__")[0]
+            if prefix.startswith("lc"):
+                langchain.append(t)
+            else:
+                mcp_external.append(t)
+        else:
+            built_in.append(t)
+
+    # Get connected MCP servers
+    mcp_servers = {}
+    if hasattr(orch, '_mcp_client') and orch._mcp_client:
+        for name, conn in orch._mcp_client._connections.items():
+            mcp_servers[name] = {"connected": True, "tools": len([t for t in mcp_external if t["name"].startswith(name + "__")])}
+
+    return {
+        "built_in": {"count": len(built_in), "tools": [{"name": t["name"], "description": t.get("description", "")[:100]} for t in built_in]},
+        "mcp_servers": mcp_servers,
+        "mcp_external": {"count": len(mcp_external), "tools": [{"name": t["name"], "description": t.get("description", "")[:100]} for t in mcp_external]},
+        "langchain": {"count": len(langchain), "tools": [{"name": t["name"], "description": t.get("description", "")[:100]} for t in langchain]},
+        "total": len(tools),
+    }
+
+
+@router.post("/tools/mcp/connect")
+async def connect_mcp_server(body: dict):
+    """Connect to an external MCP server."""
+    k = _require()
+    orch = k._engine._orchestrator
+    name = body.get("name", "")
+    transport = body.get("transport", "stdio")  # "stdio" or "sse"
+    command = body.get("command", "")
+    url = body.get("url", "")
+    env = body.get("env", {})
+
+    if not name:
+        raise HTTPException(400, "name is required")
+
+    try:
+        if transport == "stdio" and command:
+            await orch.connect_mcp_server(name, transport="stdio", command=command, env=env)
+        elif transport == "sse" and url:
+            await orch.connect_mcp_server(name, transport="sse", url=url)
+        else:
+            raise HTTPException(400, "For stdio: provide command. For sse: provide url.")
+
+        # Get tools from the new server
+        tools = [t for t in orch.get_tool_registry() if t["name"].startswith(name + "__")]
+        return {"connected": True, "name": name, "tools_count": len(tools), "tools": [t["name"] for t in tools]}
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to connect: {exc}")
+
+
+@router.delete("/tools/mcp/{server_name}")
+async def disconnect_mcp_server(server_name: str):
+    """Disconnect from an external MCP server."""
+    k = _require()
+    orch = k._engine._orchestrator
+    try:
+        await orch.disconnect_mcp_server(server_name)
+        return {"disconnected": True, "name": server_name}
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to disconnect: {exc}")
+
+
+@router.post("/tools/langchain/register")
+async def register_langchain_tool(body: dict):
+    """Register a LangChain community tool by module path and class name."""
+    k = _require()
+    orch = k._engine._orchestrator
+    module_path = body.get("module", "")  # e.g. "langchain_community.tools.wikipedia.tool"
+    class_name = body.get("class", "")    # e.g. "WikipediaQueryRun"
+
+    if not module_path or not class_name:
+        raise HTTPException(400, "module and class are required")
+
+    try:
+        import importlib, subprocess, sys, re
+
+        def _pip_install(packages: list[str]):
+            for pkg in packages:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", pkg])
+            importlib.invalidate_caches()
+
+        def _try_load():
+            mod = importlib.import_module(module_path)
+            tool_cls = getattr(mod, class_name)
+            return tool_cls()
+
+        # Attempt 1: try directly
+        try:
+            importlib.invalidate_caches()
+            tool_instance = _try_load()
+        except ImportError as exc:
+            # Extract missing package name from error message
+            err_msg = str(exc)
+            # Try to find "pip install <pkg>" in error message
+            pip_match = re.search(r'pip install[- ]+(?:U )?(\S+)', err_msg)
+            missing_pkg = pip_match.group(1).strip('`"\'.') if pip_match else None
+
+            # Build install list: caller-specified deps + auto-detected + top-level package
+            pkg_name = module_path.split(".")[0].replace("_", "-")
+            to_install = list(dict.fromkeys(body.get("pip", [pkg_name]) + ([missing_pkg] if missing_pkg else [])))
+            _pip_install(to_install)
+
+            # Attempt 2: retry after install
+            try:
+                tool_instance = _try_load()
+            except ImportError as exc2:
+                # One more round — extract again in case there's a second missing dep
+                err2 = str(exc2)
+                pip_match2 = re.search(r'pip install[- ]+(?:U )?(\S+)', err2)
+                if pip_match2:
+                    _pip_install([pip_match2.group(1).strip('`"\'.') ])
+                    tool_instance = _try_load()
+                else:
+                    raise
+
+        orch.register_langchain_tool(tool_instance)
+        return {"registered": True, "name": f"lc__{tool_instance.name}", "description": tool_instance.description[:200]}
+    except ImportError as exc:
+        raise HTTPException(400, f"Module not found: {module_path}. Install it with pip. Error: {exc}")
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to register: {exc}")
+
+
+@router.delete("/tools/langchain/{tool_name}")
+async def unregister_langchain_tool(tool_name: str):
+    """Unregister a LangChain tool."""
+    k = _require()
+    orch = k._engine._orchestrator
+    try:
+        orch.unregister_langchain_tool(tool_name)
+        return {"unregistered": True, "name": tool_name}
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to unregister: {exc}")
+
+
+# Active graph executors (for human gate resume)
+_active_executors: dict[str, "GraphExecutor"] = {}
 
 # ── Agents ───────────────────────────────────────────────────────────────────
 
@@ -607,9 +1320,704 @@ async def spawn_agent(body: SpawnAgentRequest, x_tenant_id: str = Header(default
     except Exception as exc: raise HTTPException(500, str(exc))
 
 
+@router.post("/agents/taskforce")
+async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
+    """Run a multi-agent TaskForce. Returns task_id immediately, streams via /api/stream/{task_id}."""
+    k = _require()
+    try:
+        from kernelmcp.agents.taskforce import TaskForce
+        from kernelmcp.agents import AgentConfig
+        from kernelmcp.core.models import Task, TaskStatus, _now
+        import asyncio
+
+        goal = body.get("goal", "")
+        pattern = body.get("pattern", "sequential")
+        constitution = body.get("constitution", "")
+        agent_specs = body.get("agents", [])
+        blocking = body.get("blocking", False)  # Allow sync mode for backward compat
+
+        agents = []
+        for spec in agent_specs:
+            agents.append(AgentConfig(
+                type=spec.get("type", "code"),
+                role=spec.get("role", ""),
+                tools=spec.get("tools", []),
+                max_turns=spec.get("max_turns", 5),
+                constitution=spec.get("constitution") or spec.get("instructions") or "",
+            ))
+
+        base_namespace = ns(x_tenant_id)
+        graph = body.get("graph")  # Optional graph topology for pattern="graph"
+        workspace_cfg = body.get("workspace")  # Optional workspace isolation
+
+        # Create a Task object so SSE streaming and pause/resume work
+        task = Task(goal=f"[TaskForce:{pattern}] {goal[:100]}", namespace=base_namespace)
+
+        # Each run gets its own namespace to prevent cross-contamination
+        # Events, memory writes, and workspace files are isolated per run
+        namespace = f"{base_namespace}__run_{task.id[:8]}"
+        task.namespace = namespace
+        task.status = TaskStatus.running
+        k._tasks[task.id] = task
+
+        if pattern == "graph" and graph:
+            from kernelmcp.agents.graph_executor import GraphExecutor
+            executor = GraphExecutor(
+                graph=graph, agents=agents, goal=goal,
+                registry=k._agent_registry, namespace=namespace, task=task,
+            )
+            _active_executors[task.id] = executor
+        else:
+            tf = TaskForce(
+                agents=agents, goal=goal, pattern=pattern,
+                constitution=constitution, registry=k._agent_registry,
+            )
+            executor = None
+
+        # Note: no need to clear buffer — each run gets a unique namespace (__run_XXXXX)
+        # Buffered events are replayed on subscribe, which is the desired behavior
+
+        async def _run_taskforce():
+            try:
+                if executor:
+                    result = await executor.run()
+                else:
+                    result = await tf.run(k._agent_registry, namespace=namespace)
+                # Store result in task metadata BEFORE changing status
+                # (status change triggers SSE terminal event, frontend fetches result after)
+                agent_outputs = []
+                for ar in (result.agent_results or []):
+                    agent_outputs.append(ar.output if hasattr(ar, "output") else str(ar))
+                task.metadata["result"] = {
+                    "success": result.success,
+                    "final_output": result.final_output,
+                    "agent_outputs": agent_outputs,
+                    "total_tokens": result.total_tokens,
+                    "total_cost": result.total_cost,
+                    "total_turns": getattr(result, "total_turns", 0) or sum(ar.turns_used for ar in (result.agent_results or [])),
+                    "duration_ms": result.duration_ms,
+                    "goal": result.goal,
+                    "pattern": result.pattern,
+                }
+                task.total_tokens = result.total_tokens
+                task.total_cost = result.total_cost
+                task.status = TaskStatus.completed if result.success else TaskStatus.failed
+                task.completed_at = _now()
+                _persist_task(task)
+                # Update regression baselines
+                try:
+                    from regression import regression_detector
+                    regression_detector.update(goal, result.total_cost, getattr(result, "total_turns", 0) or sum(ar.turns_used for ar in (result.agent_results or [])), round(result.duration_ms or 0), result.success)
+                except Exception:
+                    pass
+                # Emit terminal event AFTER metadata is written (so frontend can fetch result immediately)
+                from kernelmcp.events import kernel_event_bus as _bus, KernelEvent as _KE, KernelEventType as _KET
+                _evt = _KET.taskforce_completed if result.success else _KET.taskforce_failed
+                await _bus.emit(_KE(type=_evt, namespace=namespace, data={
+                    "source": "taskforce", "success": result.success, "goal": goal[:80],
+                    "turns": getattr(result, "total_turns", 0) or sum(ar.turns_used for ar in (result.agent_results or [])),
+                    "tokens": result.total_tokens,
+                    "cost": result.total_cost,
+                    "duration_ms": round(result.duration_ms or 0),
+                }))
+                _active_executors.pop(task.id, None)
+            except Exception as exc:
+                import traceback; traceback.print_exc()
+                task.metadata["result"] = {"success": False, "final_output": str(exc), "error": str(exc)}
+                task.status = TaskStatus.failed
+                task.completed_at = _now()
+                _persist_task(task)
+                from kernelmcp.events import kernel_event_bus as _bus, KernelEvent as _KE, KernelEventType as _KET
+                await _bus.emit(_KE(type=_KET.taskforce_failed, namespace=namespace, data={"source": "taskforce", "success": False, "error": str(exc)[:200]}))
+
+        if blocking:
+            blocking_timeout = body.get("timeout", 280)  # seconds
+            try:
+                await asyncio.wait_for(_run_taskforce(), timeout=blocking_timeout)
+            except asyncio.TimeoutError:
+                task.status = TaskStatus.failed
+                task.metadata["result"] = {"success": False, "final_output": "Execution timed out", "error": "timeout"}
+            return task.metadata.get("result", {})
+
+        # Async mode: launch in background, return task_id for SSE streaming
+        asyncio.create_task(_run_taskforce())
+        return {"task_id": task.id, "status": "running", "goal": goal, "pattern": pattern}
+
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        raise HTTPException(500, str(exc))
+
+
+@router.get("/agents/taskforce/schedules")
+async def list_taskforce_schedules():
+    schedules = []
+    for fname in sorted(os.listdir(_SCHEDULES_DIR), reverse=True):
+        if fname.endswith(".json"):
+            try:
+                with open(os.path.join(_SCHEDULES_DIR, fname)) as f:
+                    import json as _json2; schedules.append(_json2.load(f))
+            except Exception:
+                pass
+    return {"schedules": schedules}
+
+@router.delete("/agents/taskforce/schedules/{sched_id}")
+async def delete_taskforce_schedule(sched_id: str):
+    path = os.path.join(_SCHEDULES_DIR, f"{sched_id}.json")
+    if os.path.exists(path):
+        os.remove(path)
+    return {"deleted": True, "id": sched_id}
+
+@router.get("/agents/taskforce/{task_id}")
+async def get_taskforce_result(task_id: str, x_tenant_id: str = Header(default="")):
+    """Get taskforce result by task_id (after SSE signals completion)."""
+    k = _require()
+    task = k._tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return {
+        "task_id": task_id,
+        "status": task.status.value,
+        "result": task.metadata.get("result"),
+    }
+
+
+@router.get("/tasks/{task_id}/spans")
+async def get_task_spans(task_id: str, x_tenant_id: str = Header(default="")):
+    """Get nested trace spans for a task — used by the waterfall visualization."""
+    k = _require()
+    ns = x_tenant_id or "demo"
+    # Search in all tasks (including sub-namespace runs)
+    task = k._tasks.get(task_id)
+    if not task:
+        for tid, t in k._tasks.items():
+            if tid == task_id or (t.namespace.startswith(ns) and tid == task_id):
+                task = t
+                break
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    def _serialize_span(s) -> dict:
+        return {
+            "id": s.id,
+            "parent_id": s.parent_id,
+            "trace_id": s.trace_id,
+            "name": s.name,
+            "type": s.type.value if hasattr(s.type, "value") else str(s.type),
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "duration_ms": s.duration_ms,
+            "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+            "input": s.input,
+            "output": s.output,
+            "metadata": s.metadata,
+            "error": s.error,
+            "children": [_serialize_span(c) for c in s.children],
+        }
+
+    spans = [_serialize_span(s) for s in (task.spans or [])]
+    return {
+        "task_id": task_id,
+        "trace_id": task.id,
+        "spans": spans,
+        "total_spans": len(task.spans or []),
+    }
+
+
 @router.get("/agents/classify")
 async def classify_task(goal: str = Query(...)):
     return {"goal": goal, "agent_type": _require().classify_task(goal)}
+
+
+@router.post("/agents/suggest")
+async def suggest_agents(body: dict):
+    """Use LLM to suggest the best agent team for a goal, taking into account available tools and settings."""
+    k = _require()
+    goal = body.get("goal", "")
+    if not goal.strip():
+        raise HTTPException(400, "goal is required")
+
+    # Gather system context for better suggestions
+    orch = k._engine._orchestrator
+
+    # Available tool categories
+    available_tools = []
+    tool_registry = orch.get_tool_registry()
+    native_tools = sorted({t["name"] for t in tool_registry if not t["name"].startswith("lc__") and not t["name"].startswith("mcp__")})
+    mcp_tools = sorted({t["name"] for t in tool_registry if t["name"].startswith("mcp__")})
+    lc_tools = sorted({t["name"] for t in tool_registry if t["name"].startswith("lc__")})
+
+    has_web = any(t in native_tools for t in ("web_search", "fetch_webpage"))
+    has_code = any(t in native_tools for t in ("execute_code", "validate_code"))
+    has_files = any(t in native_tools for t in ("write_file", "read_file"))
+    has_git = any("github" in t or "git" in t for t in mcp_tools)
+    has_memory = any(t in native_tools for t in ("store_fact", "query_memory"))
+    has_rag = any(t in native_tools for t in ("search_documents", "ingest_document"))
+    has_host = "host_exec" in native_tools
+
+    capabilities = []
+    if has_web: capabilities.append("web_search + fetch_webpage (can research online)")
+    if has_code: capabilities.append("execute_code in Docker sandbox (Python, Node, shell)")
+    if has_files: capabilities.append("write_file, read_file, edit_file (workspace management)")
+    if has_host: capabilities.append("host_exec (run commands on host: docker, git, etc.)")
+    if has_git: capabilities.append(f"GitHub MCP tools: {', '.join(mcp_tools[:5])}")
+    if has_memory: capabilities.append("store_fact, query_memory (persistent memory)")
+    if has_rag: capabilities.append("search_documents, ingest_document (RAG knowledge base)")
+    if lc_tools: capabilities.append(f"LangChain tools: {', '.join(lc_tools[:5])}")
+    if mcp_tools and not has_git: capabilities.append(f"MCP tools: {', '.join(mcp_tools[:5])}")
+
+    model = k._engine._llm._model or "unknown"
+
+    # Gather past successful runs for few-shot learning
+    past_examples = ""
+    try:
+        from task_store import load_all_tasks
+        past_tasks = load_all_tasks()
+        successful = []
+        for t in past_tasks.values():
+            if t.status.value != "completed":
+                continue
+            meta = t.metadata or {}
+            result = meta.get("result", {})
+            if not isinstance(result, dict):
+                continue
+            pattern = result.get("pattern", "")
+            agents_used = result.get("agents", [])
+            if pattern and agents_used:
+                successful.append({
+                    "goal": (meta.get("original_message") or t.goal or "")[:100],
+                    "pattern": pattern,
+                    "agents": len(agents_used) if isinstance(agents_used, list) else 0,
+                    "cost": round(t.total_cost, 4),
+                    "duration_s": round(t.duration_ms / 1000, 1) if t.duration_ms else 0,
+                    "tokens": t.total_tokens,
+                })
+        # Keep the 5 most recent relevant ones
+        if successful:
+            successful = successful[-5:]
+            lines = []
+            for s in successful:
+                lines.append(f'  - Goal: "{s["goal"]}" → pattern={s["pattern"]}, {s["agents"]} agents, ${s["cost"]}, {s["duration_s"]}s')
+            past_examples = "\n\nPAST SUCCESSFUL RUNS (learn from these):\n" + "\n".join(lines)
+    except Exception:
+        pass
+
+    # Check for saved workflows that might match
+    saved_workflows = ""
+    try:
+        import os as _os
+        wf_dir = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "data", "workflows")
+        if _os.path.isdir(wf_dir):
+            wf_names = []
+            for wf_id in _os.listdir(wf_dir)[:10]:
+                meta_path = _os.path.join(wf_dir, wf_id, "meta.json")
+                if _os.path.isfile(meta_path):
+                    import json as _jj
+                    wf_meta = _jj.load(open(meta_path))
+                    wf_names.append(wf_meta.get("name", wf_id))
+            if wf_names:
+                saved_workflows = f"\n\nSAVED WORKFLOWS (user can reuse these instead): {', '.join(wf_names)}"
+    except Exception:
+        pass
+
+    # Model-specific advice
+    model_note = ""
+    ml = model.lower()
+    if any(x in ml for x in ("haiku", "mini", "flash", "8b", "small")):
+        model_note = "\nNOTE: Small/fast model. Keep agent count low (2-3), max_turns low (2-3). Prefer sequential over swarm."
+    elif any(x in ml for x in ("sonnet", "gpt-4o", "70b", "large")):
+        model_note = "\nNOTE: Capable model. Can handle 3-5 agents with moderate turns."
+    elif any(x in ml for x in ("opus", "gpt-4", "405b")):
+        model_note = "\nNOTE: Top-tier model. Can handle complex swarm/debate with 4-6 agents."
+
+    context = f"""
+AVAILABLE CAPABILITIES ON THIS SYSTEM:
+{chr(10).join(f'- {c}' for c in capabilities) if capabilities else '- Basic tools only'}
+
+CURRENT MODEL: {model}{model_note}
+
+TOTAL TOOLS: {len(tool_registry)} ({len(native_tools)} native, {len(mcp_tools)} MCP, {len(lc_tools)} LangChain)
+{past_examples}{saved_workflows}
+"""
+
+    try:
+        llm = k._engine._llm
+        resp = await llm.complete(
+            system=f"""You are an AI agent architect for the MCP AI Suite platform. Given a goal and the available system capabilities, suggest the optimal agent team.
+
+{context}
+
+RULES:
+- ONLY suggest capabilities that are actually available (listed above)
+- If the goal needs GitHub and GitHub MCP is not connected, say so in a "missing" field
+- For code tasks: use type "code" (has execute_code, write_file)
+- For research tasks: use type "research" (has web_search, fetch_webpage)
+- For file management: use type "file" (has read_file, write_file, host_file_read)
+- For custom roles: use type "custom" and specify exact tools in the "tools" array
+- Each custom agent can have a "tools" array listing specific tool names
+- Pattern guide:
+  - "sequential": step-by-step pipeline (A→B→C). Best for: research→code→test flows.
+  - "parallel": independent tasks run simultaneously. Best for: multi-topic research, comparisons.
+  - "supervisor": one agent reviews others' work. Best for: quality-critical tasks.
+  - "debate": agents argue then a judge decides. Best for: analysis, decision-making.
+  - "swarm": all agents collaborate with feedback loops. Best for: complex creative/iterative tasks. WARNING: expensive, use only with capable models.
+- Keep it minimal — fewer agents = faster + cheaper
+- Estimate the total cost and duration
+
+EXAMPLES OF GOOD CONFIGURATIONS:
+- "Research X and build a Python wrapper" → sequential: researcher(2 turns) → coder(3 turns) → tester(2 turns). ~$0.10-0.20
+- "Compare 3 frameworks" → parallel: 3 researchers(2 turns each). ~$0.05-0.10
+- "Should we use X or Y?" → debate: advocate_X(2) + advocate_Y(2) + judge(1). ~$0.08
+- "Build, test and deploy" → sequential: coder(3) → qa_engineer(2) → deployer(2). ~$0.15-0.25
+
+Respond in this exact JSON format (no markdown, no explanation):
+{{
+  "pattern": "sequential|parallel|supervisor|debate|swarm",
+  "agents": [
+    {{"type": "code|research|file|memory|plan|rag|custom", "role": "descriptive role name", "instructions": "specific actionable instructions for this agent", "max_turns": 3, "tools": ["optional", "specific", "tools"]}}
+  ],
+  "estimated_cost": "$0.XX",
+  "estimated_duration": "XXs",
+  "reasoning": "one sentence explaining why this pattern",
+  "missing": ["optional list of capabilities needed but not available"]
+}}""",
+            messages=[{"role": "user", "content": f"Goal: {goal}"}],
+            tools=[],
+        )
+        import json as _j
+        text = resp.content.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1].strip()
+            if text.startswith("json"):
+                text = text[4:].strip()
+        suggestion = _j.loads(text)
+        # Add metadata
+        suggestion["_meta"] = {
+            "model": model,
+            "total_tools": len(tool_registry),
+            "mcp_servers": len({t["name"].split("__")[1] for t in tool_registry if t["name"].startswith("mcp__") and "__" in t["name"][4:]}),
+            "lc_tools": len(lc_tools),
+        }
+        return suggestion
+    except Exception as exc:
+        raise HTTPException(500, f"Suggestion failed: {exc}")
+
+
+# ── Workflows (hierarchical: workflow → versions → runs) ────────────────────
+
+import os, json as _json, shutil, time as _time
+
+_WORKFLOWS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "workflows")
+os.makedirs(_WORKFLOWS_DIR, exist_ok=True)
+
+
+def _wf_path(wf_id: str) -> str:
+    return os.path.join(_WORKFLOWS_DIR, wf_id)
+
+
+def _load_wf(wf_id: str) -> dict | None:
+    meta = os.path.join(_wf_path(wf_id), "meta.json")
+    if not os.path.exists(meta):
+        return None
+    with open(meta) as f:
+        wf = _json.load(f)
+    # Load versions
+    vdir = os.path.join(_wf_path(wf_id), "versions")
+    versions = []
+    if os.path.isdir(vdir):
+        for vf in sorted(os.listdir(vdir)):
+            if vf.endswith(".json"):
+                with open(os.path.join(vdir, vf)) as f:
+                    versions.append(_json.load(f))
+    wf["versions"] = versions
+    # Load runs
+    rdir = os.path.join(_wf_path(wf_id), "runs")
+    runs = []
+    if os.path.isdir(rdir):
+        for rf in sorted(os.listdir(rdir)):
+            if rf.endswith(".json"):
+                with open(os.path.join(rdir, rf)) as f:
+                    runs.append(_json.load(f))
+    wf["runs"] = runs
+    return wf
+
+
+@router.get("/workflows")
+async def list_workflows():
+    workflows = []
+    if os.path.isdir(_WORKFLOWS_DIR):
+        for name in sorted(os.listdir(_WORKFLOWS_DIR), reverse=True):
+            wf = _load_wf(name)
+            if wf:
+                workflows.append(wf)
+    return {"workflows": workflows}
+
+
+@router.post("/workflows")
+async def create_workflow(body: dict):
+    now = int(_time.time() * 1000)
+    wf_id = f"wf-{now}"
+    wf_dir = _wf_path(wf_id)
+    os.makedirs(os.path.join(wf_dir, "versions"), exist_ok=True)
+    os.makedirs(os.path.join(wf_dir, "runs"), exist_ok=True)
+
+    meta = {"id": wf_id, "name": body.get("name", "Untitled"), "createdAt": now, "updatedAt": now}
+    with open(os.path.join(wf_dir, "meta.json"), "w") as f:
+        _json.dump(meta, f)
+
+    # Create v1
+    v_data = body.get("version", {})
+    v_id = f"v-{now}"
+    version = {"id": v_id, "workflowId": wf_id, "version": 1, "config": v_data.get("config", {}),
+               "graph": v_data.get("graph"), "note": v_data.get("note", ""), "createdAt": now}
+    if v_data.get("parentVersionId"):
+        version["parentVersionId"] = v_data["parentVersionId"]
+    with open(os.path.join(wf_dir, "versions", f"{v_id}.json"), "w") as f:
+        _json.dump(version, f)
+
+    return {"workflow": {**meta, "versions": [version], "runs": []}}
+
+
+@router.get("/workflows/{wf_id}")
+async def get_workflow(wf_id: str):
+    wf = _load_wf(wf_id)
+    if not wf:
+        raise HTTPException(404, "Workflow not found")
+    return wf
+
+
+@router.put("/workflows/{wf_id}")
+async def update_workflow(wf_id: str, body: dict):
+    meta_path = os.path.join(_wf_path(wf_id), "meta.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(404, "Workflow not found")
+    with open(meta_path) as f:
+        meta = _json.load(f)
+    if "name" in body:
+        meta["name"] = body["name"]
+    meta["updatedAt"] = int(_time.time() * 1000)
+    with open(meta_path, "w") as f:
+        _json.dump(meta, f)
+    return {"updated": True}
+
+
+@router.delete("/workflows/{wf_id}")
+async def delete_workflow(wf_id: str):
+    wf_dir = _wf_path(wf_id)
+    if os.path.isdir(wf_dir):
+        shutil.rmtree(wf_dir)
+    return {"deleted": True, "id": wf_id}
+
+
+@router.post("/workflows/{wf_id}/versions")
+async def create_version(wf_id: str, body: dict):
+    wf_dir = _wf_path(wf_id)
+    if not os.path.isdir(wf_dir):
+        raise HTTPException(404, "Workflow not found")
+    # Count existing versions
+    vdir = os.path.join(wf_dir, "versions")
+    existing = [f for f in os.listdir(vdir) if f.endswith(".json")] if os.path.isdir(vdir) else []
+    ver_num = len(existing) + 1
+    now = int(_time.time() * 1000)
+    v_id = f"v-{now}"
+    version = {"id": v_id, "workflowId": wf_id, "version": ver_num, "config": body.get("config", {}),
+               "graph": body.get("graph"), "note": body.get("note", ""),
+               "parentVersionId": body.get("parentVersionId"), "createdAt": now}
+    with open(os.path.join(vdir, f"{v_id}.json"), "w") as f:
+        _json.dump(version, f)
+    # Update workflow timestamp
+    meta_path = os.path.join(wf_dir, "meta.json")
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            meta = _json.load(f)
+        meta["updatedAt"] = now
+        with open(meta_path, "w") as f:
+            _json.dump(meta, f)
+    return {"version": version}
+
+
+@router.post("/workflows/{wf_id}/versions/{v_id}/runs")
+async def create_run(wf_id: str, v_id: str, body: dict):
+    wf_dir = _wf_path(wf_id)
+    if not os.path.isdir(wf_dir):
+        raise HTTPException(404, "Workflow not found")
+    rdir = os.path.join(wf_dir, "runs")
+    os.makedirs(rdir, exist_ok=True)
+    now = int(_time.time() * 1000)
+    run_id = body.get("id") or f"run-{now}"
+    run = {"id": run_id, "versionId": v_id, "workflowId": wf_id,
+           "status": body.get("status", "running"), "answer": body.get("answer"),
+           "metrics": body.get("metrics"), "feedback": body.get("feedback"),
+           "liveEvents": body.get("liveEvents", [])[:30],
+           "createdAt": now}
+    with open(os.path.join(rdir, f"{run_id}.json"), "w") as f:
+        _json.dump(run, f)
+    return {"run": run}
+
+
+@router.post("/runs/{run_id}/feedback")
+async def submit_run_feedback(run_id: str, body: dict, x_tenant_id: str = Header(default="")):
+    """Submit feedback for a run. If bad, stores a correction in the ledger."""
+    rating = body.get("rating")  # "good" or "bad"
+    comment = body.get("comment", "")
+    goal = body.get("goal", "")
+    output = body.get("output", "")
+
+    # 1. Save feedback to the run file
+    if os.path.isdir(_WORKFLOWS_DIR):
+        for wf_name in os.listdir(_WORKFLOWS_DIR):
+            rdir = os.path.join(_WORKFLOWS_DIR, wf_name, "runs")
+            rpath = os.path.join(rdir, f"{run_id}.json")
+            if os.path.exists(rpath):
+                with open(rpath) as f:
+                    run = _json.load(f)
+                run["feedback"] = {"rating": rating, "comment": comment}
+                with open(rpath, "w") as f:
+                    _json.dump(run, f)
+                break
+
+    # 2. If bad, store a correction in the correction ledger
+    if rating == "bad" and kernel:
+        try:
+            ledger = getattr(kernel, '_engine', None) and getattr(kernel._engine, '_correction_ledger', None)
+            if ledger:
+                correction = f"Bad output for goal: '{goal[:200]}'. "
+                if comment:
+                    correction += f"User feedback: {comment}. "
+                correction += f"Output was: {output[:300]}"
+                await ledger.store_fact(
+                    content=correction,
+                    namespace="corrections",
+                    importance=0.8,
+                    labels=["user_feedback", "bad_output"],
+                )
+                audit_collector.emit("feedback", "correction_stored", {"run_id": run_id, "rating": rating})
+        except Exception:
+            pass  # Non-critical
+
+    # 3. If good, store positive reinforcement
+    if rating == "good" and kernel:
+        try:
+            orch = kernel._engine._orchestrator
+            if hasattr(orch, 'memory') and orch.memory:
+                await orch.memory.store_fact(
+                    content=f"Successful approach for: '{goal[:200]}'. Output was well received.",
+                    namespace=ns(x_tenant_id) or "default",
+                    importance=0.6,
+                    labels=["positive_feedback", "good_output"],
+                )
+        except Exception:
+            pass
+
+    audit_collector.emit("feedback", "run_feedback", {"run_id": run_id, "rating": rating, "has_comment": bool(comment)})
+    return {"ok": True, "rating": rating}
+
+
+@router.put("/runs/{run_id}")
+async def update_run(run_id: str, body: dict):
+    # Search all workflows for this run
+    if os.path.isdir(_WORKFLOWS_DIR):
+        for wf_name in os.listdir(_WORKFLOWS_DIR):
+            rdir = os.path.join(_WORKFLOWS_DIR, wf_name, "runs")
+            rpath = os.path.join(rdir, f"{run_id}.json")
+            if os.path.exists(rpath):
+                with open(rpath) as f:
+                    run = _json.load(f)
+                run.update({k: v for k, v in body.items() if k != "id"})
+                with open(rpath, "w") as f:
+                    _json.dump(run, f)
+                return {"updated": True}
+    raise HTTPException(404, "Run not found")
+
+
+# ── Scheduled Taskforce ─────────────────────────────────────────────────────
+
+_SCHEDULES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "schedules")
+os.makedirs(_SCHEDULES_DIR, exist_ok=True)
+
+
+@router.post("/agents/taskforce/schedule")
+async def schedule_taskforce(body: dict, x_tenant_id: str = Header(default="")):
+    """Schedule a taskforce run with cron/interval/one-time trigger."""
+    schedule = body.get("schedule", {})
+    workflow_id = body.get("workflow_id")
+    config = body.get("config")  # Inline config or loaded from workflow_id
+
+    if not schedule or not (config or workflow_id):
+        raise HTTPException(400, "schedule and config (or workflow_id) are required")
+
+    # Load config from saved workflow if needed
+    if workflow_id and not config:
+        path = os.path.join(_WORKFLOWS_DIR, f"{workflow_id}.json")
+        if not os.path.exists(path):
+            raise HTTPException(404, f"Workflow {workflow_id} not found")
+        with open(path) as f:
+            wf = _json.load(f)
+            config = wf.get("config", {})
+
+    sched_id = f"sched-{int(__import__('time').time() * 1000)}"
+    sched_type = schedule.get("type", "cron")
+
+    # Use the kernel's scheduler to register the job
+    k = _require()
+    namespace = ns(x_tenant_id)
+
+    if sched_type == "cron":
+        cron_expr = schedule.get("expression", "0 * * * *")
+        goal = config.get("goal", "Scheduled taskforce")
+        # Register via scheduler MCP tool
+        try:
+            from kernelmcp.core.models import ToolCall
+            tool_call = ToolCall(tool_name="schedule_task", arguments={
+                "goal": f"[Scheduled TaskForce] {goal[:100]}",
+                "job_type": "cron",
+                "cron": cron_expr,
+            })
+            result = await k._engine._orchestrator.dispatch(tool_call, namespace=namespace)
+            job_id = result.get("job_id", sched_id) if isinstance(result, dict) else sched_id
+        except Exception:
+            job_id = sched_id
+
+    elif sched_type == "interval":
+        interval = schedule.get("seconds", 3600)
+        goal = config.get("goal", "Scheduled taskforce")
+        try:
+            from kernelmcp.core.models import ToolCall
+            tool_call = ToolCall(tool_name="schedule_task", arguments={
+                "goal": f"[Scheduled TaskForce] {goal[:100]}",
+                "job_type": "interval",
+                "interval_seconds": interval,
+            })
+            result = await k._engine._orchestrator.dispatch(tool_call, namespace=namespace)
+            job_id = result.get("job_id", sched_id) if isinstance(result, dict) else sched_id
+        except Exception:
+            job_id = sched_id
+
+    elif sched_type == "once":
+        # One-time scheduled run
+        job_id = sched_id
+    else:
+        raise HTTPException(400, f"Unknown schedule type: {sched_type}")
+
+    # Save schedule metadata
+    sched_data = {
+        "id": sched_id,
+        "job_id": job_id,
+        "workflow_id": workflow_id,
+        "config": config,
+        "schedule": schedule,
+        "namespace": namespace,
+        "createdAt": int(__import__("time").time() * 1000),
+        "active": True,
+    }
+    with open(os.path.join(_SCHEDULES_DIR, f"{sched_id}.json"), "w") as f:
+        _json.dump(sched_data, f)
+
+    return {"scheduled": True, "id": sched_id, "job_id": job_id}
+
+
+## schedules routes moved above /agents/taskforce/{task_id} to avoid path conflict
 
 
 # ── Audit ────────────────────────────────────────────────────────────────────

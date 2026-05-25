@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Copy, Check } from "lucide-react";
+import { useState, useEffect, useRef, useId } from "react";
+import { Copy, Check, Play, Loader2, AlertTriangle, Pencil } from "lucide-react";
+import { useCodeRunner } from "@/context/code-runner";
+import { useTenant } from "@/context/tenant";
 
 export function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -47,22 +49,109 @@ function MermaidBlock({ code }: { code: string }) {
   );
 }
 
+const RUNNABLE_LANGS = new Set(["python", "py", "javascript", "js", "node", "shell", "bash", "sh"]);
+
+function langToRuntime(lang: string): string {
+  if (["python", "py"].includes(lang)) return "python";
+  if (["javascript", "js", "node"].includes(lang)) return "node";
+  if (["shell", "bash", "sh"].includes(lang)) return "shell";
+  return lang;
+}
+
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   if (lang === "mermaid") return <MermaidBlock code={code} />;
+
+  const isRunnable = lang && RUNNABLE_LANGS.has(lang.toLowerCase());
+  const blockId = useId();
+  const { results, runInEditor, openEditor } = useCodeRunner();
+  const { tenant } = useTenant();
+  const result = results[blockId];
+
+  const handleRun = () => {
+    if (!lang) return;
+    runInEditor(code, langToRuntime(lang.toLowerCase()));
+  };
+
+  const handleEdit = () => {
+    openEditor(code, lang ? langToRuntime(lang.toLowerCase()) : "python");
+  };
+
   return (
-    <div className="group relative my-2 rounded-lg overflow-hidden border border-slate-700/60 bg-[#0d1117]">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800/80 border-b border-slate-700/60">
+    <div className="my-2 rounded-xl overflow-hidden border border-white/[0.06] bg-[#0a0a12]">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-white/[0.02] border-b border-white/[0.04]">
         <span className="text-[10px] text-slate-500 font-mono uppercase">{lang || "text"}</span>
-        <CopyButton text={code} />
+        <div className="flex items-center gap-1">
+          {isRunnable && (
+            <>
+              <button onClick={handleRun} disabled={result?.running} className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/8 hover:bg-emerald-500/15 border border-emerald-500/15 rounded-md transition-all disabled:opacity-50" data-tooltip="Run code">
+                {result?.running ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Play className="h-2.5 w-2.5" />}
+                Run
+              </button>
+              <button onClick={handleEdit} className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] hover:border-violet-500/15 rounded-md transition-all" data-tooltip="Edit in panel">
+                <Pencil className="h-2.5 w-2.5" />
+              </button>
+            </>
+          )}
+          <CopyButton text={code} />
+        </div>
       </div>
+
+      {/* Code */}
       <pre className="px-4 py-3 overflow-x-auto text-[13px] leading-relaxed">
         <code className="text-slate-300 font-mono">{code}</code>
       </pre>
+
+      {/* Inline result */}
+      {result && (
+        <div className="border-t border-white/[0.04]">
+          {/* stdout */}
+          {(result.stdout || result.running) && (
+            <div className="px-4 py-2.5 bg-emerald-500/[0.03]">
+              <div className="flex items-center gap-1.5 mb-1">
+                {result.running ? <Loader2 className="h-2.5 w-2.5 text-emerald-400 animate-spin" /> : <Play className="h-2.5 w-2.5 text-emerald-400" />}
+                <span className="text-[9px] text-emerald-400 font-medium uppercase">Output</span>
+                {result.duration && <span className="text-[9px] text-slate-600 ml-auto">{result.duration}ms</span>}
+              </div>
+              <pre className="text-[12px] text-emerald-200 font-mono whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto">{result.stdout || (result.running ? "Running..." : "")}</pre>
+            </div>
+          )}
+          {/* stderr */}
+          {result.stderr && (
+            <div className="px-4 py-2 bg-red-500/[0.04] border-t border-red-500/10">
+              <div className="flex items-center gap-1.5 mb-1">
+                <AlertTriangle className="h-2.5 w-2.5 text-red-400" />
+                <span className="text-[9px] text-red-400 font-medium uppercase">Error</span>
+              </div>
+              <pre className="text-[12px] text-red-300 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{result.stderr}</pre>
+            </div>
+          )}
+          {/* artifacts */}
+          {result.artifacts && result.artifacts.length > 0 && (
+            <div className="px-4 py-1.5 bg-white/[0.01] border-t border-white/[0.03] flex items-center gap-2">
+              <span className="text-[9px] text-slate-500">Files:</span>
+              {result.artifacts.map((a, i) => (
+                <a key={i} href="/workspace" className="text-[10px] font-mono text-violet-400 hover:text-violet-300 transition-colors">{a} &rarr;</a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 export function renderMarkdown(text: string): React.ReactNode[] {
+  // Clean "assistant" prefix
+  text = text.replace(/^assistant\s*/i, "").trim();
+
+  // Extract thinking blocks first, replace with placeholders
+  const thinkingBlocks: string[] = [];
+  text = text.replace(/<think>([\s\S]*?)<\/think>\s*/g, (_, content) => {
+    thinkingBlocks.push(content.trim());
+    return `__THINKING_BLOCK_${thinkingBlocks.length - 1}__\n`;
+  });
+
   const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
   let i = 0;
@@ -70,6 +159,23 @@ export function renderMarkdown(text: string): React.ReactNode[] {
 
   while (i < lines.length) {
     const line = lines[i];
+
+    // Render thinking block placeholder
+    const thinkMatch = line.match(/^__THINKING_BLOCK_(\d+)__$/);
+    if (thinkMatch) {
+      const blockIdx = parseInt(thinkMatch[1]);
+      const content = thinkingBlocks[blockIdx] || "";
+      elements.push(
+        <details key={key++} className="my-2 border-l-2 border-violet-500/30 pl-3">
+          <summary className="cursor-pointer text-xs text-violet-400/60 list-none select-none">
+            {"💭 Thinking..."}
+          </summary>
+          <p className="text-xs text-slate-500 italic mt-1 whitespace-pre-wrap">{content}</p>
+        </details>
+      );
+      i++;
+      continue;
+    }
 
     if (line.trimStart().startsWith("```")) {
       const lang = line.trim().slice(3).trim();

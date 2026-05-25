@@ -9,6 +9,13 @@ export interface Fact {
   tags: string[];
   score?: number;
   fact_type?: string;
+  confidence?: number;
+  retrieval_count?: number;
+  decay_score?: number;
+  confirmation_count?: number;
+  created_at?: string;
+  updated_at?: string;
+  last_retrieved_at?: string;
 }
 
 interface FactCardProps {

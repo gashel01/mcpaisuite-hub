@@ -91,6 +91,8 @@ class SettingsIn(BaseModel):
 
 def flatten_turns(task) -> list[dict]:
     flat = []
+
+    # For direct engine tasks, use task.turns
     for t in task.turns:
         entry = {"role": t.role.value if hasattr(t.role, "value") else str(t.role), "content": t.content or ""}
         if t.tool_call:
@@ -99,9 +101,47 @@ def flatten_turns(task) -> list[dict]:
         if t.tool_result:
             entry["tool_result"] = t.tool_result.output or t.tool_result.error
             entry["tool_success"] = t.tool_result.success
+            if t.tool_result.duration_ms: entry["duration_ms"] = round(t.tool_result.duration_ms, 1)
         if t.model: entry["model"] = t.model
         if t.tokens_used: entry["tokens"] = t.tokens_used
+        if t.cost: entry["cost"] = round(t.cost, 6)
+        if t.timestamp: entry["timestamp"] = t.timestamp.isoformat()
         flat.append(entry)
+
+    # For TaskForce tasks (no direct turns), build trace from metadata result
+    if not flat and task.metadata.get("result"):
+        result = task.metadata["result"]
+        pattern = result.get("pattern", "unknown")
+        goal = result.get("goal", task.goal or "")
+
+        # Add task start
+        flat.append({"role": "system", "content": f"[{pattern}] {goal}"})
+
+        # Add per-agent outputs
+        agent_outputs = result.get("agent_outputs", [])
+        for i, output in enumerate(agent_outputs):
+            flat.append({
+                "role": "assistant",
+                "content": output or "(no output)",
+                "tool_name": f"agent_{i}",
+                "tokens": 0,
+            })
+
+        # Add final output
+        final = result.get("final_output", "")
+        if final:
+            flat.append({
+                "role": "assistant",
+                "content": final,
+                "tokens": result.get("total_tokens", 0),
+            })
+
+        # Add summary
+        flat.append({
+            "role": "system",
+            "content": f"Completed: {result.get('total_tokens', 0)} tokens, ${result.get('total_cost', 0):.4f} cost, {result.get('duration_ms', 0):.0f}ms",
+        })
+
     return flat
 
 

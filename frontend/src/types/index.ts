@@ -14,7 +14,8 @@ export interface ChatMsg {
   tokens?: number;
   cost?: number;
   taskId?: string;
-  bootstrapSources?: string[];
+  bootstrapSources?: (string | { tool: string; summary: string; content?: string })[];
+  timestamp?: number;
 }
 
 export interface TaskInfo {
