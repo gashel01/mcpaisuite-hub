@@ -43,4 +43,6 @@ export interface ScheduledJob {
   run_count: number;
 }
 
-export const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
+import { getApiUrl } from "@/lib/api-url";
+export const BASE_URL: string = getApiUrl();
+export const DEFAULT_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";

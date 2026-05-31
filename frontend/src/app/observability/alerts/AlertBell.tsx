@@ -3,14 +3,15 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bell } from "lucide-react";
+import { getApiUrl } from '@/lib/api-url';
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
 
 interface AlertBellProps {
   onClick: () => void;
 }
 
 export default function AlertBell({ onClick }: AlertBellProps) {
+  const API = getApiUrl();
   const [unreadCount, setUnreadCount] = useState(0);
   const prevCount = useRef(0);
   const [pulse, setPulse] = useState(false);

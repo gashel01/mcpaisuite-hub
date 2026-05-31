@@ -33,7 +33,7 @@ export function KnowledgeScoreBar({ stats, factCount, sourceCount, entityCount, 
   return (
     <div className="flex items-center gap-2 flex-wrap">
       {/* Score */}
-      <div className={`flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r ${scoreBg} to-transparent backdrop-blur-md rounded-xl border ${scoreRing}`}>
+      <div className={`flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r ${scoreBg} to-transparent  rounded-xl border ${scoreRing}`}>
         <Gauge className={`h-3 w-3 ${scoreColor}`} />
         <span className={`text-[11px] font-bold ${scoreColor}`}>{healthScore}</span>
         <span className="text-[8px] text-slate-600">/100</span>
@@ -41,7 +41,7 @@ export function KnowledgeScoreBar({ stats, factCount, sourceCount, entityCount, 
 
       {/* Coverage */}
       {stats?.top_tags && stats.top_tags.length > 0 && (
-        <div className="flex items-center gap-1.5 px-2 py-1.5 bg-black/40 backdrop-blur-md rounded-xl border border-white/[0.06]" title={stats.top_tags.map(([t, c]) => `${t}: ${c}`).join(", ")}>
+        <div className="flex items-center gap-1.5 px-2 py-1.5 bg-black/40  rounded-xl border border-white/[0.06]" title={stats.top_tags.map(([t, c]) => `${t}: ${c}`).join(", ")}>
           <BarChart3 className="h-2.5 w-2.5 text-slate-500" />
           <div className="flex items-end gap-px h-3">
             {stats.top_tags.slice(0, 5).map(([tag, count], i) => (
@@ -53,7 +53,7 @@ export function KnowledgeScoreBar({ stats, factCount, sourceCount, entityCount, 
 
       {/* Freshness */}
       {stats?.avg_decay != null && (
-        <div className="flex items-center gap-1 px-2 py-1.5 bg-black/40 backdrop-blur-md rounded-xl border border-white/[0.06]">
+        <div className="flex items-center gap-1 px-2 py-1.5 bg-black/40  rounded-xl border border-white/[0.06]">
           <Clock className={`h-2.5 w-2.5 ${stats.avg_decay > 0.7 ? "text-emerald-400/70" : stats.avg_decay > 0.4 ? "text-cyan-400/70" : "text-amber-400/70"}`} />
           <span className={`text-[9px] ${stats.avg_decay > 0.7 ? "text-emerald-300/80" : stats.avg_decay > 0.4 ? "text-cyan-300/80" : "text-amber-300/80"}`}>
             {Math.round(stats.avg_decay * 100)}% fresh
@@ -63,7 +63,7 @@ export function KnowledgeScoreBar({ stats, factCount, sourceCount, entityCount, 
 
       {/* First insight */}
       {insights.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-1.5 bg-black/40 backdrop-blur-md rounded-xl border border-white/[0.06]">
+        <div className="flex items-center gap-1 px-2 py-1.5 bg-black/40  rounded-xl border border-white/[0.06]">
           <Lightbulb className="h-2.5 w-2.5 text-amber-400/70" />
           <span className="text-[9px] text-amber-300/80 max-w-[140px] truncate">{insights[0]}</span>
         </div>

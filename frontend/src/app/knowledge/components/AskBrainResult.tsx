@@ -35,7 +35,7 @@ export function AskBrainResult({
         transition={{ duration: 0.25, ease: "easeOut" }}
         className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 w-full max-w-xl px-3"
       >
-        <div className="bg-black/80 backdrop-blur-xl border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden">
+        <div className="bg-black/80  border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden">
           {/* Confidence bar */}
           <div className="h-1 bg-white/[0.04]">
             <div

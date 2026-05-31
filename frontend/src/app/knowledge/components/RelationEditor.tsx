@@ -42,7 +42,7 @@ export function RelationEditor({ sourceNode, targetNode, onAdd, onClose }: Relat
         transition={{ duration: 0.2, ease: "easeOut" }}
         className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30"
       >
-        <div className="bg-black/80 backdrop-blur-xl border border-white/[0.1] rounded-2xl px-4 py-3 shadow-2xl min-w-[320px]">
+        <div className="bg-black/80  border border-white/[0.1] rounded-2xl px-4 py-3 shadow-2xl min-w-[320px]">
           {/* Header */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5">

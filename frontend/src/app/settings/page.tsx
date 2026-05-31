@@ -1,15 +1,15 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   Settings, Save, Loader2, Cpu, Brain, HardDrive, Shield, Database, Clock, Search,
   Check, ChevronRight, ChevronDown, Plug, CircleCheck, CircleX, Server, Wifi, WifiOff, Wrench, RefreshCw,
-  Sparkles, Undo2, AlertTriangle, Zap, Cloud, Monitor, X, ArrowRight, ArrowLeft, Rocket,
+  Sparkles, Undo2, AlertTriangle, Zap, Cloud, Monitor, X, ArrowRight, ArrowLeft, Rocket, Radio, Link2, Link2Off,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import PageHeader from "@/components/page-header";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -103,6 +103,7 @@ const TABS = [
   { id: "servers", label: "Servers & MCP", icon: Plug, color: "text-emerald-400", bg: "bg-emerald-400" },
   { id: "tools", label: "Tools", icon: Wrench, color: "text-violet-400", bg: "bg-violet-400" },
   { id: "infra", label: "Infrastructure", icon: HardDrive, color: "text-slate-400", bg: "bg-slate-400" },
+  { id: "remote", label: "Remote Kernel", icon: Radio, color: "text-teal-400", bg: "bg-teal-400" },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -119,6 +120,7 @@ const TAB_FIELDS: Record<TabId, (keyof FullConfig)[]> = {
   tools: [],
   servers: [],
   infra: ["memory_backend", "memory_semantic_backend", "memory_redis_url", "memory_decay_mode", "memory_neo4j_uri", "memory_neo4j_user", "memory_neo4j_password", "rag_vectorstore", "rag_vectorstore_url", "rag_vectorstore_api_key", "rag_graph_backend", "rag_neo4j_uri", "rag_neo4j_user", "rag_neo4j_password", "workspace_checkpoint_store", "workspace_audit_store", "sandbox_audit_store", "sandbox_vault", "scheduler_store"],
+  remote: [],
 };
 
 // ── Health service definitions ─────────────────────────────────────────────
@@ -133,6 +135,8 @@ const HEALTH_SERVICES = [
 ];
 
 // ── Components ─────────────────────────────────────────────────────────────
+
+const BASE_URL = getApiUrl();
 
 function TestBtn({ service, testing, result, onClick }: { service: string; testing: string | null; result: { service: string; ok: boolean; detail: string } | null; onClick: () => void }) {
   const isThis = testing === service;
@@ -290,7 +294,7 @@ function PresetSelector({ onApply }: { onApply: (values: Partial<FullConfig>) =>
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 z-50 rounded-2xl border border-slate-700/60 bg-slate-900/95 backdrop-blur-xl shadow-2xl shadow-black/40 p-3 space-y-2 animate-scale-in">
+        <div className="absolute right-0 top-full mt-2 w-80 z-50 rounded-2xl border border-slate-700/60 bg-slate-900/95  shadow-2xl shadow-black/40 p-3 space-y-2 animate-scale-in">
           <p className="text-[10px] text-slate-500 uppercase tracking-wider px-1 mb-2">Apply a configuration preset</p>
           {Object.entries(PRESETS).map(([key, preset]) => {
             const Icon = preset.icon;
@@ -361,7 +365,7 @@ function SetupWizard({ onComplete, onSkip }: { onComplete: (cfg: Partial<FullCon
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60  animate-fade-in">
       <div className="w-full max-w-lg mx-4 rounded-3xl border border-slate-700/60 bg-slate-900 shadow-2xl shadow-black/50 overflow-hidden">
         {/* Progress */}
         <div className="h-1 bg-slate-800">
@@ -509,7 +513,7 @@ function StickySaveBar({ dirtyCount, dirtyTabs, saving, onSave, onDiscard }: {
       transition={{ type: "spring", stiffness: 400, damping: 30 }}
       className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50"
     >
-      <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-[#0f0f1c]/95 backdrop-blur-xl border border-violet-500/20 shadow-2xl shadow-violet-500/10">
+      <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-[#0f0f1c]/95  border border-violet-500/20 shadow-2xl shadow-violet-500/10">
         <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500/20 text-[9px] font-bold text-amber-400">{dirtyCount}</span>
         <span className="text-[10px] text-slate-300">unsaved</span>
         <div className="flex items-center gap-0.5">
@@ -553,6 +557,46 @@ export default function SettingsPage() {
   const [prevTab, setPrevTab] = useState<TabId>("llm");
   const [animDir, setAnimDir] = useState<"left" | "right">("right");
   const contentRef = useRef<HTMLDivElement>(null);
+
+  // Remote Kernel state
+  const [remoteEnabled, setRemoteEnabled] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [remoteTesting, setRemoteTesting] = useState(false);
+  const [remoteTestResult, setRemoteTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  useEffect(() => {
+    try {
+      const r = JSON.parse(localStorage.getItem("kernelmcp_remote") || "{}");
+      if (r.enabled && r.url) { setRemoteEnabled(true); setRemoteUrl(r.url); }
+    } catch {}
+  }, []);
+
+  const saveRemote = () => {
+    const url = remoteUrl.trim().replace(/\/$/, "");
+    if (!url) return;
+    localStorage.setItem("kernelmcp_remote", JSON.stringify({ enabled: true, url }));
+    window.location.reload();
+  };
+
+  const clearRemote = () => {
+    localStorage.removeItem("kernelmcp_remote");
+    window.location.reload();
+  };
+
+  const testRemote = async () => {
+    const url = remoteUrl.trim().replace(/\/$/, "");
+    if (!url) return;
+    setRemoteTesting(true);
+    setRemoteTestResult(null);
+    try {
+      const r = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+      const data = await r.json();
+      setRemoteTestResult({ ok: r.ok, detail: data.status || `HTTP ${r.status}` });
+    } catch (e) {
+      setRemoteTestResult({ ok: false, detail: String(e).slice(0, 100) });
+    }
+    setRemoteTesting(false);
+  };
 
   // Constitution state
   const [constitution, setConstitution] = useState("");
@@ -1178,6 +1222,80 @@ export default function SettingsPage() {
                   <TestBtn service="sandbox" testing={testing} result={testResult} onClick={() => testConnection("sandbox")} />
                   <TestBtn service="scheduler" testing={testing} result={testResult} onClick={() => testConnection("scheduler")} />
                   <TestBtn service="searxng" testing={testing} result={testResult} onClick={() => testConnection("searxng")} />
+                </div>
+              </>
+            )}
+
+            {/* ── Remote Kernel ─────────────────────────────────────────────── */}
+            {tab === "remote" && (
+              <>
+                <SectionHeader icon={Radio} color="text-teal-400" title="Remote Kernel" desc="Connect this dashboard to an external kernelmcp instance" />
+
+                {/* Current state banner */}
+                {remoteEnabled ? (
+                  <div className="flex items-center gap-3 p-3 rounded-xl bg-teal-500/10 border border-teal-500/20">
+                    <Radio className="h-4 w-4 text-teal-400 animate-pulse shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-teal-300">Listening to remote kernel</p>
+                      <p className="text-[10px] text-teal-500 truncate">{remoteUrl}</p>
+                    </div>
+                    <button
+                      onClick={clearRemote}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] text-red-400 hover:bg-red-500/20 transition-all"
+                    >
+                      <Link2Off className="h-3.5 w-3.5" /> Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                    <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <p className="text-xs text-slate-400">Using local kernel (default)</p>
+                  </div>
+                )}
+
+                <div className="space-y-4 pt-2">
+                  <Field label="Remote Kernel URL" hint="Base URL of the kernelmcp API you want to observe (e.g. http://my-server:8000)">
+                    <div className="flex gap-2">
+                      <TextInput
+                        value={remoteUrl}
+                        onChange={setRemoteUrl}
+                        placeholder="http://my-production-app:8000"
+                      />
+                      <button
+                        onClick={testRemote}
+                        disabled={remoteTesting || !remoteUrl.trim()}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700/60 text-slate-300 hover:bg-slate-700 transition-all disabled:opacity-40 shrink-0"
+                      >
+                        {remoteTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
+                        Test
+                      </button>
+                    </div>
+                    {remoteTestResult && (
+                      <p className={`flex items-center gap-1.5 text-[11px] mt-1 ${remoteTestResult.ok ? "text-green-400" : "text-red-400"}`}>
+                        {remoteTestResult.ok ? <CircleCheck className="h-3.5 w-3.5" /> : <CircleX className="h-3.5 w-3.5" />}
+                        {remoteTestResult.detail}
+                      </p>
+                    )}
+                  </Field>
+
+                  <button
+                    onClick={saveRemote}
+                    disabled={!remoteUrl.trim()}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600/20 border border-teal-500/30 text-sm font-medium text-teal-300 hover:bg-teal-600/30 transition-all disabled:opacity-40"
+                  >
+                    <Link2 className="h-4 w-4" />
+                    {remoteEnabled ? "Reconnect to new URL" : "Connect & Reload"}
+                  </button>
+
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-4 space-y-2">
+                    <p className="text-xs font-medium text-slate-300">How it works</p>
+                    <ul className="space-y-1.5 text-[11px] text-slate-500">
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>All API calls (audit, memory, traces, security, scheduler…) are forwarded to the remote URL</li>
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>The remote kernel must have CORS enabled for this dashboard&apos;s origin</li>
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>LLM config and settings changes will apply to the remote kernel</li>
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>Disconnect to return to the local kernel</li>
+                    </ul>
+                  </div>
                 </div>
               </>
             )}

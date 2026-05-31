@@ -19,8 +19,8 @@ import {
   Monitor,
 } from "lucide-react";
 import CreateAlertDialog from "./CreateAlertDialog";
+import { getApiUrl } from '@/lib/api-url';
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -126,6 +126,7 @@ function relativeTime(ts: string): string {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function AlertsPanel({ onClose }: AlertsPanelProps) {
+  const API = getApiUrl();
   const [tab, setTab] = useState<"rules" | "history">("rules");
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [history, setHistory] = useState<AlertHistoryEntry[]>([]);

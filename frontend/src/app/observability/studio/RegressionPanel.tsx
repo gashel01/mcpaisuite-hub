@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getApiUrl } from '@/lib/api-url';
 import {
   AlertTriangle,
   Activity,
@@ -12,7 +13,6 @@ import {
   BarChart3,
 } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
 
 interface Baseline {
   pattern: string;
@@ -60,6 +60,7 @@ function healthColor(rate: number): string {
 }
 
 export function RegressionPanel({ namespace }: RegressionPanelProps) {
+  const API = getApiUrl();
   const [baselines, setBaselines] = useState<Baseline[]>([]);
   const [regressions, setRegressions] = useState<Regression[]>([]);
   const [sortBy, setSortBy] = useState<SortKey>('samples');

@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
@@ -463,7 +464,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
   const [availableTools, setAvailableTools] = useState<{name: string; description: string; category: string}[]>([]);
   const [toolsOpen, setToolsOpen] = useState(false);
   useEffect(() => {
-    const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
+    const BASE = getApiUrl();
     fetch(`${BASE}/tools`).then(r => r.json()).then(data => {
       const tools: {name: string; description: string; category: string}[] = [];
       (data.built_in?.tools || []).forEach((t: any) => tools.push({ name: t.name, description: t.description, category: "built-in" }));
@@ -875,7 +876,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
             {/* Floating toolbar — auto-hides on mouse leave */}
             <Panel position="top-center">
               <div className={`transition-all duration-300 ease-in-out ${locked ? "hidden" : canvasHover || patternDropdown || wsDropdown ? "translate-y-0 opacity-100" : "-translate-y-3 opacity-0 pointer-events-none"}`}>
-                <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#0c0c14]/90 backdrop-blur-sm border border-white/[0.08] shadow-xl max-w-[90vw] overflow-visible flex-wrap">
+                <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#0c0c14]/90  border border-white/[0.08] shadow-xl max-w-[90vw] overflow-visible flex-wrap">
                   {/* Pattern dropdown */}
                   <button onClick={(e) => openDropdown(e, setPatternDropdown, setWsDropdown)} className="px-2 py-1 text-[9px] font-medium text-violet-300 bg-violet-500/10 hover:bg-violet-500/15 rounded transition-all flex items-center gap-1 capitalize shrink-0">
                     {pattern} <ChevronDown className="h-2.5 w-2.5" />
@@ -937,7 +938,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
             {/* Contextual selection bar */}
             {!locked && hasSelection && (
               <Panel position="bottom-right">
-                <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#0c0c14]/90 backdrop-blur-sm border border-white/[0.08] shadow-xl animate-scale-in">
+                <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#0c0c14]/90  border border-white/[0.08] shadow-xl animate-scale-in">
                   <button onClick={copySelected} className="px-2 py-1 text-[9px] font-medium text-slate-400 hover:text-violet-300 hover:bg-violet-500/10 rounded transition-all flex items-center gap-1"><Copy className="h-2.5 w-2.5" /> Copy</button>
                   <button onClick={pasteClipboard} className="px-2 py-1 text-[9px] font-medium text-slate-400 hover:text-violet-300 hover:bg-violet-500/10 rounded transition-all flex items-center gap-1"><Clipboard className="h-2.5 w-2.5" /> Paste</button>
                   <div className="w-px h-4 bg-white/[0.08] mx-0.5" />
@@ -949,7 +950,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
             {/* Validation warnings — floating inside canvas */}
             {validationWarnings && validationWarnings.length > 0 && (
               <Panel position="bottom-center">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-950/80 backdrop-blur-sm border border-red-500/20 shadow-lg max-w-[500px]">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-950/80  border border-red-500/20 shadow-lg max-w-[500px]">
                   <AlertCircle className="h-3 w-3 text-red-400 shrink-0" />
                   <span className="text-[9px] text-red-300 truncate">{validationWarnings.join(" · ")}</span>
                 </div>

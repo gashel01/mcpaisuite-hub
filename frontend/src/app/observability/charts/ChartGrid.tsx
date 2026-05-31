@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { MetricsChart } from './MetricsChart';
 import { DateRangePicker } from './DateRangePicker';
 import { StatCard } from './StatCard';
+import { getApiUrl } from '@/lib/api-url';
 
 interface ChartGridProps {
   namespace: string;
@@ -29,11 +30,10 @@ interface SummaryData {
   latency_sparkline?: number[];
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
-
 const METRICS = ['latency', 'cost', 'success_rate', 'throughput'] as const;
 
 export function ChartGrid({ namespace }: ChartGridProps) {
+  const API = getApiUrl();
   const [window, setWindow] = useState('24h');
   const [chartData, setChartData] = useState<Record<string, TimeseriesPoint[]>>({});
   const [chartLoading, setChartLoading] = useState<Record<string, boolean>>({});

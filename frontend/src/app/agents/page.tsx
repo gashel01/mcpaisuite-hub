@@ -997,7 +997,7 @@ function AgentsPageInner() {
       {/* Save dialog (modal overlay) */}
       {showSaveDialog && (
         <>
-          <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" onClick={() => setShowSaveDialog(false)} />
+          <div className="fixed inset-0 z-40 bg-black/40 " onClick={() => setShowSaveDialog(false)} />
           <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-[#0c0c14] border border-white/[0.08] rounded-2xl p-5 w-80 shadow-2xl shadow-black/40 animate-scale-in">
             <div className="flex items-center gap-2 mb-3">
               <Save className="h-4 w-4 text-violet-400" />

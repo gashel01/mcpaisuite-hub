@@ -1,10 +1,19 @@
 /**
- * Global audit event store — persists across page navigations.
- * SSE connection managed at layout level so events stream continuously.
+ * Global audit event store — SSE connection shared across tabs.
+ * Uses Web Locks API: only ONE tab holds the SSE connection.
+ * Other tabs receive events via BroadcastChannel.
  */
 import { create } from "zustand";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
+function getBase(): string {
+  if (typeof window !== "undefined") {
+    try {
+      const r = JSON.parse(localStorage.getItem("kernelmcp_remote") || "{}");
+      if (r.enabled && r.url) return (r.url as string).replace(/\/$/, "");
+    } catch {}
+  }
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
+}
 
 export interface AuditEvent {
   id: number | string;
@@ -18,8 +27,7 @@ export interface AuditEvent {
 interface AuditStore {
   events: AuditEvent[];
   connected: boolean;
-  taskChangeCounter: number;  // increments on task_completed/task_failed — triggers reactive refresh
-  // Actions
+  taskChangeCounter: number;
   addEvent: (evt: AuditEvent) => void;
   setEvents: (evts: AuditEvent[]) => void;
   setConnected: (c: boolean) => void;
@@ -32,116 +40,98 @@ export const useAuditStore = create<AuditStore>((set) => ({
   connected: false,
   taskChangeCounter: 0,
   addEvent: (evt) =>
-    set((s) => {
-      const isTaskChange = TASK_CHANGE_TYPES.some(t => evt.type.includes(t));
-      return {
-        events: s.events.length >= 500
-          ? [...s.events.slice(-499), evt]
-          : [...s.events, evt],
-        taskChangeCounter: isTaskChange ? s.taskChangeCounter + 1 : s.taskChangeCounter,
-      };
-    }),
+    set((s) => ({
+      events: s.events.length >= 200 ? [...s.events.slice(-199), evt] : [...s.events, evt],
+      taskChangeCounter: TASK_CHANGE_TYPES.some(t => evt.type.includes(t))
+        ? s.taskChangeCounter + 1
+        : s.taskChangeCounter,
+    })),
   setEvents: (evts) => set({ events: evts }),
   setConnected: (c) => set({ connected: c }),
 }));
 
-// ── SSE manager (singleton, runs at layout level) ──────────────────────────
+// ── Shared SSE via Web Locks + BroadcastChannel ─────────────────────────────
 
-let _es: EventSource | null = null;
-let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _started = false;
+
+function parseEvent(raw: any): AuditEvent {
+  return {
+    id: raw.id || Date.now() + Math.random(),
+    ts: raw.ts || Date.now() / 1000,
+    source: raw.source || "unknown",
+    type: raw.type || "",
+    detail: raw.detail || raw.message || "",
+    data: raw.data || raw,
+  };
+}
 
 export function startAuditStream() {
   if (_started) return;
   _started = true;
 
   // Load initial events
-  fetch(`${BASE}/audit/events?limit=500`)
+  fetch(`${getBase()}/audit/events?limit=100`)
     .then((r) => r.json())
     .then((data) => {
-      const evts = (data.events || []).map((raw: any) => ({
-        id: raw.id || Date.now() + Math.random(),
-        ts: raw.ts || 0,
-        source: raw.source || "unknown",
-        type: raw.type || "",
-        detail: raw.detail || "",
-        data: raw.data || {},
-      }));
+      const evts = (data.events || []).map((raw: any) => parseEvent(raw));
       if (evts.length > 0) useAuditStore.getState().setEvents(evts);
     })
     .catch(() => {});
 
-  connect();
-
-  // Reconnect on tab focus + reload events to fill gaps
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      disconnect();
-    } else {
-      connect();
-      // Reload to fill any gap while hidden
-      fetch(`${BASE}/audit/events?limit=200`)
-        .then((r) => r.json())
-        .then((data) => {
-          const store = useAuditStore.getState();
-          const existing = new Set(store.events.map((e) => e.id));
-          const newEvts = (data.events || [])
-            .map((raw: any) => ({
-              id: raw.id || Date.now() + Math.random(),
-              ts: raw.ts || 0,
-              source: raw.source || "unknown",
-              type: raw.type || "",
-              detail: raw.detail || "",
-              data: raw.data || {},
-            }))
-            .filter((e: AuditEvent) => !existing.has(e.id));
-          if (newEvts.length > 0) {
-            useAuditStore.getState().setEvents([...store.events, ...newEvts].slice(-500));
-          }
-        })
-        .catch(() => {});
-    }
-  });
-}
-
-function connect() {
-  if (_es) return;
+  // BroadcastChannel: receive events from the leader tab
+  let bc: BroadcastChannel | null = null;
   try {
-    _es = new EventSource(`${BASE}/audit/stream`);
-    useAuditStore.getState().setConnected(true);
+    bc = new BroadcastChannel("kernelmcp_audit");
+    bc.onmessage = (e) => {
+      if (e.data?.type === "audit_event") {
+        useAuditStore.getState().addEvent(e.data.event);
+      }
+    };
+  } catch { /* not supported */ }
 
-    _es.onmessage = (e) => {
+  // Web Locks: only one tab runs the SSE connection
+  // When this tab closes, the lock releases and another tab takes over
+  if (navigator.locks) {
+    navigator.locks.request("kernelmcp_audit_sse", async () => {
+      // We are the leader — connect SSE
+      const runSSE = () => {
+        const es = new EventSource(`${getBase()}/audit/stream`);
+        useAuditStore.getState().setConnected(true);
+
+        es.onmessage = (e) => {
+          try {
+            const raw = JSON.parse(e.data);
+            if (raw.type === "ping" || raw.type === "connected") return;
+            const evt = parseEvent(raw);
+            useAuditStore.getState().addEvent(evt);
+            // Broadcast to follower tabs
+            try { bc?.postMessage({ type: "audit_event", event: evt }); } catch {}
+          } catch {}
+        };
+
+        es.onerror = () => {
+          es.close();
+          useAuditStore.getState().setConnected(false);
+          // Reconnect after 5s (we still hold the lock)
+          setTimeout(runSSE, 5000);
+        };
+      };
+
+      runSSE();
+      // Hold the lock forever (until tab closes)
+      await new Promise(() => {});
+    });
+  } else {
+    // Fallback: no Web Locks — just connect (old behavior)
+    const es = new EventSource(`${getBase()}/audit/stream`);
+    useAuditStore.getState().setConnected(true);
+    es.onmessage = (e) => {
       try {
         const raw = JSON.parse(e.data);
         if (raw.type === "ping" || raw.type === "connected") return;
-        useAuditStore.getState().addEvent({
-          id: Date.now() + Math.random(),
-          ts: raw.ts || Date.now() / 1000,
-          source: raw.source || "unknown",
-          type: raw.type || "",
-          detail: raw.detail || raw.message || "",
-          data: raw.data || raw,
-        });
-      } catch { /* malformed */ }
+        useAuditStore.getState().addEvent(parseEvent(raw));
+      } catch {}
     };
-
-    _es.onerror = () => {
-      disconnect();
-      _reconnectTimer = setTimeout(connect, 3000);
-    };
-  } catch {
-    useAuditStore.getState().setConnected(false);
+    es.onerror = () => { es.close(); setTimeout(() => startAuditStream(), 5000); };
   }
-}
-
-function disconnect() {
-  if (_es) {
-    _es.close();
-    _es = null;
-  }
-  if (_reconnectTimer) {
-    clearTimeout(_reconnectTimer);
-    _reconnectTimer = null;
-  }
-  useAuditStore.getState().setConnected(false);
 }

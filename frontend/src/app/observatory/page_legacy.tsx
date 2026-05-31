@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useCallback, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
@@ -14,7 +15,6 @@ import EmptyState from "@/components/empty-state";
 import CopyButton from "@/components/copy-button";
 import TimeAgo from "@/components/time-ago";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -98,6 +98,8 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 // ── Main component ─────────────────────────────────────────────────────────
+
+const BASE = getApiUrl();
 
 export default function ObservatoryPage() {
   return <Suspense><ObservatoryPageInner /></Suspense>;

@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Pause ALL animations when the page is not visible.
+   Fixes: multiple tabs cause browser-wide lag because Chrome
+   repaints infinite CSS animations (animate-pulse, animate-spin, etc.)
+   at 60fps for every visible tab. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* Page Visibility API: pause animations when document is hidden */
+.animations-paused *, .animations-paused *::before, .animations-paused *::after {
+  animation-play-state: paused !important;
+}
+
 :root {
   --bg-primary: #0a0a10;
   --bg-secondary: #12121c;

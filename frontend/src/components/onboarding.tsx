@@ -28,7 +28,7 @@ export default function Onboarding() {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={dismiss} />
+      <div className="absolute inset-0 bg-black/70 " onClick={dismiss} />
 
       {/* Modal */}
       <div className="relative w-full max-w-md bg-[#0c0c14] border border-white/[0.08] rounded-2xl shadow-2xl shadow-black/50 overflow-hidden animate-slide-up">

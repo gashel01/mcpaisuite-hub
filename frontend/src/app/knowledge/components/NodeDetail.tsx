@@ -16,7 +16,7 @@ interface NodeDetailProps {
 
 export function NodeDetail({ node, edges, allNodes, onClose, onSearch, onFocus, onNodeClick }: NodeDetailProps) {
   return (
-    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 bg-black/85 backdrop-blur-xl border border-white/[0.1] rounded-2xl px-4 py-3 shadow-2xl max-w-lg w-full mx-3 animate-fade-in">
+    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 bg-black/85  border border-white/[0.1] rounded-2xl px-4 py-3 shadow-2xl max-w-lg w-full mx-3 animate-fade-in">
       {/* Header */}
       <div className="flex items-center gap-2 mb-1.5">
         <span className="h-4 w-4 rounded-full shrink-0 ring-2 ring-white/10" style={{ backgroundColor: getTypeColor(node.type) }} />

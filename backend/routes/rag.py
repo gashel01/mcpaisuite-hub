@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Header, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from config import ns
+from config import ns, DATA_DIR
 from stores import audit_collector
 
 router = APIRouter(prefix="/rag")
@@ -20,7 +20,7 @@ _graph_stores: dict[str, object] = {}  # per-tenant graph stores
 # Tracks which chunk IDs have already been graph-extracted, and persists
 # the NetworkX graph to disk so it survives restarts.
 
-GRAPH_DATA_DIR = Path("/app/data/graph")
+GRAPH_DATA_DIR = DATA_DIR / "graph"
 
 
 def _graph_meta_path(tenant_id: str) -> Path:
@@ -113,8 +113,8 @@ async def upload(file: UploadFile = File(...), x_tenant_id: str = Header(default
     rag = _get_rag()
     if not rag: raise HTTPException(503, "RAG not available")
     tid = ns(x_tenant_id) or "default"
-    os.makedirs("/app/data/rag_uploads", exist_ok=True)
-    dest = f"/app/data/rag_uploads/{file.filename}"
+    os.makedirs(DATA_DIR / "rag_uploads", exist_ok=True)
+    dest = str(DATA_DIR / "rag_uploads" / file.filename)
     with open(dest, "wb") as f:
         content = await file.read()
         f.write(content)

@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -7,7 +8,6 @@ import {
   Calendar, AlertTriangle, X,
 } from "lucide-react";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 interface Props {
   open: boolean;
@@ -24,6 +24,7 @@ interface Retention {
 }
 
 export default function ExportRetentionDialog({ open, onClose, namespace }: Props) {
+  const BASE = getApiUrl();
   const [tab, setTab] = useState<"export" | "retention">("export");
 
   // Export state
@@ -117,7 +118,7 @@ export default function ExportRetentionDialog({ open, onClose, namespace }: Prop
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 "
       onClick={onClose}
     >
       <motion.div

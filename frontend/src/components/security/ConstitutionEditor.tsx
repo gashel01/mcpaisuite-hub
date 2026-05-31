@@ -1,11 +1,11 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ScrollText, Edit3, Save, X, ChevronDown, Info, RefreshCw } from "lucide-react";
 import type { SecurityPosture } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,7 @@ interface ConstitutionEditorProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function ConstitutionEditor({ posture, tenantHeaders, onRefresh }: ConstitutionEditorProps) {
+  const BASE = getApiUrl();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);

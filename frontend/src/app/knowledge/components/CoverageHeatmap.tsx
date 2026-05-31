@@ -51,7 +51,7 @@ export function CoverageHeatmap({ enabled, onToggle }: CoverageHeatmapProps) {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.95 }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="bg-black/70 backdrop-blur-xl border border-white/[0.08] rounded-xl p-2.5 shadow-2xl space-y-1.5 min-w-[140px]"
+              className="bg-black/70  border border-white/[0.08] rounded-xl p-2.5 shadow-2xl space-y-1.5 min-w-[140px]"
             >
               <span className="text-[8px] font-medium text-slate-500 uppercase tracking-wider">
                 Coverage
@@ -78,7 +78,7 @@ export function CoverageHeatmap({ enabled, onToggle }: CoverageHeatmapProps) {
         {/* Toggle button */}
         <button
           onClick={onToggle}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 backdrop-blur-md border rounded-xl text-[9px] font-medium transition-all active:scale-95 ${
+          className={`flex items-center gap-1.5 px-2.5 py-1.5  border rounded-xl text-[9px] font-medium transition-all active:scale-95 ${
             enabled
               ? "bg-violet-500/15 border-violet-500/30 text-violet-300"
               : "bg-black/50 border-white/[0.08] text-slate-500 hover:text-slate-300"

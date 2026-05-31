@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -12,7 +13,6 @@ import {
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import type { SecurityPosture as SecurityPostureData, SecurityAuditEvent } from "@/components/security/types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Color utils ─────────────────────────────────────────────────────────
 
@@ -66,6 +66,7 @@ interface AuditStats { total: number; blocked: number; approved: number; secrets
 // ── Main Page ───────────────────────────────────────────────────────────
 
 export default function SecurityPage() {
+  const BASE = getApiUrl();
   const { tenant } = useTenant();
   const th = tenantHeaders(tenant);
 

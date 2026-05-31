@@ -14,7 +14,7 @@ interface EgressPanelProps {
 
 export default function EgressPanel({ networkEnabled, allowedDomains, newDomain, setNewDomain, onToggle, onAddDomain, onRemoveDomain }: EgressPanelProps) {
   return (
-    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 md:p-4 mx-4 mb-2 space-y-3 shrink-0 backdrop-blur-sm">
+    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 md:p-4 mx-4 mb-2 space-y-3 shrink-0 ">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-slate-300">Network Egress</h3>
         <button onClick={onToggle} className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${networkEnabled ? "bg-green-600 text-white" : "bg-slate-700 text-slate-400"}`}>

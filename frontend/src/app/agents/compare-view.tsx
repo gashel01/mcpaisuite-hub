@@ -137,7 +137,7 @@ export function CompareTray({ items, onRemove, onCompare, onClear }: { items: Co
   if (items.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-slate-900/95 backdrop-blur-sm border border-violet-500/20 rounded-2xl shadow-2xl shadow-violet-500/10">
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-slate-900/95  border border-violet-500/20 rounded-2xl shadow-2xl shadow-violet-500/10">
       <ArrowLeftRight className="h-3.5 w-3.5 text-violet-400" />
       <div className="flex items-center gap-2">
         {items.map(item => (

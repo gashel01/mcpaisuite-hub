@@ -37,7 +37,7 @@ function ExecutionNode({ data, selected }: NodeProps) {
     <>
       <Handle type="target" position={Position.Top} className="!bg-violet-500/50 !border-violet-400/30 !w-2 !h-2" />
       <div
-        className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border backdrop-blur-sm transition-all min-w-[170px] ${style.bg} ${style.border} ${
+        className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border transition-colors min-w-[170px] ${style.bg} ${style.border} ${
           selected || isActive ? `ring-2 ${style.ring} shadow-lg` : "hover:ring-1 hover:ring-white/20"
         }`}
       >
@@ -99,7 +99,7 @@ export default function ExecutionGraph() {
       source: e.source,
       target: e.target,
       type: "smoothstep",
-      animated: true,
+      animated: false,
       style: { stroke: "rgba(139, 92, 246, 0.35)", strokeWidth: 2 },
       markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(139, 92, 246, 0.5)", width: 16, height: 12 },
     }));

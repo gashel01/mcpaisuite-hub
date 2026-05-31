@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Clock, Cpu, Wrench, Users, Link2, Database, Loader2 } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
+import { getApiUrl } from '@/lib/api-url';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -55,6 +55,7 @@ const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 // ── Component ────────────────────────────────────────────────────────────
 
 export function LatencyAnalytics({ namespace, window: externalWindow, onSelectWindow }: Props) {
+  const API = getApiUrl();
   const [win, setWin] = useState(externalWindow || '24h');
   const [data, setData] = useState<LatencyData | null>(null);
   const [loading, setLoading] = useState(false);

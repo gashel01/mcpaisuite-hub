@@ -1,9 +1,9 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback } from "react";
 import { BarChart3, Clock, DollarSign, Cpu, Wrench, Layers, Loader2 } from "lucide-react";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 interface SpanGroup {
   p50: number; p95: number; p99: number;
@@ -27,6 +27,7 @@ const TYPE_COLORS: Record<string, { color: string; label: string; icon: typeof C
 };
 
 export default function RunStats({ taskId, namespace, totalTokens, totalCost, totalTurns }: Props) {
+  const BASE = getApiUrl();
   const [spans, setSpans] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 

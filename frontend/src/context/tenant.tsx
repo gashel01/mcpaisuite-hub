@@ -1,8 +1,8 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 interface TenantCtx {
   tenant: string;
@@ -21,6 +21,7 @@ const TenantContext = createContext<TenantCtx>({
 });
 
 export function TenantProvider({ children }: { children: ReactNode }) {
+  const BASE = getApiUrl();
   const [tenant, setTenantState] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("kernelmcp_tenant") || "demo";

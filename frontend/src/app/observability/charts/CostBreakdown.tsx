@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { DollarSign, Cpu, Wrench, Users, Loader2 } from 'lucide-react';
-
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
+import { getApiUrl } from '@/lib/api-url';
 
 interface CostData {
   window: string;
@@ -25,6 +24,7 @@ interface Props {
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 
 export function CostBreakdown({ namespace, window: externalWindow }: Props) {
+  const API = getApiUrl();
   const [win, setWin] = useState(externalWindow || '24h');
   const [data, setData] = useState<CostData | null>(null);
   const [loading, setLoading] = useState(false);

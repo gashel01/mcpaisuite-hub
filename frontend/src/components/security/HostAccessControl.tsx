@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -11,7 +12,6 @@ import {
 } from "lucide-react";
 import type { SecurityPosture } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 interface HostAccessControlProps {
   posture: SecurityPosture | null;
@@ -51,6 +51,7 @@ const safeDescriptions: Record<string, string> = {
 };
 
 export default function HostAccessControl({ posture, tenantHeaders, onRefresh }: HostAccessControlProps) {
+  const BASE = getApiUrl();
   const [activeTab, setActiveTab] = useState<TabKey>("approved");
   const [newPattern, setNewPattern] = useState("");
 
@@ -98,7 +99,7 @@ export default function HostAccessControl({ posture, tenantHeaders, onRefresh }:
   }
 
   return (
-    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 md:p-5 space-y-4 backdrop-blur-sm">
+    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 md:p-5 space-y-4 ">
       {/* Header */}
       <div className="flex items-center gap-2">
         <Terminal className="h-5 w-5 text-slate-400" />

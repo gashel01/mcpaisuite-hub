@@ -12,7 +12,7 @@ interface TaskModalProps {
 export default function TaskModal({ task, onClose }: TaskModalProps) {
   return (
     <>
-      <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 z-50 bg-black/60 " onClick={onClose} />
       <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100%-2rem)] md:w-[700px] max-h-[80vh] bg-[#111118] border border-slate-700/60 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-800/60 shrink-0">

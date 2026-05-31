@@ -86,7 +86,7 @@ export function AskBrain({ onResult }: AskBrainProps) {
         </motion.div>
       )}
 
-      <div className="flex items-center gap-2 bg-black/60 backdrop-blur-xl border border-white/[0.08] rounded-2xl px-3 py-2.5 shadow-2xl transition-all focus-within:border-violet-500/30">
+      <div className="flex items-center gap-2 bg-black/60  border border-white/[0.08] rounded-2xl px-3 py-2.5 shadow-2xl transition-all focus-within:border-violet-500/30">
         <Brain className="h-4 w-4 text-violet-400/60 shrink-0" />
 
         <input

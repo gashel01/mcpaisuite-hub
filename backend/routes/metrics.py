@@ -3,8 +3,13 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Header, Query
 from typing import Optional
+import time as _time
 
 router = APIRouter()
+
+# Simple in-memory cache for task data (avoid re-loading 157+ tasks every request)
+_task_cache: dict = {"data": None, "ts": 0}
+_CACHE_TTL = 5  # seconds
 
 # Window parsing
 WINDOW_SECONDS = {
@@ -61,7 +66,12 @@ def _get_tasks_in_window(namespace: str, start_ts: float, end_ts: float) -> list
     """Retrieve tasks within the given time window."""
     try:
         from task_store import load_all_tasks
-        all_task_objs = load_all_tasks()
+        # Cache task objects to avoid re-loading from SQLite on every request
+        now = _time.time()
+        if _task_cache["data"] is None or (now - _task_cache["ts"]) > _CACHE_TTL:
+            _task_cache["data"] = load_all_tasks()
+            _task_cache["ts"] = now
+        all_task_objs = _task_cache["data"]
         # Convert Task objects to dicts, filter by namespace
         all_tasks = []
         for task in all_task_objs.values():

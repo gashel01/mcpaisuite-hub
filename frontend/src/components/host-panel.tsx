@@ -15,7 +15,7 @@ interface HostPanelProps {
 
 export default function HostPanel({ hostPending, hostApproved, newHostPattern, setNewHostPattern, onApprove, onDeny, onAdd, onRevoke }: HostPanelProps) {
   return (
-    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 md:p-4 mx-4 mb-2 space-y-3 shrink-0 backdrop-blur-sm">
+    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 md:p-4 mx-4 mb-2 space-y-3 shrink-0 ">
       <div className="flex items-center gap-2">
         <Terminal className="h-4 w-4 text-slate-400" />
         <h3 className="text-sm font-medium text-slate-300">Host Command Access</h3>

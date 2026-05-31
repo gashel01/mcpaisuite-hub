@@ -363,10 +363,10 @@ export default function ChatPage() {
       const turns: Turn[] = [];
       let taskDone = false;
 
-      // Poll host access requests every 2s while running (agent may block on request_host_access)
+      // Poll host access requests every 5s while running (agent may block on request_host_access)
       const hostPoll = setInterval(() => {
         fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => setHostPending(d.pending || [])).catch(() => {});
-      }, 2000);
+      }, 5000);
 
       const es = new EventSource(`${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`);
       eventSourceRef.current = es;
@@ -378,8 +378,6 @@ export default function ChatPage() {
           if (msg.type === "turn") {
             turns.push(msg.turn);
             setLiveTurns([...turns]);
-            // Check host access on each turn
-            fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => setHostPending(d.pending || [])).catch(() => {});
           }
 
           if (msg.type === "elicitation") {
@@ -481,7 +479,7 @@ export default function ChatPage() {
       <div className="flex-1 flex flex-col min-w-0 relative" onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleFileDrop}>
         {/* Drag overlay */}
         {dragOver && (
-          <div className="absolute inset-0 z-50 bg-violet-950/80 border-2 border-dashed border-violet-500 rounded-xl flex items-center justify-center backdrop-blur-sm">
+          <div className="absolute inset-0 z-50 bg-violet-950/80 border-2 border-dashed border-violet-500 rounded-xl flex items-center justify-center ">
             <div className="text-center">
               <FileText className="h-10 w-10 text-violet-400 mx-auto mb-2" />
               <p className="text-violet-300 font-medium">Drop file to add to knowledge base</p>
@@ -691,7 +689,7 @@ export default function ChatPage() {
 
         {/* Scroll to bottom */}
         {showScrollDown && (
-          <button onClick={() => { userScrolledUp.current = false; endRef.current?.scrollIntoView({ behavior: "smooth" }); }} className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-violet-600/90 hover:bg-violet-500 hover:scale-110 text-white rounded-full p-2.5 shadow-lg shadow-violet-500/25 transition-all z-10 animate-scale-in backdrop-blur-sm">
+          <button onClick={() => { userScrolledUp.current = false; endRef.current?.scrollIntoView({ behavior: "smooth" }); }} className="absolute bottom-28 left-1/2 -translate-x-1/2 bg-violet-600/90 hover:bg-violet-500 hover:scale-110 text-white rounded-full p-2.5 shadow-lg shadow-violet-500/25 transition-all z-10 animate-scale-in ">
             <ArrowDown className="h-4 w-4" />
           </button>
         )}

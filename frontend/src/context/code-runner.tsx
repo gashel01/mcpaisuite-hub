@@ -1,8 +1,8 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from "react";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 interface RunResult {
   blockId: string;
@@ -32,6 +32,7 @@ const CodeRunnerContext = createContext<CodeRunnerCtx>({
 });
 
 export function CodeRunnerProvider({ children }: { children: ReactNode }) {
+  const BASE = getApiUrl();
   const [results, setResults] = useState<Record<string, RunResult>>({});
   const [editorRequest, setEditorRequest] = useState<{ code: string; language: string; autoRun?: boolean } | null>(null);
   const esRefs = useRef<Record<string, EventSource>>({});

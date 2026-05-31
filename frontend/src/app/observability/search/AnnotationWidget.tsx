@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Star, ThumbsUp, ThumbsDown, Minus, X, Check, Loader2 } from 'lucide-react';
+import { getApiUrl } from '@/lib/api-url';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,6 +23,7 @@ interface AnnotationWidgetProps {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function AnnotationWidget({ taskId, onUpdate }: AnnotationWidgetProps) {
+  const API = getApiUrl();
   const [annotation, setAnnotation] = useState<Annotation>({});
   const [tagInput, setTagInput] = useState('');
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);

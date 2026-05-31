@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import {
   MessageSquare,
   Settings, Bot, Activity, Menu, X, Database, FolderOpen, Users, Plus,
-  ChevronDown, Clock, Shield, FlaskConical,
+  ChevronDown, Clock, Shield, FlaskConical, Radio,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
 
@@ -42,6 +42,14 @@ export default function Sidebar() {
   }, []);
   const [tenantOpen, setTenantOpen] = useState(false);
   const [newTenant, setNewTenant] = useState("");
+  const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const r = JSON.parse(localStorage.getItem("kernelmcp_remote") || "{}");
+      if (r.enabled && r.url) setRemoteUrl(r.url);
+    } catch {}
+  }, []);
   const { tenant, setTenant, tenants, createTenant } = useTenant();
 
   const handleCreateTenant = () => {
@@ -79,7 +87,7 @@ export default function Sidebar() {
       <button
         onClick={() => setOpen(true)}
         aria-label="Open menu"
-        className="fixed top-3 left-3 z-40 flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900/90 border border-slate-700/50 text-slate-400 md:hidden backdrop-blur-md hover:text-slate-200 hover:border-slate-600/60 active:scale-95 transition-all"
+        className="fixed top-3 left-3 z-40 flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900/90 border border-slate-700/50 text-slate-400 md:hidden  hover:text-slate-200 hover:border-slate-600/60 active:scale-95 transition-all"
       >
         <Menu className="h-5 w-5" />
       </button>
@@ -87,7 +95,7 @@ export default function Sidebar() {
       {/* Overlay */}
       {open && (
         <div
-          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden transition-opacity"
+          className="fixed inset-0 z-40 bg-black/70  md:hidden transition-opacity"
           onClick={() => setOpen(false)}
         />
       )}
@@ -198,12 +206,23 @@ export default function Sidebar() {
         </nav>
 
         {/* Footer */}
-        <div className="border-t border-white/[0.04] px-4 py-2.5 flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[10px] text-slate-500 font-medium">v1.0</span>
+        <div className="border-t border-white/[0.04] px-3 py-2.5 space-y-1.5">
+          {remoteUrl && (
+            <Link href="/settings" onClick={() => setOpen(false)}
+              className="flex items-center gap-1.5 w-full px-2 py-1 rounded-md bg-teal-500/10 border border-teal-500/20 hover:bg-teal-500/15 transition-colors group"
+              title={`Listening to: ${remoteUrl}`}
+            >
+              <Radio className="h-3 w-3 text-teal-400 shrink-0" />
+              <span className="text-[10px] text-teal-300 font-medium truncate flex-1">{remoteUrl.replace(/^https?:\/\//, "")}</span>
+            </Link>
+          )}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <div className={`h-1.5 w-1.5 rounded-full ${remoteUrl ? "bg-teal-400" : "bg-emerald-400"}`} />
+              <span className="text-[10px] text-slate-500 font-medium">v1.0</span>
+            </div>
+            <span className="text-[10px] text-slate-600">MCP AI Suite</span>
           </div>
-          <span className="text-[10px] text-slate-600">MCP AI Suite</span>
         </div>
       </aside>
     </>

@@ -1,6 +1,7 @@
+import { getApiUrl } from "@/lib/api-url";
 import { create } from "zustand";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
+const BASE_URL = getApiUrl();
 
 // ── Data Model ────────────────────────────────────────────────────────────
 

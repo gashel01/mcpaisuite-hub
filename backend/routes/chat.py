@@ -178,7 +178,23 @@ async def chat(body: ChatMessageIn, x_tenant_id: str = Header(default="")):
     if history and len(history) > 1:
         # Last 6 messages max to avoid blowing context
         recent = history[-6:-1] if len(history) > 6 else history[:-1]
-        history_lines = [f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content'][:300]}" for m in recent]
+        history_lines = []
+        for m in recent:
+            role = 'User' if m['role'] == 'user' else 'Assistant'
+            content = m['content'][:500]
+            # Include tool call summary from previous tasks
+            if m.get('turns'):
+                tools = [t.get('tool_name', '') for t in m['turns'] if t.get('role') == 'tool_call' and t.get('tool_name')]
+                if tools:
+                    content += f"\n  [Tools used: {', '.join(tools)}]"
+                # Show last tool result status
+                for t in reversed(m['turns']):
+                    if t.get('role') == 'tool_result':
+                        status = 'OK' if t.get('success', True) else 'FAILED'
+                        output = (t.get('output') or '')[:200]
+                        content += f"\n  [Last result: {status} — {output}]"
+                        break
+            history_lines.append(f"{role}: {content}")
         goal = f"[Conversation context]\n" + "\n".join(history_lines) + f"\n\n[Current message]\n{body.message}"
 
     task = Task(goal=goal, namespace=chat_ns)
@@ -276,11 +292,9 @@ async def stream_task(conversation_id: str, task_id: str, x_tenant_id: str = Hea
                 yield f"data: {json.dumps({'type': 'done', 'status': task.status.value, 'answer': answer, 'total_tokens': task.total_tokens, 'total_cost': task.total_cost, 'total_turns': task.total_turns, 'turns': turns, 'bootstrap_sources': task.metadata.get('bootstrap_sources', [])}, default=str)}\n\n"
                 break
 
-            # Push progress
-            if not new_turns:
-                yield f"data: {json.dumps({'type': 'progress', 'status': task.status.value, 'turns_count': len(turns)})}\n\n"
-
-            await asyncio.sleep(0.5)
+            # Only send progress heartbeat every ~10s (not every poll)
+            # Reduces SSE traffic and frees connection slots
+            await asyncio.sleep(2.0)
 
     return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 

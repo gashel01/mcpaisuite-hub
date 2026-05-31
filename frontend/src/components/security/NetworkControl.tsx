@@ -1,11 +1,11 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, Plus, X, AlertTriangle } from "lucide-react";
 import type { SecurityPosture } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 interface NetworkControlProps {
   posture: SecurityPosture | null;
@@ -14,6 +14,7 @@ interface NetworkControlProps {
 }
 
 export default function NetworkControl({ posture, tenantHeaders, onRefresh }: NetworkControlProps) {
+  const BASE = getApiUrl();
   const [newDomain, setNewDomain] = useState("");
   const [toggling, setToggling] = useState(false);
 
@@ -56,7 +57,7 @@ export default function NetworkControl({ posture, tenantHeaders, onRefresh }: Ne
   }
 
   return (
-    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 md:p-5 space-y-4 backdrop-blur-sm">
+    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 md:p-5 space-y-4 ">
       {/* Header */}
       <div className="flex items-center gap-2">
         <Shield className="h-5 w-5 text-slate-400" />

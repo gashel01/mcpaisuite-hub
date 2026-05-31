@@ -1,9 +1,11 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useEffect, useRef } from "react";
 import { useExecutionStore, type StreamEvent } from "@/stores/execution";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
+// Must be inside component/hook — module-level getApiUrl() runs during SSR where window is undefined
+
 
 /** Normalize backend event types (dot-separated) to our internal format (underscore).
  *  For agent_message events, we use the `message` field to determine the real sub-type. */
@@ -31,7 +33,7 @@ function normalizeType(raw: string, message?: string): string {
     "task_started": "task_started",
     "task_completed": "task_complete",
     "task_complete": "task_complete",
-    "task_failed": "error",
+    "task_failed": "task_failed",
     "turn_started": "turn_started",
     "turn_complete": "turn_complete",
     "turn_completed": "turn_complete",
@@ -69,6 +71,7 @@ function isTerminalEvent(rawType: string): boolean {
     "task_completed", "task_complete", "task_failed",
     "taskforce.completed", "taskforce.failed",
     "taskforce_completed", "taskforce_failed",
+    "task_failed",
   ];
   return terminals.includes(rawType);
 }
@@ -100,16 +103,20 @@ export function useTaskStream(taskId: string | null, tenant: string = "demo") {
     const store = useExecutionStore.getState();
     store.startStream(taskId);
 
-    const url = `${BASE}/api/stream/${taskId}?tenant=${encodeURIComponent(tenant)}`;
+    const API = getApiUrl();
+    const url = `${API}/api/stream/${taskId}?tenant=${encodeURIComponent(tenant)}`;
     console.log("[useTaskStream] Connecting to:", url);
 
     const es = new EventSource(url);
     esRef.current = es;
 
-    // Elapsed timer
+    // Elapsed timer — use 1s interval instead of 100ms to avoid excessive re-renders
+    // that cause lag in other browser tabs
     timerRef.current = setInterval(() => {
-      useExecutionStore.getState().tick();
-    }, 100);
+      if (!document.hidden) {
+        useExecutionStore.getState().tick();
+      }
+    }, 1000);
 
     es.onopen = () => {
       console.log("[useTaskStream] SSE connected");
@@ -168,7 +175,7 @@ export function useTaskStream(taskId: string | null, tenant: string = "demo") {
       } else {
         // Genuine connection failure — try polling for result
         console.warn("[useTaskStream] SSE connection failed, falling back to polling");
-        fetch(`${BASE}/agents/taskforce/${taskIdRef.current}`, {
+        fetch(`${getApiUrl()}/agents/taskforce/${taskIdRef.current}`, {
           headers: { "X-Tenant-ID": tenantRef.current },
         })
           .then(r => r.json())

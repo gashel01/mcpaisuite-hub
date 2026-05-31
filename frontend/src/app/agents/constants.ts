@@ -1,6 +1,7 @@
+import { getApiUrl } from "@/lib/api-url";
 import { Code, Globe, FolderOpen, Brain, Map, Wand2, ArrowRight, Users, Layers, MessageSquare, GitBranch, Sparkles, Bot } from "lucide-react";
 
-export const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
+export const BASE_URL = getApiUrl();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 

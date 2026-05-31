@@ -1089,6 +1089,37 @@ async def delete_file(path: str = Query(...), x_tenant_id: str = Header(default=
     return {"deleted": path}
 
 
+@router.get("/workspace/download-folder")
+async def download_folder(path: str = Query(...), x_tenant_id: str = Header(default="")):
+    """Download a workspace folder as a ZIP file."""
+    from fastapi.responses import StreamingResponse
+    import zipfile, io, os as _os
+    ws, n = _get_ws(x_tenant_id)
+    entries = await ws.list_files(path, recursive=True, namespace=n)
+    if not entries:
+        raise HTTPException(404, "Folder not found or empty")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for e in entries:
+            if e.is_dir:
+                continue
+            try:
+                file_data = await ws.read_file(e.path, namespace=n)
+                # Use path relative to the requested folder
+                arcname = e.path[len(path):].lstrip("/") if e.path.startswith(path) else e.path
+                zf.writestr(arcname, file_data.content or "")
+            except Exception:
+                continue
+    buf.seek(0)
+    folder_name = path.rstrip("/").split("/")[-1] or "workspace"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{folder_name}.zip"'},
+    )
+
+
 @router.post("/workspace/move")
 async def move_file(body: dict, x_tenant_id: str = Header(default="")):
     ws, n = _get_ws(x_tenant_id)

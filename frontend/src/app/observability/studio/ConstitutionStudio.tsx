@@ -16,8 +16,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { DiffView } from './DiffView';
+import { getApiUrl } from '@/lib/api-url';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
 
 interface ConstitutionStudioProps {
   namespace: string;
@@ -48,6 +48,7 @@ function estimateTokens(text: string): number {
 }
 
 export function ConstitutionStudio({ namespace }: ConstitutionStudioProps) {
+  const API = getApiUrl();
   const [mode, setMode] = useState<'editor' | 'preview'>('editor');
   const [rules, setRules] = useState('');
   const [savedRules, setSavedRules] = useState('');

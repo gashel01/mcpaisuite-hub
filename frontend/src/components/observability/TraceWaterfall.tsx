@@ -1,10 +1,10 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, Clock, Cpu, Wrench, Users, Database, Link2, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +43,7 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; ic
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function TraceWaterfall({ taskId, namespace }: Props) {
+  const BASE = getApiUrl();
   const [spans, setSpans] = useState<Span[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

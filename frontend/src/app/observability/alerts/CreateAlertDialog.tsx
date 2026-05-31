@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertCircle } from "lucide-react";
+import { getApiUrl } from '@/lib/api-url';
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +36,7 @@ const CHANNELS = [
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function CreateAlertDialog({ open, onClose, onCreated }: CreateAlertDialogProps) {
+  const API = getApiUrl();
   const [name, setName] = useState("");
   const [metric, setMetric] = useState("failure_rate");
   const [operator, setOperator] = useState<string>(">");
@@ -139,7 +140,7 @@ export default function CreateAlertDialog({ open, onClose, onCreated }: CreateAl
         >
           {/* Backdrop */}
           <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/60 "
             onClick={handleClose}
           />
 

@@ -60,9 +60,10 @@ async def stream_task(task_id: str, x_tenant_id: str = Header(default=""), tenan
             # If task already finished, replay buffered events then send completion
             if already_done and queue.empty():
                 result_data = task.metadata.get("result", {})
+                _is_success = task.status.value == "completed"
                 payload = json.dumps({
-                    "type": "task_complete",
-                    "message": f"taskforce.{'completed' if task.status.value == 'completed' else 'failed'}",
+                    "type": "task_complete" if _is_success else "task_failed",
+                    "message": f"taskforce.{'completed' if _is_success else 'failed'}",
                     "task_id": task_id,
                     "status": task.status.value,
                     "data": {
@@ -70,7 +71,7 @@ async def stream_task(task_id: str, x_tenant_id: str = Header(default=""), tenan
                         "cost": result_data.get("total_cost", task.total_cost or 0),
                         "turns": result_data.get("total_turns", 0),
                         "duration_ms": result_data.get("duration_ms", 0),
-                        "success": result_data.get("success", task.status.value == "completed"),
+                        "success": _is_success,
                     },
                 })
                 yield f"data: {payload}\n\n"
@@ -85,14 +86,16 @@ async def stream_task(task_id: str, x_tenant_id: str = Header(default=""), tenan
                     # Check if task is done
                     t = await kernel.get_task(task_id)
                     if t and t.status.value in ("completed", "failed", "cancelled"):
+                        _ok = t.status.value == "completed"
                         payload = json.dumps({
-                            "type": "task_complete",
+                            "type": "task_complete" if _ok else "task_failed",
                             "task_id": task_id,
                             "status": t.status.value,
                             "data": {
                                 "tokens": t.total_tokens or 0,
                                 "cost": t.total_cost or 0,
                                 "turns": getattr(t, "total_turns", 0) or 0,
+                                "success": _ok,
                             },
                         })
                         yield f"data: {payload}\n\n"

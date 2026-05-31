@@ -71,7 +71,7 @@ export default function CodeValidation({ posture, auditEvents }: CodeValidationP
   );
 
   return (
-    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 md:p-5 space-y-4 backdrop-blur-sm">
+    <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 md:p-5 space-y-4 ">
       {/* Header */}
       <div className="flex items-center gap-2">
         <ShieldCheck className="h-5 w-5 text-slate-400" />

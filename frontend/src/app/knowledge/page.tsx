@@ -364,7 +364,7 @@ export default function KnowledgePage() {
 
       {/* Drag overlay */}
       {dragOver && (
-        <div className="absolute inset-0 z-50 bg-violet-950/60 backdrop-blur-md flex items-center justify-center animate-fade-in">
+        <div className="absolute inset-0 z-50 bg-violet-950/60  flex items-center justify-center animate-fade-in">
           <div className="text-center">
             <div className="h-20 w-20 rounded-3xl bg-violet-500/20 border border-violet-500/30 flex items-center justify-center mx-auto mb-4 animate-bounce">
               <Upload className="h-8 w-8 text-violet-400" />
@@ -413,7 +413,7 @@ export default function KnowledgePage() {
 
           {/* Focus indicator */}
           {focusedNode && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 bg-black/70 backdrop-blur-xl border border-violet-500/30 rounded-2xl">
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2 bg-black/70  border border-violet-500/30 rounded-2xl">
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-violet-400 animate-pulse" />
                 <span className="text-[10px] text-violet-300 font-medium">Focus Mode</span>
@@ -438,7 +438,7 @@ export default function KnowledgePage() {
 
           {/* Hover tooltip */}
           {hoveredNode && !focusedNode && (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2.5 bg-black/80 backdrop-blur-xl border border-white/[0.1] rounded-xl shadow-2xl max-w-md pointer-events-none">
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-4 py-2.5 bg-black/80  border border-white/[0.1] rounded-xl shadow-2xl max-w-md pointer-events-none">
               <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: hoveredNode.color || "#a78bfa" }} />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -461,7 +461,7 @@ export default function KnowledgePage() {
 
           {/* Type legend */}
           {allTypes.length > 1 && (
-            <div className="absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-1 bg-black/50 backdrop-blur-md border border-white/[0.08] rounded-xl px-2 py-1.5 max-w-80">
+            <div className="absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-1 bg-black/50  border border-white/[0.08] rounded-xl px-2 py-1.5 max-w-80">
               <button onClick={() => setGraphFilter(null)} className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${!graphFilter ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>All</button>
               {allTypes.map(t => (
                 <button key={t} onClick={() => setGraphFilter(graphFilter === t ? null : t)} className={`flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${graphFilter === t ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>
@@ -473,7 +473,7 @@ export default function KnowledgePage() {
 
           {/* Contextual suggestion */}
           {contextualSuggestion && !selectedNode && (
-            <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-3 py-2 bg-black/60 backdrop-blur-md border border-amber-500/20 rounded-xl max-w-xs animate-fade-in" style={{ right: sideOpen ? "calc(340px + 12px)" : "12px" }}>
+            <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-3 py-2 bg-black/60  border border-amber-500/20 rounded-xl max-w-xs animate-fade-in" style={{ right: sideOpen ? "calc(340px + 12px)" : "12px" }}>
               <Lightbulb className="h-3.5 w-3.5 text-amber-400 shrink-0" />
               <span className="text-[10px] text-amber-200/80">{contextualSuggestion.text}</span>
               <button
@@ -647,7 +647,7 @@ export default function KnowledgePage() {
 
           {/* Sidebar toggle (when closed) */}
           {!sideOpen && (
-            <button onClick={() => setSideOpen(true)} className="absolute top-3 right-3 z-20 p-2 bg-black/50 backdrop-blur-md border border-white/[0.08] rounded-xl text-slate-500 hover:text-slate-300 transition-all">
+            <button onClick={() => setSideOpen(true)} className="absolute top-3 right-3 z-20 p-2 bg-black/50  border border-white/[0.08] rounded-xl text-slate-500 hover:text-slate-300 transition-all">
               <PanelRightOpen className="h-4 w-4" />
             </button>
           )}

@@ -77,6 +77,17 @@ COPY ragmcp/ragmcp/ /usr/local/lib/python3.11/site-packages/ragmcp/
 COPY evalmcp/evalmcp/ /usr/local/lib/python3.11/site-packages/evalmcp/
 COPY kernelmcp/kernelmcp/ /usr/local/lib/python3.11/site-packages/kernelmcp/
 
+# ── PyPI mode: override local source with published packages ─────────────
+ARG PYPI_MODE=0
+ARG PYPI_INDEX=https://pypi.org/simple/
+RUN if [ "$PYPI_MODE" = "1" ]; then \
+    pip install --no-cache-dir \
+      --index-url "$PYPI_INDEX" \
+      --extra-index-url https://pypi.org/simple/ \
+      kernelmcp memorymcp planningmcp workspacemcp sandboxmcp \
+      schedulermcp "ragmcp[fastembed,qdrant]" evalmcp ltpmcp websearchmcp; \
+fi
+
 # ── Layer 3: demo app (changes most often → always fast) ─────────────────
 COPY kernelmcp-demo/backend/ /app/
 

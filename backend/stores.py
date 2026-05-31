@@ -11,7 +11,8 @@ MAX_CONVERSATIONS_PER_NS = 50
 MAX_MESSAGES_PER_CONV = 100
 MAX_RUNNING_TASKS = 10
 
-DB_PATH = "/app/data/conversations.db"
+import os as _os
+DB_PATH = _os.path.join(_os.getenv("KERNELMCP_DATA_DIR", "/app/data"), "conversations.db")
 
 
 class ConversationStore:

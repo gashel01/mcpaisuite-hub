@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -12,7 +13,6 @@ import { useTenant, tenantHeaders } from "@/context/tenant";
 import { useToast } from "@/components/ui/toast";
 import ConfirmDialog from "@/components/ui/confirm";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -68,6 +68,8 @@ interface Scorer {
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────
+
+const BASE = getApiUrl();
 
 export default function EvalPage() {
   return (
@@ -889,7 +891,7 @@ function CreateDatasetModal({ onClose, onCreate, tenantHeaders: th }: {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 "
       onClick={onClose}
     >
       <motion.div

@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -30,7 +31,6 @@ import { AlertBell, AlertsPanel } from "./alerts";
 
 import { RegressionPanel } from "./studio";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -58,6 +58,7 @@ export default function ObservabilityPage() {
 // ── Inner Component ────────────────────────────────────────────────────────
 
 function ObservabilityInner() {
+  const BASE = getApiUrl();
   const searchParams = useSearchParams();
   const { tenant } = useTenant();
   const th = tenantHeaders(tenant);
@@ -161,7 +162,7 @@ function ObservabilityInner() {
     if (mode === "dashboard") loadAnalytics();
   }, [mode]); // eslint-disable-line
 
-  // Reactive task list refresh — triggers instantly when any task completes/fails (via SSE)
+  // Reactive task list refresh — triggers instantly when any task starts/completes/fails (via SSE)
   useEffect(() => {
     if (taskChangeCounter === 0) return; // skip initial
     fetch(`${BASE}/api/tool`, {
@@ -172,11 +173,24 @@ function ObservabilityInner() {
       .then(r => r.json())
       .then(res => {
         if (res?.result?.tasks) {
-          setTasks(res.result.tasks.map((t: any) => {
+          const mapped = res.result.tasks.map((t: any) => {
             let status = t.status || "completed";
             if (status === "running" && t.created_at && (Date.now() / 1000 - t.created_at) > 300) status = "failed";
             return { id: t.task_id, goal: t.query || t.task_id.slice(0, 12), status, startedAt: new Date(t.created_at * 1000).toISOString(), durationMs: t.duration_ms };
-          }));
+          });
+          setTasks(mapped);
+
+          // Auto-connect to a running task if we're not already streaming
+          const currentStatus = useExecutionStore.getState().status;
+          if (currentStatus !== "streaming") {
+            const running = mapped.find((t: any) => t.status === "running");
+            if (running && running.id !== taskId) {
+              setTaskId(running.id);
+              setGoal(running.goal);
+              setMode("trace");
+              startPolling(running.id);
+            }
+          }
         }
       })
       .catch(() => {});
@@ -203,7 +217,7 @@ function ObservabilityInner() {
       ]).then(([taskData, traceData]) => {
         if (!taskData) return;
         const turns = traceData?.result?.turns ?? taskData.turns ?? [];
-        useExecutionStore.getState().loadTrace(urlTask, turns, taskData.total_tokens, taskData.total_cost);
+        useExecutionStore.getState().loadTrace(urlTask, turns, taskData.total_tokens, taskData.total_cost, taskData.status);
         setGoal(taskData.goal || taskData.metadata?.result?.goal || "");
       }).catch(() => {});
     }
@@ -212,16 +226,23 @@ function ObservabilityInner() {
   // ── Task actions ───────────────────────────────────────────────────────
 
   const startPolling = useCallback((id: string) => {
+    // Don't start polling if already polling this task
+    if (pollRef.current) clearInterval(pollRef.current);
+
     const store = useExecutionStore.getState();
     store.startStream(id);
     store.setStatus("streaming");
+
+    let done = false;
+
     pollRef.current = setInterval(async () => {
+      if (done) return;
       try {
         const res = await fetch(`${BASE}/tasks/${id}`, { headers: th });
         if (!res.ok) return;
         const data = await res.json();
         const s = useExecutionStore.getState();
-        const currentTurns = s.events.filter(e => e.type === "turn_complete").length;
+        const currentTurns = s.events.filter(e => e.type === "tool_call" || e.type === "turn_complete").length;
         const remoteTurns = data.total_turns || 0;
         if (remoteTurns > currentTurns) {
           for (let i = currentTurns; i < remoteTurns; i++) {
@@ -229,9 +250,14 @@ function ObservabilityInner() {
             s.addEvent({ id: `poll-${Date.now()}-${i}`, type: turn?.role === "tool_call" ? "tool_call" : "turn_complete", message: turn?.tool || `Turn ${i + 1}`, data: { turn: i + 1, tool: turn?.tool, role: turn?.role }, timestamp: new Date().toISOString() });
           }
         }
-        if (data.status === "completed" || data.status === "failed") {
-          s.addEvent({ id: `poll-done-${Date.now()}`, type: data.status === "completed" ? "task_complete" : "error", message: data.status, data: { tokens: data.total_tokens, cost: data.total_cost, turns: data.total_turns }, timestamp: new Date().toISOString() });
-          if (pollRef.current) clearInterval(pollRef.current);
+        if (data.status === "completed" || data.status === "failed" || data.status === "cancelled") {
+          done = true; // Prevent re-entry
+          if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+          // Load the full trace instead of adding a single completion event
+          const traceRes = await fetch(`${BASE}/api/tool`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ tool: "get_trace", args: { task_id: id } }) }).catch(() => null);
+          const traceData = traceRes ? await traceRes.json() : null;
+          const turns = traceData?.result?.turns ?? data.turns ?? [];
+          s.loadTrace(id, turns, data.total_tokens, data.total_cost, data.status);
         }
       } catch {}
     }, 1500);
@@ -290,7 +316,7 @@ function ObservabilityInner() {
       const taskRes = await fetch(`${BASE}/tasks/${id}`, { headers: th });
       const taskData = taskRes.ok ? await taskRes.json() : null;
       const store = useExecutionStore.getState();
-      store.loadTrace(id, turns, taskData?.total_tokens, taskData?.total_cost);
+      store.loadTrace(id, turns, taskData?.total_tokens, taskData?.total_cost, taskData?.status);
       store.setViewState("reviewing");
       if (taskData?.goal) setGoal(taskData.goal);
     } catch {}
@@ -417,7 +443,7 @@ function ObservabilityInner() {
                           exit={{ opacity: 0, y: -20 }}
                           className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto"
                         >
-                          <div className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border ${
+                          <div className={`flex items-center gap-2 px-4 py-2 rounded-full  border ${
                             viewState === "completed"
                               ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
                               : "bg-violet-500/10 border-violet-500/20 text-violet-300"
@@ -442,7 +468,7 @@ function ObservabilityInner() {
 
                     {/* Live indicator */}
                     {isLive && (
-                      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/40 backdrop-blur-sm border border-green-500/20">
+                      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/40  border border-green-500/20">
                         <motion.div
                           className="h-1.5 w-1.5 rounded-full bg-green-400"
                           animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}

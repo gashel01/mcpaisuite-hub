@@ -3,8 +3,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { getApiUrl } from '@/lib/api-url';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -16,6 +16,7 @@ interface ExportButtonProps {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function ExportButton({ searchParams, resultCount }: ExportButtonProps) {
+  const API = getApiUrl();
   const [open, setOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);

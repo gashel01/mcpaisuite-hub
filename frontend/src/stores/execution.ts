@@ -74,7 +74,7 @@ interface ExecutionStore {
   setActiveEvent: (id: string | null) => void;
   reset: () => void;
   tick: () => void;
-  loadTrace: (taskId: string, turns: Array<{ role: string; tool?: string; duration_ms?: number; tokens?: number; success?: boolean; content?: string }>, totalTokens?: number, totalCost?: number) => void;
+  loadTrace: (taskId: string, turns: Array<{ role: string; tool?: string; duration_ms?: number; tokens?: number; success?: boolean; content?: string }>, totalTokens?: number, totalCost?: number, taskStatus?: string) => void;
   setViewState: (state: "idle" | "running" | "completed" | "reviewing") => void;
   setRightPanelTab: (tab: "live" | "analytics" | "alerts" | "studio") => void;
   toggleTaskHistory: () => void;
@@ -106,6 +106,8 @@ function eventToNode(event: StreamEvent): GraphNode | null {
       return { id, eventId: eid, type: "turn", label: "Human Review", status: "active", data: event.data, x: 0, y: 0 };
     case "task_complete":
       return { id, eventId: eid, type: "complete", label: "Complete", status: "done", data: event.data, x: 0, y: 0 };
+    case "task_failed":
+      return { id, eventId: eid, type: "error", label: "Failed", status: "error", data: event.data, x: 0, y: 0 };
     case "error":
       return { id, eventId: eid, type: "error", label: (event.data.error as string)?.slice(0, 40) || "Error", status: "error", data: event.data, x: 0, y: 0 };
     default:
@@ -193,7 +195,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       turns = (event.data.turns as number) || state.turns;
     }
 
-    const isTerminal = event.type === "task_complete" || event.type === "error";
+    const isTerminal = event.type === "task_complete" || event.type === "task_failed" || event.type === "error";
 
     set({
       events: newEvents,
@@ -236,7 +238,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
     }
   },
 
-  loadTrace: (taskId, turns, totalTokens, totalCost) => {
+  loadTrace: (taskId, turns, totalTokens, totalCost, taskStatus?: string) => {
     nodeCounter = 0;
     const events: StreamEvent[] = [];
     const nodes: GraphNode[] = [];
@@ -275,15 +277,25 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       prevNodeId = nodeId;
     }
 
-    // Complete node
-    const completeId = `node-${++nodeCounter}`;
-    nodes.push({ id: completeId, eventId: "evt-complete", type: "complete", label: "Complete", status: "done", data: {}, x: 0, y: 0 });
-    edges.push({ id: `edge-${prevNodeId}-${completeId}`, source: prevNodeId, target: completeId });
-    events.push({ id: "evt-complete", type: "task_complete", message: "Done", data: { tokens: totalTokens, cost: totalCost, turns: turns.length }, timestamp: new Date().toISOString() });
+    // Terminal node — only add if task is actually done (not still running)
+    const isDone = !taskStatus || taskStatus === "completed" || taskStatus === "failed" || taskStatus === "cancelled";
+    if (isDone) {
+      const isFailed = taskStatus === "failed" || taskStatus === "cancelled";
+      const terminalId = `node-${++nodeCounter}`;
+      nodes.push({
+        id: terminalId, eventId: "evt-terminal",
+        type: isFailed ? "error" : "complete",
+        label: isFailed ? "Failed" : "Complete",
+        status: isFailed ? "error" : "done",
+        data: {}, x: 0, y: 0,
+      });
+      edges.push({ id: `edge-${prevNodeId}-${terminalId}`, source: prevNodeId, target: terminalId });
+      events.push({ id: "evt-terminal", type: isFailed ? "task_failed" : "task_complete", message: isFailed ? "Failed" : "Done", data: { tokens: totalTokens, cost: totalCost, turns: turns.length }, timestamp: new Date().toISOString() });
+    }
 
     set({
       taskId,
-      status: "completed",
+      status: isDone ? "completed" : "streaming",
       events,
       nodes,
       edges,

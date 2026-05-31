@@ -21,10 +21,7 @@ from routes import chat as chat_routes, rag as rag_routes, api as api_routes, st
 app = FastAPI(title="KernelMCP Demo API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3007",
-    ],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -44,12 +41,18 @@ app.include_router(regression_routes.router)
 app.include_router(eval_routes.router)
 app.include_router(marketplace_routes.router)
 
+# ── Missing endpoints needed by dashboard ────────────────────────────────────
+
+@app.get("/workspace/tenants")
+async def workspace_tenants():
+    return {"tenants": [DEFAULT_NAMESPACE, "default"]}
 
 # ── Startup ──────────────────────────────────────────────────────────────────
 
 @app.on_event("startup")
 async def startup():
     global kernel
+    _DATA_DIR = DATA_DIR  # explicit capture — avoids Python 3.13 closure/cell scoping bug with async functions
 
     provider = llm_config["provider"]
     print(f"[STARTUP] LLM config: provider={provider}, model={llm_config['model']}", flush=True)
@@ -90,8 +93,8 @@ async def startup():
             contradiction_threshold=0.92,
             episodic_store=settings.get("memory_backend", "sqlite"),
             semantic_store=settings.get("memory_semantic_backend", "chroma"),
-            chroma_path="/app/data/chroma_memory",
-            sqlite_path="/app/data/memorymcp.db",
+            chroma_path=str(_DATA_DIR / "chroma_memory"),
+            sqlite_path=str(_DATA_DIR / "memorymcp.db"),
             redis_url=settings.get("memory_redis_url", "") or None,
             neo4j_uri=settings.get("memory_neo4j_uri", "") or None,
             neo4j_user=settings.get("memory_neo4j_user", "neo4j"),
@@ -110,7 +113,7 @@ async def startup():
             decomposer="hybrid",
             completion_fn=_planner_llm_complete,
             plan_store="sqlite",
-            sqlite_path="/app/data/planningmcp.db",
+            sqlite_path=str(_DATA_DIR / "planningmcp.db"),
             replan_strategy="llm",
             memory_pipeline=pipelines.get("memory"),
             rag_pipeline=pipelines.get("rag"),
@@ -127,7 +130,7 @@ async def startup():
             file_store="local",
             checkpoint_store=settings.get("workspace_checkpoint_store", "sqlite"),
             audit_logger=settings.get("workspace_audit_store", "sqlite"),
-            sqlite_path="/app/data/workspacemcp.db",
+            sqlite_path=str(_DATA_DIR / "workspacemcp.db"),
             read_only=False,
             allowed_write_patterns=["*"],
             content_filter=True,
@@ -156,7 +159,7 @@ async def startup():
             host_auto_approve=settings.get("auto_approve", False),
             vault=settings.get("sandbox_vault", "memory"),
             audit=settings.get("sandbox_audit_store", "sqlite"),
-            sqlite_path="/app/data/sandboxmcp.db",
+            sqlite_path=str(_DATA_DIR / "sandboxmcp.db"),
             timeout_seconds=60,
             workspace_path=ws_root,
             hardened=False,  # Disable read-only rootfs + seccomp — needed for subprocess/TestClient
@@ -165,7 +168,7 @@ async def startup():
     # 6. schedulermcp — uses settings
     def _scheduler_factory():
         from schedulermcp import SchedulerFactory
-        return SchedulerFactory.create(store="sqlite", sqlite_path="/app/data/scheduler.db")
+        return SchedulerFactory.create(store="sqlite", sqlite_path=str(_DATA_DIR / "scheduler.db"))
 
     # Order matters: memory + rag first (planning depends on them)
     for name, factory_fn in [
@@ -189,16 +192,18 @@ async def startup():
         from memorymcp import MemoryFactory
         correction_ledger = MemoryFactory.create(
             semantic_store="chroma",
-            chroma_path="/app/data/chroma_corrections",
+            chroma_path=str(_DATA_DIR / "chroma_corrections"),
             episodic_store="sqlite",
-            sqlite_path="/app/data/corrections.db",
+            sqlite_path=str(_DATA_DIR / "corrections.db"),
         )
         print("[STARTUP] correction ledger connected", flush=True)
     except Exception as exc:
         print(f"[STARTUP] correction ledger unavailable: {exc}", flush=True)
 
     resolved_model = llm_model if (provider and provider != "echo") else os.getenv("KERNELMCP_MODEL", llm_model)
-    kernel = KernelFactory.create(
+    print(f"[STARTUP] pipelines ready: {[k for k,v in pipelines.items() if v is not None]}", flush=True)
+    try:
+      kernel = KernelFactory.create(
         llm_model=resolved_model, local_model=resolved_model, fast_model=resolved_model,
         api_key=api_key, base_url=base_url, enable_routing=True,
         max_turns=int(os.getenv("KERNELMCP_MAX_TURNS", str(settings.get("max_turns", 20)))),
@@ -208,7 +213,13 @@ async def startup():
         workspace_pipeline=pipelines.get("workspace"), sandbox_pipeline=pipelines.get("sandbox"),
         scheduler_pipeline=pipelines.get("scheduler"), rag_pipeline=pipelines.get("rag"),
         correction_ledger=correction_ledger,
-    )
+      )
+      print("[STARTUP] kernel created OK", flush=True)
+    except Exception as _kernel_exc:
+      import traceback
+      print(f"[STARTUP] kernel FAILED: {_kernel_exc}", flush=True)
+      traceback.print_exc()
+      return
     # Set execution mode from settings
     kernel._engine._mode = settings.get("execution_mode", "react")
 
@@ -259,12 +270,12 @@ async def startup():
 
     # Push egress config to orchestrator at startup
     try:
-        from config import EGRESS_CONFIG_PATH, DATA_DIR
+        from config import EGRESS_CONFIG_PATH
         import json as _json
         egress_cfg = _json.loads(EGRESS_CONFIG_PATH.read_text()) if EGRESS_CONFIG_PATH.exists() else {}
         # Load tenant domains
         tenant_domains = []
-        egress_tenant_file = DATA_DIR / f"egress_{DEFAULT_NAMESPACE}.json"
+        egress_tenant_file = _DATA_DIR / f"egress_{DEFAULT_NAMESPACE}.json"
         if egress_tenant_file.exists():
             tenant_domains = _json.loads(egress_tenant_file.read_text()).get("allowed_domains", [])
         kernel._engine._orchestrator._egress_config = {
@@ -305,11 +316,23 @@ async def startup():
     # Apply saved host access — load into the orchestrator's per-namespace registry
     if kernel._engine._orchestrator.sandbox:
         from sandboxmcp.security.host_guard import HostGuard
-        host_cfg = load_json(DATA_DIR / "host_config.json", {"approved": []})
+        # Load default config
+        host_cfg = load_json(_DATA_DIR / "host_config.json", {"approved": []})
         default_guard = HostGuard(approved=host_cfg.get("approved", []), auto_approve=False)
         default_guard._pending_has_listener = True  # Demo UI has approve/deny endpoints
         kernel._engine._orchestrator.sandbox._host_guard = default_guard
         kernel._engine._orchestrator._host_guards[DEFAULT_NAMESPACE] = default_guard
+        # Load per-namespace configs (e.g. host_config_demo.json)
+        import glob as _glob
+        from pathlib import Path as _Path
+        for cfg_path in _glob.glob(str(_DATA_DIR / "host_config_*.json")):
+            _ns = _Path(cfg_path).stem.replace("host_config_", "")
+            _ns_cfg = load_json(_Path(cfg_path), {"approved": []})
+            _approved = _ns_cfg.get("approved", [])
+            _ns_guard = HostGuard(approved=_approved, auto_approve=False)
+            _ns_guard._pending_has_listener = True
+            kernel._engine._orchestrator._host_guards[_ns] = _ns_guard
+            print(f"[STARTUP] host guard '{_ns}': {_approved}", flush=True)
 
     print(f"[STARTUP] Kernel ready ({kernel.orchestrator.connected_count}/6 servers, model={resolved_model})", flush=True)
 

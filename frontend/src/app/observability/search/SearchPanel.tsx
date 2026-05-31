@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getApiUrl } from '@/lib/api-url';
 import {
   Search, X, Clock, AlertCircle, Coins, Hash, Zap,
 } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8007';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -54,6 +54,7 @@ const SORT_OPTIONS = [
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function SearchPanel({ onSelectTrace, namespace }: SearchPanelProps) {
+  const API = getApiUrl();
   const [query, setQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<QuickFilterId>>(new Set());
   const [sort, setSort] = useState('newest');

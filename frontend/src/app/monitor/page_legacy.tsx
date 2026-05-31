@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useCallback, useEffect, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
@@ -17,7 +18,6 @@ import ExecutionGraph from "@/components/execution/ExecutionGraph";
 import StepDetail from "@/components/execution/StepDetail";
 import CopyButton from "@/components/copy-button";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Audit event types ──────────────────────────────────────────────────────
 
@@ -49,6 +49,8 @@ const SOURCE_STYLES: Record<string, { color: string; bg: string }> = {
 };
 
 const DEFAULT_SOURCE = { color: "text-slate-400", bg: "bg-white/[0.03] border-white/[0.06]" };
+
+const BASE = getApiUrl();
 
 function formatTs(ts: number): string {
   const d = new Date(ts * 1000);

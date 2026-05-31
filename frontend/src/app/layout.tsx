@@ -27,6 +27,12 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
       </head>
       <body className="font-sans antialiased" style={{ fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+        {/* Pause CSS animations when tab is hidden — prevents multi-tab GPU thrashing */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          document.addEventListener('visibilitychange', function() {
+            document.body.classList.toggle('animations-paused', document.hidden);
+          });
+        `}} />
         <ModeProvider>
           <TenantProvider>
             <CodeRunnerProvider>

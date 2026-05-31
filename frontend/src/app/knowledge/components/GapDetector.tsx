@@ -91,7 +91,7 @@ export function GapDetector({ onNavigateToNode }: GapDetectorProps) {
   const gapCount = report?.gaps?.length ?? 0;
 
   return (
-    <div className="bg-black/40 backdrop-blur-md border border-white/[0.06] rounded-2xl overflow-hidden">
+    <div className="bg-black/40  border border-white/[0.06] rounded-2xl overflow-hidden">
       {/* Header */}
       <button
         onClick={() => setCollapsed(!collapsed)}

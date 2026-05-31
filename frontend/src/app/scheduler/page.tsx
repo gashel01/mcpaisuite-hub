@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence } from "framer-motion";
@@ -11,11 +12,11 @@ import SchedulerHero from "@/components/scheduler/SchedulerHero";
 import SchedulerGrid from "@/components/scheduler/SchedulerGrid";
 import JobDetailPanel from "@/components/scheduler/JobDetailPanel";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 /* ── Page ──────────────────────────────────────────────────────── */
 
 export default function SchedulerPage() {
+  const BASE = getApiUrl();
   const { tenant } = useTenant();
   const th = tenantHeaders(tenant);
 

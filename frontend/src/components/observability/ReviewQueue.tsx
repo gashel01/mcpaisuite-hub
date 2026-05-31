@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -7,7 +8,6 @@ import {
   Loader2, AlertTriangle, ChevronDown, Zap,
 } from "lucide-react";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 interface QueueItem {
   id: string;
@@ -46,6 +46,7 @@ const LABEL_COLORS: Record<string, string> = {
 };
 
 export default function ReviewQueue({ namespace, onSelectTask }: Props) {
+  const BASE = getApiUrl();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [stats, setStats] = useState<ReviewStats | null>(null);
   const [labels, setLabels] = useState<Label[]>([]);

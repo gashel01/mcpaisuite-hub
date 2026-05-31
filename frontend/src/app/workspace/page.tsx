@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
@@ -30,7 +31,6 @@ import PageHeader from "@/components/page-header";
 import EmptyState from "@/components/empty-state";
 import { renderMarkdown } from "@/components/markdown";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8007";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -108,6 +108,7 @@ function fileName(path: string): string {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function WorkspacePage() {
+  const BASE = getApiUrl();
   const [files, setFiles] = useState<WsFile[]>([]);
   const [currentPath, setCurrentPath] = useState("");
   const [stats, setStats] = useState<WsStats | null>(null);
@@ -272,20 +273,35 @@ export default function WorkspacePage() {
     }
   };
 
-  const downloadFile = async (path: string) => {
+  const downloadFile = async (path: string, isDir = false) => {
     try {
-      const res = await fetch(
-        `${BASE}/workspace/file?path=${encodeURIComponent(path)}`,
-        { headers }
-      );
-      const data = await res.json();
-      const blob = new Blob([data.content || ""], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName(path);
-      a.click();
-      URL.revokeObjectURL(url);
+      if (isDir) {
+        // Download folder as ZIP
+        const res = await fetch(
+          `${BASE}/workspace/download-folder?path=${encodeURIComponent(path)}`,
+          { headers }
+        );
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${fileName(path)}.zip`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const res = await fetch(
+          `${BASE}/workspace/file?path=${encodeURIComponent(path)}`,
+          { headers }
+        );
+        const data = await res.json();
+        const blob = new Blob([data.content || ""], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName(path);
+        a.click();
+        URL.revokeObjectURL(url);
+      }
     } catch (_e) {
       // ignore
     }
@@ -381,14 +397,14 @@ export default function WorkspacePage() {
     <div className="flex flex-col h-full relative" onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
       {/* Toast */}
       {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl border text-xs font-medium animate-slide-in shadow-xl backdrop-blur-md ${
+        <div className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl border text-xs font-medium animate-slide-in shadow-xl  ${
           toast.type === "success" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-red-500/10 border-red-500/20 text-red-300"
         }`}>{toast.message}</div>
       )}
 
       {/* Drag overlay */}
       {dragOver && (
-        <div className="absolute inset-0 z-50 bg-violet-950/60 backdrop-blur-md flex items-center justify-center">
+        <div className="absolute inset-0 z-50 bg-violet-950/60  flex items-center justify-center">
           <div className="text-center"><Upload className="h-10 w-10 text-violet-400 mx-auto mb-3 animate-bounce" /><p className="text-lg font-medium text-violet-300">Drop files here</p></div>
         </div>
       )}
@@ -590,15 +606,15 @@ export default function WorkspacePage() {
                           {timeAgo(f.modified)}
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          {!f.is_dir && (
+                          {(
                             <div className="flex items-center justify-end gap-1">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  downloadFile(f.path);
+                                  downloadFile(f.path, f.is_dir);
                                 }}
                                 className="p-1 rounded hover:bg-[#2a2a3a] text-slate-500 hover:text-slate-300 transition-colors"
-                                title="Download"
+                                title={f.is_dir ? "Download as ZIP" : "Download"}
                               >
                                 <Download size={14} />
                               </button>

@@ -1,4 +1,5 @@
 "use client";
+import { getApiUrl } from "@/lib/api-url";
 
 import { useState } from "react";
 import { motion } from "framer-motion";
@@ -7,7 +8,6 @@ import {
   Sparkles, RefreshCw, ArrowRight, CheckCircle2, XCircle, Clock, Coins,
 } from "lucide-react";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8007";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -74,6 +74,7 @@ function MiniStat({ icon: Icon, color, label, value }: {
 // ── Main component ──────────────────────────────────────────────────────────
 
 export default function ImprovePanel({ analytics, onAnalyze, onApply, tenantHeaders }: ImprovePanelProps) {
+  const BASE = getApiUrl();
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [applying, setApplying] = useState(false);

@@ -1,0 +1,89 @@
+# docker-compose.pypi.yml — Test with published PyPI packages (no local source mounts)
+#
+# Usage (TestPyPI):
+#   docker-compose -f docker-compose.pypi.yml up --build
+#
+# Usage (real PyPI):
+#   PYPI_INDEX=https://pypi.org/simple/ docker-compose -f docker-compose.pypi.yml up --build
+
+services:
+
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "9999:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: kernelmcp-demo/backend/Dockerfile
+      args:
+        PYPI_MODE: "1"
+        PYPI_INDEX: ${PYPI_INDEX:-https://test.pypi.org/simple/}
+    ports:
+      - "8007:8000"
+    environment:
+      KERNELMCP_NAMESPACE: ${KERNELMCP_NAMESPACE:-demo}
+      KERNELMCP_MODEL: ${KERNELMCP_MODEL:-claude-sonnet-4-6}
+      KERNELMCP_LOCAL_MODEL: ${KERNELMCP_LOCAL_MODEL:-ollama/mistral}
+      KERNELMCP_ROUTING: ${KERNELMCP_ROUTING:-true}
+      KERNELMCP_MAX_TURNS: ${KERNELMCP_MAX_TURNS:-20}
+      KERNELMCP_MAX_TOKENS: ${KERNELMCP_MAX_TOKENS:-50000}
+      KERNELMCP_MAX_COST: ${KERNELMCP_MAX_COST:-1.0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      SANDBOXMCP_BACKEND: docker
+      SANDBOXMCP_IMAGE: sandboxmcp/sandbox:latest
+      WORKSPACE_HOST_PATH: ${WORKSPACE_HOST_PATH:-}
+      SEARXNG_URL: http://searxng:8080
+      TZ: Europe/Paris
+      RAGMCP_VECTORSTORE: qdrant
+      RAGMCP_VECTORSTORE_URL: http://host.docker.internal:6333
+      RAGMCP_EMBEDDER: fastembed
+      RAGMCP_EMBEDDER_MODEL: BAAI/bge-base-en-v1.5
+      RAGMCP_DATA_PATH: /app/data/rag
+    volumes:
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - model-cache:/root/.cache
+      # No local source mounts — uses published PyPI packages
+    depends_on:
+      searxng:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: kernelmcp-demo/frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8007}
+    ports:
+      - "3007:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8007}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  model-cache:

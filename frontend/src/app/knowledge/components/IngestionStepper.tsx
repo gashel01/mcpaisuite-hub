@@ -27,7 +27,7 @@ export function IngestionStepper({ entry }: { entry: UploadEntry }) {
   }
 
   return (
-    <div className="px-3 py-2.5 bg-black/40 backdrop-blur-md border border-white/[0.08] rounded-xl animate-fade-in">
+    <div className="px-3 py-2.5 bg-black/40  border border-white/[0.08] rounded-xl animate-fade-in">
       <div className="flex items-center gap-2 mb-2">
         {entry.status === "done" ? (
           <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
