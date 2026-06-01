@@ -522,7 +522,7 @@ export default function ChatPage() {
           </div>
           <div className="flex-1 min-w-0">
             <h1 className="text-sm font-semibold text-slate-100 leading-tight">Kernel Chat</h1>
-            <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Full orchestrator &middot; 80+ tools</p>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Full orchestrator &middot; 97 tools</p>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <button onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) setSearchQuery(""); }} className={`p-1.5 rounded-lg transition-colors touch-target ${searchOpen ? "text-violet-400" : "text-slate-600 hover:text-violet-400"}`} data-tooltip="Search">

@@ -47,7 +47,7 @@ export default function Onboarding() {
             </div>
             <h2 className="text-lg font-bold text-slate-100 mb-1">Welcome to kernelmcp</h2>
             <p className="text-sm text-slate-400 leading-relaxed">
-              The orchestration dashboard for the MCP AI Suite. Your agent has access to 80+ tools across 7 servers.
+              The orchestration dashboard for the MCP AI Suite. Your agent has access to 97 tools across 7 servers.
             </p>
           </div>
         </div>
