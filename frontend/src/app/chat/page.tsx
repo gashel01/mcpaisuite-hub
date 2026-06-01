@@ -64,8 +64,10 @@ export default function ChatPage() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [loadingConv, setLoadingConv] = useState(false);
 
-  // History
-  const [showHistory, setShowHistory] = useState(true);
+  // History — open inline by default on desktop, closed (drawer) on mobile
+  const [showHistory, setShowHistory] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= 768
+  );
   const [conversations, setConversations] = useState<ConvInfo[]>([]);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [schedules, setSchedules] = useState<ScheduledJob[]>([]);
@@ -326,6 +328,8 @@ export default function ChatPage() {
     window.history.replaceState(null, "", `/chat?conv=${encodeURIComponent(id)}`);
     // Persist last conv for re-open
     if (typeof window !== "undefined") localStorage.setItem("kernelmcp_last_conv", id);
+    // On mobile the history is a drawer — close it after picking a conversation
+    if (typeof window !== "undefined" && window.innerWidth < 768) setShowHistory(false);
   };
   const newChat = () => switchConv("chat-" + Date.now().toString(36));
   const deleteConv = async (id: string) => {
@@ -499,6 +503,14 @@ export default function ChatPage() {
             aria-label="Navigation"
           >
             <Menu className="h-4 w-4" />
+          </button>
+          {/* Chat history toggle (mobile) */}
+          <button
+            onClick={() => setShowHistory(true)}
+            className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+            aria-label="Chat history"
+          >
+            <PanelLeft className="h-4 w-4" />
           </button>
           {!showHistory && (
             <button onClick={() => setShowHistory(true)} className="text-slate-600 hover:text-violet-400 p-1.5 transition-colors hidden md:block" data-tooltip="Show history">
