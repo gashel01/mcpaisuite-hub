@@ -30,11 +30,13 @@ interface OutputPanelProps {
   showEval: boolean;
   setShowEval: (v: boolean) => void;
   HumanGateActionsComponent?: any;
+  mobile?: boolean;
 }
 
 export default function OutputPanel({
   session, agents, isRunning, isDone, isConfiguring, isWaiting,
   open, setOpen, tenant, th, store, showEval, setShowEval, HumanGateActionsComponent,
+  mobile = false,
 }: OutputPanelProps) {
   const [traceOpen, setTraceOpen] = useState(true);
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
@@ -43,21 +45,23 @@ export default function OutputPanel({
   HumanGateActions = HumanGateActionsComponent;
 
   return (
-    <div className="transition-all duration-300 ease-in-out shrink-0 min-h-0 relative"
-      style={{ width: open ? "42%" : 48 }}>
+    <div className={`min-h-0 relative ${mobile ? "flex-1 w-full" : "transition-all duration-300 ease-in-out shrink-0"}`}
+      style={mobile ? undefined : { width: open ? "42%" : 48 }}>
 
-      {/* Collapsed state */}
-      <button onClick={() => setOpen(true)}
-        className={`absolute inset-0 w-12 h-full flex flex-col items-center gap-2 py-3 rounded-xl border border-white/[0.06] bg-white/[0.015] text-slate-400 hover:text-slate-200 hover:border-violet-500/20 transition-all duration-300 ${open ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
-        {isRunning ? <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" /> : isDone ? (
-          session.status === "completed" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <XCircle className="h-3.5 w-3.5 text-red-400" />
-        ) : <Activity className="h-3.5 w-3.5" />}
-        <span className="text-[9px] font-medium [writing-mode:vertical-lr] rotate-180">{isRunning ? "Live" : isDone ? "Result" : "Output"}</span>
-        {session.liveEvents.length > 0 && <span className="text-[8px] text-violet-400">{session.liveEvents.length}</span>}
-      </button>
+      {/* Collapsed state (desktop only) */}
+      {!mobile && (
+        <button onClick={() => setOpen(true)}
+          className={`absolute inset-0 w-12 h-full flex flex-col items-center gap-2 py-3 rounded-xl border border-white/[0.06] bg-white/[0.015] text-slate-400 hover:text-slate-200 hover:border-violet-500/20 transition-all duration-300 ${open ? "opacity-0 pointer-events-none" : "opacity-100"}`}>
+          {isRunning ? <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" /> : isDone ? (
+            session.status === "completed" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> : <XCircle className="h-3.5 w-3.5 text-red-400" />
+          ) : <Activity className="h-3.5 w-3.5" />}
+          <span className="text-[9px] font-medium [writing-mode:vertical-lr] rotate-180">{isRunning ? "Live" : isDone ? "Result" : "Output"}</span>
+          {session.liveEvents.length > 0 && <span className="text-[8px] text-violet-400">{session.liveEvents.length}</span>}
+        </button>
+      )}
 
       {/* Expanded state */}
-      <div className={`rounded-xl border border-white/[0.06] bg-white/[0.015] flex flex-col h-full transition-opacity duration-300 ${open ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+      <div className={`rounded-xl border border-white/[0.06] bg-white/[0.015] flex flex-col h-full ${mobile ? "" : "transition-opacity duration-300"} ${open ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
         {/* Header */}
         <div className="px-3 py-2 border-b border-white/[0.04] flex items-center gap-2 shrink-0">
           {isRunning && <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />}

@@ -18,7 +18,7 @@ const NAV_MAIN = [
 const NAV_LIBS = [
   { href: "/knowledge", label: "Knowledge", icon: Database },
   { href: "/workspace", label: "Workspace", icon: FolderOpen },
-  { href: "/scheduler", label: "Scheduler", icon: Clock },
+  { href: "/scheduler", label: "Scheduled Tasks", icon: Clock },
 ] as const;
 
 const NAV_DEVTOOLS = [

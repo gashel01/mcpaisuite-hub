@@ -3,7 +3,10 @@ import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Activity, RefreshCw, Download, ArrowLeft } from "lucide-react";
+import {
+  Activity, RefreshCw, Download, ArrowLeft, PanelRightOpen, PanelRightClose,
+  History, X, Menu,
+} from "lucide-react";
 import { useSearchParams } from "next/navigation";
 
 import MetricsBar from "@/components/execution/MetricsBar";
@@ -12,6 +15,7 @@ import StepDetail from "@/components/execution/StepDetail";
 import { useExecutionStore } from "@/stores/execution";
 import { useTaskStream } from "@/hooks/useTaskStream";
 import { useTenant, tenantHeaders } from "@/context/tenant";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 
 import TaskInputBar from "@/components/observability/TaskInputBar";
 import EventsPanel from "@/components/observability/EventsPanel";
@@ -62,6 +66,7 @@ function ObservabilityInner() {
   const searchParams = useSearchParams();
   const { tenant } = useTenant();
   const th = tenantHeaders(tenant);
+  const { isMobile, isTablet, isMobileOrTablet, isDesktop } = useBreakpoint();
 
   // ── Page mode ──────────────────────────────────────────────────────────
   const [mode, setMode] = useState<PageMode>("dashboard");
@@ -102,7 +107,20 @@ function ObservabilityInner() {
 
   // ── UI state ───────────────────────────────────────────────────────────
   const [showExport, setShowExport] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  const [rightPanelOpen, setRightPanelOpen] = useState(!isMobile);
+  const [mobilePanel, setMobilePanel] = useState<"none" | "sidebar" | "right">("none");
+
+  // Auto-close sidebar on mobile
+  useEffect(() => {
+    if (isMobile) {
+      setSidebarOpen(false);
+      setRightPanelOpen(false);
+    } else {
+      setSidebarOpen(true);
+      setRightPanelOpen(true);
+    }
+  }, [isMobile]);
 
   // ── Trace mode: right panel sub-tab ────────────────────────────────────
   const [traceSub, setTraceSub] = useState<"events" | "spans" | "stats">("events");
@@ -136,7 +154,6 @@ function ObservabilityInner() {
       if (statsRes) setStats(statsRes);
       if (tasksRes?.result?.tasks) {
         setTasks(tasksRes.result.tasks.map((t: any) => {
-          // Stale "running" tasks (> 5min old) are likely crashed — show as failed
           let status = t.status || "completed";
           if (status === "running" && t.created_at) {
             const age = Date.now() / 1000 - t.created_at;
@@ -162,9 +179,9 @@ function ObservabilityInner() {
     if (mode === "dashboard") loadAnalytics();
   }, [mode]); // eslint-disable-line
 
-  // Reactive task list refresh — triggers instantly when any task starts/completes/fails (via SSE)
+  // Reactive task list refresh
   useEffect(() => {
-    if (taskChangeCounter === 0) return; // skip initial
+    if (taskChangeCounter === 0) return;
     fetch(`${BASE}/api/tool`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...th },
@@ -180,7 +197,6 @@ function ObservabilityInner() {
           });
           setTasks(mapped);
 
-          // Auto-connect to a running task if we're not already streaming
           const currentStatus = useExecutionStore.getState().status;
           if (currentStatus !== "streaming") {
             const running = mapped.find((t: any) => t.status === "running");
@@ -195,9 +211,6 @@ function ObservabilityInner() {
       })
       .catch(() => {});
   }, [taskChangeCounter]); // eslint-disable-line
-
-  // Audit events now come from global store (stores/audit.ts)
-  // SSE runs at layout level via AuditStreamInit — persists across page navigations
 
   // ── Auto-switch to trace mode on task start ────────────────────────────
   useEffect(() => {
@@ -226,7 +239,6 @@ function ObservabilityInner() {
   // ── Task actions ───────────────────────────────────────────────────────
 
   const startPolling = useCallback((id: string) => {
-    // Don't start polling if already polling this task
     if (pollRef.current) clearInterval(pollRef.current);
 
     const store = useExecutionStore.getState();
@@ -251,9 +263,8 @@ function ObservabilityInner() {
           }
         }
         if (data.status === "completed" || data.status === "failed" || data.status === "cancelled") {
-          done = true; // Prevent re-entry
+          done = true;
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-          // Load the full trace instead of adding a single completion event
           const traceRes = await fetch(`${BASE}/api/tool`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ tool: "get_trace", args: { task_id: id } }) }).catch(() => null);
           const traceData = traceRes ? await traceRes.json() : null;
           const turns = traceData?.result?.turns ?? data.turns ?? [];
@@ -297,15 +308,17 @@ function ObservabilityInner() {
     setSelectedHistoryTask(null);
     reset();
     setMode("dashboard");
+    setMobilePanel("none");
   }, [disconnect, reset]);
 
-  // ── History task selection → switches to trace mode ────────────────────
+  // ── History task selection ────────────────────────────────────────────
 
   const selectHistoryTask = useCallback(async (id: string) => {
     setSelectedHistoryTask(id);
     setHistoryLoading(true);
     setMode("trace");
     setTraceSub("events");
+    if (isMobile) setMobilePanel("none");
     try {
       const res = await fetch(`${BASE}/api/tool`, {
         method: "POST", headers: { "Content-Type": "application/json", ...th },
@@ -321,81 +334,137 @@ function ObservabilityInner() {
       if (taskData?.goal) setGoal(taskData.goal);
     } catch {}
     setHistoryLoading(false);
-  }, [th]);
+  }, [th, isMobile]);
 
   // Cleanup on unmount
   useEffect(() => { return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
 
+  // ── Mobile panel toggle helpers ────────────────────────────────────────
+  const toggleMobileSidebar = () => {
+    setMobilePanel(p => p === "sidebar" ? "none" : "sidebar");
+  };
+  const toggleMobileRight = () => {
+    setMobilePanel(p => p === "right" ? "none" : "right");
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────
 
-  return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] overflow-hidden">
+  const effectiveRightWidth = isMobile ? "100%" : isTablet ? 320 : rightPanelWidth;
 
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-2 shrink-0">
-        <div className="flex items-center gap-3">
-          {/* Back button in trace mode */}
-          {mode === "trace" && (
+  return (
+    <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden relative">
+
+      {/* ── Unified Header + Task Input (single row) ──────────────────── */}
+      <div className="obs-header flex items-center gap-2 px-3 py-1.5 shrink-0 z-50">
+        {/* Nav menu (replaces layout hamburger on mobile) */}
+        <button
+          onClick={() => {
+            // Click the layout's sidebar hamburger programmatically
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+
+        {/* Task history toggle (mobile/tablet) */}
+        {isMobileOrTablet && (
+          <button
+            onClick={toggleMobileSidebar}
+            className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0"
+            aria-label="Task history"
+          >
+            <History className="h-4 w-4" />
+          </button>
+        )}
+
+        {mode === "trace" && (
+          <button
+            onClick={backToDashboard}
+            className="flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-slate-400 hover:text-slate-200 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] rounded-lg transition-all touch-target shrink-0"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Dashboard</span>
+          </button>
+        )}
+
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center">
+            <Activity className="h-4 w-4 text-violet-400" />
+          </div>
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight hidden lg:block">
+            {mode === "dashboard" ? "Observability" : "Trace"}
+          </h1>
+        </div>
+
+        {/* Center: Task Input — hidden on mobile in trace mode (no space) */}
+        {!(isMobile && mode === "trace") && (
+          <div className="flex-1 min-w-0">
+            <TaskInputBar
+              goal={goal} setGoal={setGoal}
+              onExecute={launchTask} onStop={handleStop} onReset={backToDashboard}
+              status={status} launching={launching}
+            />
+          </div>
+        )}
+        {/* Mobile trace: show truncated goal instead */}
+        {isMobile && mode === "trace" && (
+          <span className="flex-1 min-w-0 text-[11px] text-slate-400 truncate">{goal || "Trace"}</span>
+        )}
+
+        {/* Right: metrics (desktop only) + actions */}
+        <div className="flex items-center gap-1 shrink-0">
+          {mode === "trace" && isDesktop && <MetricsBar />}
+
+          <AlertBell onClick={() => { setDashSub("alerts"); if (isMobile) setMobilePanel("right"); else setRightPanelOpen(true); }} />
+
+          <button onClick={() => setShowExport(true)} className="p-1.5 text-slate-500 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all touch-target hidden sm:flex" title="Export">
+            <Download className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={loadAnalytics} className="p-1.5 text-slate-500 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all touch-target hidden sm:flex" title="Refresh">
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+
+          {!isMobile && (
             <button
-              onClick={backToDashboard}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-medium text-slate-400 hover:text-slate-200 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] rounded-lg transition-all"
+              onClick={() => setRightPanelOpen(!rightPanelOpen)}
+              className="p-1.5 text-slate-500 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all"
+              title={rightPanelOpen ? "Hide panel" : "Show panel"}
             >
-              <ArrowLeft className="h-3 w-3" />
-              Dashboard
+              {rightPanelOpen ? <PanelRightClose className="h-3.5 w-3.5" /> : <PanelRightOpen className="h-3.5 w-3.5" />}
             </button>
           )}
 
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-              <Activity className="h-4 w-4 text-violet-400" />
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold text-slate-200">
-                {mode === "dashboard" ? "Observability" : "Trace Inspector"}
-              </h1>
-              <p className="text-[9px] text-slate-600">
-                {mode === "dashboard" ? "Metrics, alerts & analytics" : goal ? goal.slice(0, 60) : "Viewing execution trace"}
-              </p>
-            </div>
-          </div>
+          {isMobile && (
+            <button
+              onClick={toggleMobileRight}
+              className="p-1.5 text-slate-500 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all touch-target"
+              aria-label="Toggle details panel"
+            >
+              <PanelRightOpen className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
-
-        <div className="flex items-center gap-2">
-          {mode === "trace" && <MetricsBar />}
-
-          <AlertBell onClick={() => setDashSub("alerts")} />
-          <button onClick={() => setShowExport(true)} className="p-1.5 text-slate-500 hover:text-slate-300 transition-colors" title="Export & Retention">
-            <Download className="h-3.5 w-3.5" />
-          </button>
-          <button onClick={loadAnalytics} className="p-1.5 text-slate-500 hover:text-slate-300 transition-colors" title="Refresh">
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* ── Task Input (both modes) ───────────────────────────────────── */}
-      <div className="px-4 pb-2 shrink-0">
-        <TaskInputBar
-          goal={goal} setGoal={setGoal}
-          onExecute={launchTask} onStop={handleStop} onReset={backToDashboard}
-          status={status} launching={launching}
-        />
       </div>
 
       {/* ── Main Grid ──────────────────────────────────────────────────── */}
-      <div className="flex-1 min-h-0 px-4 pb-2 flex flex-col gap-2">
-        <div className="flex-1 min-h-0 flex gap-3">
+      <div className="flex-1 min-h-0 px-3 py-2 flex flex-col gap-2">
+        <div className="flex-1 min-h-0 flex gap-2">
 
-          {/* ══════════════ LEFT SIDEBAR ══════════════ */}
-          <HistorySidebar
-            open={sidebarOpen}
-            setOpen={setSidebarOpen}
-            tasks={tasks}
-            selectedTask={selectedHistoryTask}
-            onSelect={selectHistoryTask}
-            loading={historyLoading}
-            namespace={tenant}
-          />
+          {/* ══════════════ LEFT SIDEBAR (desktop inline / mobile overlay) ══════════════ */}
+          {!isMobile ? (
+            <HistorySidebar
+              open={sidebarOpen}
+              setOpen={setSidebarOpen}
+              tasks={tasks}
+              selectedTask={selectedHistoryTask}
+              onSelect={selectHistoryTask}
+              loading={historyLoading}
+              namespace={tenant}
+            />
+          ) : null}
 
           {/* ══════════════ MAIN STAGE ══════════════ */}
           <div className="flex-1 min-w-0 min-h-0 relative rounded-xl border border-white/[0.06] bg-white/[0.01] overflow-hidden">
@@ -407,11 +476,11 @@ function ObservabilityInner() {
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.2 }}
-                    className="absolute inset-0 overflow-y-auto p-4"
+                    className="absolute inset-0 overflow-y-auto p-3 sm:p-4"
                   >
                     <ChartGrid namespace={tenant} />
                     <CollapsibleSection title="Latency & Cost Analysis" defaultOpen={false}>
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
                         <LatencyAnalytics namespace={tenant} />
                         <CostBreakdown namespace={tenant} />
                       </div>
@@ -438,23 +507,24 @@ function ObservabilityInner() {
                     <AnimatePresence>
                       {isDone && (
                         <motion.div
-                          initial={{ opacity: 0, y: -20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -20 }}
-                          className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto"
+                          initial={{ opacity: 0, y: -20, x: "-50%" }}
+                          animate={{ opacity: 1, y: 0, x: "-50%" }}
+                          exit={{ opacity: 0, y: -20, x: "-50%" }}
+                          className="absolute top-3 left-1/2 z-20 pointer-events-auto"
                         >
-                          <div className={`flex items-center gap-2 px-4 py-2 rounded-full  border ${
+                          <div className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-full border ${
                             viewState === "completed"
                               ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
                               : "bg-violet-500/10 border-violet-500/20 text-violet-300"
-                          } text-[10px] font-medium shadow-lg`}>
+                          } text-[10px] sm:text-[11px] font-medium shadow-lg backdrop-blur-sm`}>
                             <div className={`h-1.5 w-1.5 rounded-full ${viewState === "completed" ? "bg-emerald-400" : "bg-violet-400"}`} />
-                            {viewState === "completed" ? "Task completed" : "Viewing trace"}
+                            <span className="hidden sm:inline">{viewState === "completed" ? "Task completed" : "Viewing trace"}</span>
+                            <span className="sm:hidden">{viewState === "completed" ? "Done" : "Trace"}</span>
                             {(["events", "spans", "stats"] as const).map(t => (
                               <button
                                 key={t}
-                                onClick={() => setTraceSub(t)}
-                                className={`px-2 py-0.5 rounded-full transition-colors text-[9px] ${
+                                onClick={() => { setTraceSub(t); if (isMobile) setMobilePanel("right"); }}
+                                className={`px-2 py-0.5 rounded-full transition-colors text-[9px] sm:text-[10px] touch-target ${
                                   traceSub === t ? "bg-white/[0.15] text-white" : "bg-white/[0.06] hover:bg-white/[0.1]"
                                 }`}
                               >
@@ -468,13 +538,13 @@ function ObservabilityInner() {
 
                     {/* Live indicator */}
                     {isLive && (
-                      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/40  border border-green-500/20">
+                      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/50 backdrop-blur-sm border border-green-500/20">
                         <motion.div
-                          className="h-1.5 w-1.5 rounded-full bg-green-400"
+                          className="h-2 w-2 rounded-full bg-green-400"
                           animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
                           transition={{ repeat: Infinity, duration: 1.2 }}
                         />
-                        <span className="text-[9px] text-green-400">Streaming</span>
+                        <span className="text-[10px] sm:text-[11px] text-green-400 font-medium">Live</span>
                       </div>
                     )}
                   </motion.div>
@@ -482,122 +552,56 @@ function ObservabilityInner() {
               </AnimatePresence>
           </div>
 
-          {/* ── Resize handle ─────────────────────────────────────────── */}
-          <div className="w-1 shrink-0 cursor-col-resize hover:bg-violet-500/30 active:bg-violet-500/50 transition-colors rounded-full"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const startX = e.clientX;
-              const startW = rightPanelWidth;
-              const onMove = (ev: MouseEvent) => setRightPanelWidth(Math.max(260, Math.min(600, startW - (ev.clientX - startX))));
-              const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-              window.addEventListener("mousemove", onMove);
-              window.addEventListener("mouseup", onUp);
-            }}
-          />
+          {/* ── Resize handle (desktop only) ─────────────────────────── */}
+          {isDesktop && rightPanelOpen && (
+            <div className="w-1.5 shrink-0 cursor-col-resize group flex items-center justify-center"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startW = rightPanelWidth;
+                const onMove = (ev: MouseEvent) => setRightPanelWidth(Math.max(280, Math.min(600, startW - (ev.clientX - startX))));
+                const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}
+            >
+              <div className="w-0.5 h-8 rounded-full bg-white/[0.06] group-hover:bg-violet-500/40 group-active:bg-violet-500/60 transition-colors" />
+            </div>
+          )}
 
-          {/* ══════════════ RIGHT PANEL ══════════════ */}
-          <div style={{ width: rightPanelWidth }} className="shrink-0 flex flex-col rounded-xl border border-white/[0.06] bg-white/[0.01] overflow-hidden">
-
-            {mode === "trace" ? (
-              /* ── Trace mode: Events / Spans ─────────────── */
-              <>
-                <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-white/[0.04] shrink-0">
-                  {([
-                    { id: "events" as const, label: "Events" },
-                    { id: "spans" as const, label: "Spans" },
-                    { id: "stats" as const, label: "Run Stats" },
-                  ]).map(t => (
-                    <button key={t.id} onClick={() => setTraceSub(t.id)}
-                      className={`relative px-2.5 py-1.5 text-[10px] font-medium rounded-md transition-all ${traceSub === t.id ? "text-violet-300" : "text-slate-500 hover:text-slate-300"}`}
-                    >
-                      {t.label}
-                      {traceSub === t.id && (
-                        <motion.div layoutId="trace-tab-bg" className="absolute inset-0 bg-violet-500/10 border border-violet-500/20 rounded-md -z-10" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
-                      )}
-                    </button>
-                  ))}
-                  {isLive && (
-                    <div className="ml-auto flex items-center gap-1">
-                      <motion.div className="h-1.5 w-1.5 rounded-full bg-green-400" animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1.2 }} />
-                      <span className="text-[9px] text-green-400/60">live</span>
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  <AnimatePresence mode="wait">
-                    {traceSub === "events" && (
-                      <motion.div key="events" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-                        <EventsPanel
-                          events={executionEvents} auditEvents={auditEvents}
-                          viewMode={viewMode} setViewMode={setViewMode}
-                          sourceFilter={sourceFilter} setSourceFilter={setSourceFilter}
-                          textFilter={textFilter} setTextFilter={setTextFilter}
-                          onEventClick={(id) => { setActiveEvent(id); setDrawerOpen(true); }}
-                          onLoadTrace={(evt) => { const id = (evt.data.task_id as string) || ""; if (id) selectHistoryTask(id); }}
-                          activeEventId={activeEventId}
-                          activeTaskId={taskId || selectedHistoryTask || ""}
-                        />
-                      </motion.div>
-                    )}
-                    {traceSub === "spans" && (
-                      <motion.div key="spans" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-                        <TraceWaterfall taskId={taskId || selectedHistoryTask || ""} namespace={tenant} />
-                      </motion.div>
-                    )}
-                    {traceSub === "stats" && (
-                      <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-                        <RunStats
-                          taskId={taskId || selectedHistoryTask || ""}
-                          namespace={tenant}
-                          totalTokens={useExecutionStore.getState().tokens}
-                          totalCost={useExecutionStore.getState().cost}
-                          totalTurns={useExecutionStore.getState().turns}
-                        />
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </>
-            ) : (
-              /* ── Dashboard mode: Alerts / Queue / Insights / Studio ─── */
-              <>
-                <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-white/[0.04] shrink-0">
-                  {(["alerts", "queue", "insights"] as const).map(t => (
-                    <button key={t} onClick={() => setDashSub(t)}
-                      className={`relative px-3 py-1.5 text-[10px] font-medium rounded-md transition-all capitalize ${dashSub === t ? "text-violet-300" : "text-slate-500 hover:text-slate-300"}`}
-                    >
-                      {t === "queue" ? "Review" : t}
-                      {dashSub === t && (
-                        <motion.div layoutId="dash-tab-bg" className="absolute inset-0 bg-violet-500/10 border border-violet-500/20 rounded-md -z-10" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  <AnimatePresence mode="wait">
-                    {dashSub === "alerts" && (
-                      <motion.div key="alerts" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-                        <AlertsPanel />
-                      </motion.div>
-                    )}
-                    {dashSub === "queue" && (
-                      <motion.div key="queue" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-                        <ReviewQueue namespace={tenant} onSelectTask={selectHistoryTask} />
-                      </motion.div>
-                    )}
-                    {dashSub === "insights" && (
-                      <motion.div key="insights" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-                        <InsightsPanel analytics={analytics} stats={stats} />
-                        <div className="p-2">
-                          <ImprovePanel analytics={analytics} tenantHeaders={th} />
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </>
-            )}
-          </div>
+          {/* ══════════════ RIGHT PANEL (desktop inline) ══════════════ */}
+          {!isMobile && rightPanelOpen && (
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              style={{ width: effectiveRightWidth }}
+              className="shrink-0 flex flex-col rounded-xl border border-white/[0.06] bg-white/[0.01] overflow-hidden"
+            >
+              <RightPanelContent
+                mode={mode}
+                traceSub={traceSub} setTraceSub={setTraceSub}
+                dashSub={dashSub} setDashSub={setDashSub}
+                isLive={isLive}
+                executionEvents={executionEvents}
+                auditEvents={auditEvents}
+                viewMode={viewMode} setViewMode={setViewMode}
+                sourceFilter={sourceFilter} setSourceFilter={setSourceFilter}
+                textFilter={textFilter} setTextFilter={setTextFilter}
+                activeEventId={activeEventId}
+                taskId={taskId}
+                selectedHistoryTask={selectedHistoryTask}
+                tenant={tenant}
+                analytics={analytics}
+                stats={stats}
+                th={th}
+                setActiveEvent={setActiveEvent}
+                setDrawerOpen={setDrawerOpen}
+                selectHistoryTask={selectHistoryTask}
+              />
+            </motion.div>
+          )}
         </div>
 
         {/* ── Bottom Drawer (trace mode only) ──────────────────────────── */}
@@ -607,6 +611,108 @@ function ObservabilityInner() {
           </BottomDrawer>
         )}
       </div>
+
+      {/* ══════════════ MOBILE OVERLAYS ══════════════ */}
+
+      {/* Mobile sidebar overlay */}
+      <AnimatePresence>
+        {isMobile && mobilePanel === "sidebar" && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 mobile-overlay z-40"
+              onClick={() => setMobilePanel("none")}
+            />
+            <motion.div
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", stiffness: 400, damping: 35 }}
+              className="fixed left-0 top-0 bottom-0 w-[85vw] max-w-[320px] z-50 flex flex-col bg-surface-1 border-r border-white/[0.06]"
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.04]">
+                <h2 className="text-sm font-semibold text-slate-200">History</h2>
+                <button onClick={() => setMobilePanel("none")} className="p-2 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] touch-target">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <HistorySidebar
+                  open={true}
+                  setOpen={() => setMobilePanel("none")}
+                  tasks={tasks}
+                  selectedTask={selectedHistoryTask}
+                  onSelect={(id) => { selectHistoryTask(id); setMobilePanel("none"); }}
+                  loading={historyLoading}
+                  namespace={tenant}
+                  embedded
+                />
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile right panel (bottom sheet) */}
+      <AnimatePresence>
+        {isMobile && mobilePanel === "right" && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 mobile-overlay z-40"
+              onClick={() => setMobilePanel("none")}
+            />
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 400, damping: 35 }}
+              className="fixed left-0 right-0 bottom-0 z-50 flex flex-col bg-surface-1 border-t border-white/[0.08] rounded-t-2xl"
+              style={{ height: "75vh", maxHeight: "75vh" }}
+            >
+              {/* Sheet handle */}
+              <div className="flex items-center justify-center py-2 shrink-0">
+                <div className="w-10 h-1 rounded-full bg-white/[0.12]" />
+              </div>
+              <div className="flex items-center justify-between px-4 pb-2 shrink-0">
+                <h2 className="text-sm font-semibold text-slate-200">
+                  {mode === "trace" ? "Trace Details" : "Dashboard Panel"}
+                </h2>
+                <button onClick={() => setMobilePanel("none")} className="p-2 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] touch-target">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                <RightPanelContent
+                  mode={mode}
+                  traceSub={traceSub} setTraceSub={setTraceSub}
+                  dashSub={dashSub} setDashSub={setDashSub}
+                  isLive={isLive}
+                  executionEvents={executionEvents}
+                  auditEvents={auditEvents}
+                  viewMode={viewMode} setViewMode={setViewMode}
+                  sourceFilter={sourceFilter} setSourceFilter={setSourceFilter}
+                  textFilter={textFilter} setTextFilter={setTextFilter}
+                  activeEventId={activeEventId}
+                  taskId={taskId}
+                  selectedHistoryTask={selectedHistoryTask}
+                  tenant={tenant}
+                  analytics={analytics}
+                  stats={stats}
+                  th={th}
+                  setActiveEvent={setActiveEvent}
+                  setDrawerOpen={setDrawerOpen}
+                  selectHistoryTask={selectHistoryTask}
+                />
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Export & Retention Dialog */}
       <AnimatePresence>
@@ -618,6 +724,141 @@ function ObservabilityInner() {
   );
 }
 
+// ── Right Panel Content (shared between inline & mobile sheet) ────────────
+
+interface RightPanelContentProps {
+  mode: PageMode;
+  traceSub: "events" | "spans" | "stats";
+  setTraceSub: (t: "events" | "spans" | "stats") => void;
+  dashSub: "alerts" | "queue" | "insights";
+  setDashSub: (t: "alerts" | "queue" | "insights") => void;
+  isLive: boolean;
+  executionEvents: any[];
+  auditEvents: any[];
+  viewMode: "task" | "all";
+  setViewMode: (m: "task" | "all") => void;
+  sourceFilter: string;
+  setSourceFilter: (s: string) => void;
+  textFilter: string;
+  setTextFilter: (t: string) => void;
+  activeEventId: string | null;
+  taskId: string | null;
+  selectedHistoryTask: string | null;
+  tenant: string;
+  analytics: Analytics | null;
+  stats: Stats | null;
+  th: Record<string, string>;
+  setActiveEvent: (id: string | null) => void;
+  setDrawerOpen: (open: boolean) => void;
+  selectHistoryTask: (id: string) => void;
+}
+
+function RightPanelContent({
+  mode, traceSub, setTraceSub, dashSub, setDashSub, isLive,
+  executionEvents, auditEvents, viewMode, setViewMode,
+  sourceFilter, setSourceFilter, textFilter, setTextFilter,
+  activeEventId, taskId, selectedHistoryTask, tenant,
+  analytics, stats, th, setActiveEvent, setDrawerOpen, selectHistoryTask,
+}: RightPanelContentProps) {
+  return mode === "trace" ? (
+    <>
+      <div className="flex items-center gap-0.5 px-2.5 sm:px-3 py-2 border-b border-white/[0.04] shrink-0">
+        {([
+          { id: "events" as const, label: "Events" },
+          { id: "spans" as const, label: "Spans" },
+          { id: "stats" as const, label: "Run Stats" },
+        ]).map(t => (
+          <button key={t.id} onClick={() => setTraceSub(t.id)}
+            className={`relative px-3 py-2 text-[11px] sm:text-xs font-medium rounded-lg transition-all touch-target ${traceSub === t.id ? "text-violet-300" : "text-slate-500 hover:text-slate-300"}`}
+          >
+            {t.label}
+            {traceSub === t.id && (
+              <motion.div layoutId="trace-tab-bg" className="absolute inset-0 bg-violet-500/10 border border-violet-500/20 rounded-lg -z-10" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
+            )}
+          </button>
+        ))}
+        {isLive && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <motion.div className="h-2 w-2 rounded-full bg-green-400" animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1.2 }} />
+            <span className="text-[10px] text-green-400/70 font-medium">live</span>
+          </div>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <AnimatePresence mode="wait">
+          {traceSub === "events" && (
+            <motion.div key="events" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+              <EventsPanel
+                events={executionEvents} auditEvents={auditEvents}
+                viewMode={viewMode} setViewMode={setViewMode}
+                sourceFilter={sourceFilter} setSourceFilter={setSourceFilter}
+                textFilter={textFilter} setTextFilter={setTextFilter}
+                onEventClick={(id) => { setActiveEvent(id); setDrawerOpen(true); }}
+                onLoadTrace={(evt) => { const id = (evt.data.task_id as string) || ""; if (id) selectHistoryTask(id); }}
+                activeEventId={activeEventId}
+                activeTaskId={taskId || selectedHistoryTask || ""}
+              />
+            </motion.div>
+          )}
+          {traceSub === "spans" && (
+            <motion.div key="spans" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+              <TraceWaterfall taskId={taskId || selectedHistoryTask || ""} namespace={tenant} />
+            </motion.div>
+          )}
+          {traceSub === "stats" && (
+            <motion.div key="stats" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+              <RunStats
+                taskId={taskId || selectedHistoryTask || ""}
+                namespace={tenant}
+                totalTokens={useExecutionStore.getState().tokens}
+                totalCost={useExecutionStore.getState().cost}
+                totalTurns={useExecutionStore.getState().turns}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </>
+  ) : (
+    <>
+      <div className="flex items-center gap-0.5 px-2.5 sm:px-3 py-2 border-b border-white/[0.04] shrink-0">
+        {(["alerts", "queue", "insights"] as const).map(t => (
+          <button key={t} onClick={() => setDashSub(t)}
+            className={`relative px-3 sm:px-4 py-2 text-[11px] sm:text-xs font-medium rounded-lg transition-all capitalize touch-target ${dashSub === t ? "text-violet-300" : "text-slate-500 hover:text-slate-300"}`}
+          >
+            {t === "queue" ? "Review" : t}
+            {dashSub === t && (
+              <motion.div layoutId="dash-tab-bg" className="absolute inset-0 bg-violet-500/10 border border-violet-500/20 rounded-lg -z-10" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
+            )}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <AnimatePresence mode="wait">
+          {dashSub === "alerts" && (
+            <motion.div key="alerts" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+              <AlertsPanel />
+            </motion.div>
+          )}
+          {dashSub === "queue" && (
+            <motion.div key="queue" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+              <ReviewQueue namespace={tenant} onSelectTask={selectHistoryTask} />
+            </motion.div>
+          )}
+          {dashSub === "insights" && (
+            <motion.div key="insights" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+              <InsightsPanel analytics={analytics} stats={stats} />
+              <div className="p-2 sm:p-3">
+                <ImprovePanel analytics={analytics} tenantHeaders={th} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </>
+  );
+}
+
 // ── Collapsible Section ────────────────────────────────────────────────────
 
 function CollapsibleSection({ title, defaultOpen = false, children }: {
@@ -625,14 +866,14 @@ function CollapsibleSection({ title, defaultOpen = false, children }: {
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="mt-4">
+    <div className="mt-5 sm:mt-6">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-1 py-2 text-[11px] font-medium text-slate-400 hover:text-slate-200 transition-colors group"
+        className="w-full flex items-center justify-between px-1 py-2.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors group touch-target"
       >
         <span>{title}</span>
         <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }} className="text-slate-600 group-hover:text-slate-400">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+          <svg width="14" height="14" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
         </motion.span>
       </button>
       <AnimatePresence>

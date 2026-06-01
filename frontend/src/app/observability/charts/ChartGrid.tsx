@@ -98,15 +98,15 @@ export function ChartGrid({ namespace }: ChartGridProps) {
   }, [fetchAll, window]);
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-5 sm:space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-white text-lg font-semibold">Performance Metrics</h2>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="text-white text-base sm:text-lg font-semibold">Performance Metrics</h2>
         <DateRangePicker value={window} onChange={setWindow} />
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard
           label="Tasks"
           value={summary.total_tasks ?? '—'}
@@ -143,14 +143,14 @@ export function ChartGrid({ namespace }: ChartGridProps) {
       </div>
 
       {/* Charts Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
         {METRICS.map((metric) => (
           <div
             key={metric}
-            className="bg-[#0f0f1c] border border-white/[0.07] rounded-xl p-4 transition-opacity duration-300"
+            className="obs-card p-4 sm:p-5 transition-opacity duration-300"
             style={{ opacity: chartLoading[metric] && !chartData[metric] ? 0.6 : 1 }}
           >
-            <h3 className="text-[#8b8ba8] text-xs font-medium uppercase tracking-wide mb-3">
+            <h3 className="text-[#8b8ba8] text-[11px] sm:text-xs font-medium uppercase tracking-wide mb-3">
               {metric === 'latency' && 'Latency (ms)'}
               {metric === 'cost' && 'Cost ($)'}
               {metric === 'success_rate' && 'Success Rate (%)'}

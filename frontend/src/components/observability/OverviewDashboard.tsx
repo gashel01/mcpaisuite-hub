@@ -52,14 +52,14 @@ function MetricCard({ icon: Icon, color, bg, label, value, sub, delay }: {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.3 }}
-      className={`rounded-xl border border-white/[0.06] ${bg} p-4 card-hover`}
+      className={`rounded-xl border border-white/[0.06] ${bg} p-4 sm:p-5 card-hover`}
     >
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <Icon className={`h-3.5 w-3.5 ${color}`} />
-        <span className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</span>
+      <div className="flex items-center gap-2 mb-2">
+        <Icon className={`h-4 w-4 ${color}`} />
+        <span className="text-[11px] sm:text-xs text-slate-500 uppercase tracking-wide">{label}</span>
       </div>
-      <p className={`text-xl font-bold ${color}`}>{value}</p>
-      {sub && <p className="text-[10px] text-slate-500 mt-0.5">{sub}</p>}
+      <p className={`text-lg sm:text-xl font-bold ${color}`}>{value}</p>
+      {sub && <p className="text-[10px] sm:text-[11px] text-slate-500 mt-1">{sub}</p>}
     </motion.div>
   );
 }
@@ -68,10 +68,10 @@ function CostRow({ label, value, color, pulse }: {
   label: string; value: string; color: string; pulse?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-[11px] text-slate-500">{label}</span>
-      <div className="flex items-center gap-1.5">
-        {pulse && <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+    <div className="flex items-center justify-between py-1">
+      <span className="text-[11px] sm:text-xs text-slate-500">{label}</span>
+      <div className="flex items-center gap-2">
+        {pulse && <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />}
         <span className={`text-sm font-bold ${color}`}>{value}</span>
       </div>
     </div>
@@ -80,7 +80,7 @@ function CostRow({ label, value, color, pulse }: {
 
 function SkeletonCard() {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-4 animate-pulse">
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-4 sm:p-5 animate-pulse">
       <div className="h-3 w-20 bg-white/[0.04] rounded mb-3" />
       <div className="h-6 w-16 bg-white/[0.06] rounded" />
     </div>
@@ -93,7 +93,7 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
   if (loading) {
     return (
       <div className="space-y-5">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -111,9 +111,9 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
   const maxToolCount = analytics?.top_tools?.[0]?.count ?? 1;
 
   return (
-    <div className="flex-1 overflow-y-auto space-y-5 min-h-0 pb-4">
+    <div className="flex-1 overflow-y-auto space-y-5 sm:space-y-6 min-h-0 pb-4">
       {/* Hero metrics row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MetricCard
           icon={CheckCircle2} color="text-emerald-400" bg="bg-emerald-500/8"
           label="Success Rate" value={`${successRate}%`}
@@ -150,12 +150,12 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2, duration: 0.3 }}
-          className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-5"
+          className="obs-card p-5 sm:p-6"
         >
-          <h3 className="text-xs font-semibold text-slate-300 mb-4">Performance</h3>
+          <h3 className="text-xs sm:text-sm font-semibold text-slate-300 mb-4">Performance</h3>
           <div className="flex items-center gap-5 mb-4">
-            <div className="relative h-20 w-20 shrink-0">
-              <svg viewBox="0 0 36 36" className="h-20 w-20 -rotate-90">
+            <div className="relative h-20 w-20 sm:h-24 sm:w-24 shrink-0">
+              <svg viewBox="0 0 36 36" className="h-full w-full -rotate-90">
                 <circle cx="18" cy="18" r="15.5" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="3" />
                 <circle
                   cx="18" cy="18" r="15.5" fill="none"
@@ -166,40 +166,40 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
                 />
               </svg>
               <div className="absolute inset-0 flex items-center justify-center">
-                <span className="text-lg font-bold text-slate-100">{successRate}%</span>
+                <span className="text-lg sm:text-xl font-bold text-slate-100">{successRate}%</span>
               </div>
             </div>
-            <div className="space-y-2 flex-1">
-              <div className="flex justify-between text-[11px]">
+            <div className="space-y-2.5 flex-1">
+              <div className="flex justify-between text-[11px] sm:text-xs">
                 <span className="text-slate-500">Completed</span>
                 <span className="text-emerald-400 font-medium">{analytics?.tasks_completed ?? 0}</span>
               </div>
-              <div className="flex justify-between text-[11px]">
+              <div className="flex justify-between text-[11px] sm:text-xs">
                 <span className="text-slate-500">Failed</span>
                 <span className={`font-medium ${(analytics?.tasks_failed ?? 0) > 0 ? "text-red-400" : "text-slate-600"}`}>
                   {analytics?.tasks_failed ?? 0}
                 </span>
               </div>
-              <div className="flex justify-between text-[11px]">
+              <div className="flex justify-between text-[11px] sm:text-xs">
                 <span className="text-slate-500">Avg turns/task</span>
                 <span className="text-slate-300 font-medium">{stats?.avg_turns_per_task?.toFixed(1) ?? "—"}</span>
               </div>
             </div>
           </div>
           {/* Insights */}
-          <div className="space-y-1.5 pt-3 border-t border-white/[0.04]">
+          <div className="space-y-2 pt-3 border-t border-white/[0.04]">
             {analytics?.top_tools?.[0] && (
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] sm:text-xs text-slate-400">
                 Most used tool: <span className="text-violet-400 font-medium">{analytics.top_tools[0].name}</span> ({analytics.top_tools[0].count} calls)
               </p>
             )}
             {(analytics?.tasks_failed ?? 0) > 0 && (
-              <p className="text-[11px] text-amber-400">
+              <p className="text-[11px] sm:text-xs text-amber-400">
                 {analytics!.tasks_failed} task{analytics!.tasks_failed > 1 ? "s" : ""} failed — review task history for details
               </p>
             )}
             {stats?.model && (
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] sm:text-xs text-slate-500">
                 Model: <span className="text-slate-300 font-mono">{stats.model}</span>
               </p>
             )}
@@ -211,11 +211,11 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.25, duration: 0.3 }}
-          className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-5"
+          className="obs-card p-5 sm:p-6"
         >
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xs font-semibold text-slate-300">Cost Breakdown</h3>
-            <Link href="/settings" className="text-[10px] text-violet-400 hover:text-violet-300 transition-colors">
+            <h3 className="text-xs sm:text-sm font-semibold text-slate-300">Cost Breakdown</h3>
+            <Link href="/settings" className="text-[10px] sm:text-[11px] text-violet-400 hover:text-violet-300 transition-colors">
               Change model &rarr;
             </Link>
           </div>
@@ -243,9 +243,9 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
             />
           </div>
           {/* Total cost highlight */}
-          <div className="mt-4 pt-3 border-t border-white/[0.04] flex items-center justify-between">
-            <span className="text-[11px] text-slate-500">Total spend</span>
-            <span className="text-lg font-bold text-emerald-400">
+          <div className="mt-4 pt-4 border-t border-white/[0.04] flex items-center justify-between">
+            <span className="text-[11px] sm:text-xs text-slate-500">Total spend</span>
+            <span className="text-lg sm:text-xl font-bold text-emerald-400">
               ${(analytics?.total_cost ?? stats?.total_cost ?? 0).toFixed(4)}
             </span>
           </div>
@@ -259,23 +259,25 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3, duration: 0.3 }}
-          className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-5"
+          className="obs-card p-5 sm:p-6"
         >
-          <h3 className="text-xs font-semibold text-slate-300 mb-3">Top Tools</h3>
+          <h3 className="text-xs sm:text-sm font-semibold text-slate-300 mb-4">Top Tools</h3>
           {analytics?.top_tools?.length ? (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {analytics.top_tools.slice(0, 8).map((t) => {
                 const pct = maxToolCount > 0 ? Math.round((t.count / maxToolCount) * 100) : 0;
                 return (
                   <div key={t.name}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] text-slate-300 font-mono truncate max-w-[200px]">{t.name}</span>
-                      <span className="text-[10px] text-slate-500">{t.count}</span>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[11px] sm:text-xs text-slate-300 font-mono truncate max-w-[200px]">{t.name}</span>
+                      <span className="text-[10px] sm:text-[11px] text-slate-500 font-medium">{t.count}</span>
                     </div>
-                    <div className="h-1.5 bg-white/[0.03] rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-violet-600 to-violet-400 rounded-full transition-all duration-500"
-                        style={{ width: `${pct}%` }}
+                    <div className="h-1.5 sm:h-2 bg-white/[0.03] rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct}%` }}
+                        transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
+                        className="h-full bg-gradient-to-r from-violet-600 to-violet-400 rounded-full"
                       />
                     </div>
                   </div>
@@ -283,7 +285,7 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
               })}
             </div>
           ) : (
-            <p className="text-[11px] text-slate-600">No tool usage data yet.</p>
+            <p className="text-[11px] sm:text-xs text-slate-600">No tool usage data yet.</p>
           )}
         </motion.div>
 
@@ -292,22 +294,22 @@ export default function OverviewDashboard({ analytics, stats, loading }: Overvie
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35, duration: 0.3 }}
-          className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-5"
+          className="obs-card p-5 sm:p-6"
         >
-          <h3 className="text-xs font-semibold text-slate-300 mb-3">Models</h3>
+          <h3 className="text-xs sm:text-sm font-semibold text-slate-300 mb-4">Models</h3>
           {analytics?.top_models?.length ? (
             <div className="space-y-2">
               {analytics.top_models.map((m) => (
-                <div key={m.name} className="flex items-center justify-between py-2 border-b border-white/[0.03] last:border-0">
-                  <span className="text-[11px] text-slate-300 font-mono">{m.name}</span>
-                  <span className="text-[10px] font-medium bg-blue-500/8 text-blue-400 border border-blue-500/15 px-2.5 py-0.5 rounded-full">
+                <div key={m.name} className="flex items-center justify-between py-2.5 border-b border-white/[0.03] last:border-0">
+                  <span className="text-[11px] sm:text-xs text-slate-300 font-mono">{m.name}</span>
+                  <span className="text-[10px] sm:text-[11px] font-medium bg-blue-500/8 text-blue-400 border border-blue-500/15 px-2.5 py-1 rounded-full">
                     {m.count} calls
                   </span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-[11px] text-slate-600">No model usage data yet.</p>
+            <p className="text-[11px] sm:text-xs text-slate-600">No model usage data yet.</p>
           )}
         </motion.div>
       </div>

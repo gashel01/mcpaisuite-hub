@@ -18,7 +18,11 @@ function formatCost(cost: number): string {
   return `$${cost.toFixed(3)}`;
 }
 
-export default function MetricsBar() {
+interface MetricsBarProps {
+  compact?: boolean;
+}
+
+export default function MetricsBar({ compact }: MetricsBarProps) {
   const { turns, tokens, cost, elapsed, status } = useExecutionStore();
 
   const metrics = [
@@ -28,24 +32,46 @@ export default function MetricsBar() {
     { icon: Clock, label: "Elapsed", value: formatElapsed(elapsed), color: "text-amber-400" },
   ];
 
+  if (compact) {
+    return (
+      <div className="flex items-center gap-3 overflow-x-auto pb-0.5 scrollbar-none">
+        {metrics.map((m) => (
+          <div key={m.label} className="flex items-center gap-1.5 shrink-0">
+            <m.icon className={`h-3.5 w-3.5 ${m.color}`} />
+            <span className={`text-[11px] font-mono font-medium ${m.color}`}>{m.value}</span>
+          </div>
+        ))}
+        <div className="flex items-center gap-1.5 shrink-0 ml-1">
+          <div className={`h-2 w-2 rounded-full ${
+            status === "streaming" ? "bg-green-400 status-dot-live" :
+            status === "completed" ? "bg-violet-400" :
+            status === "error" ? "bg-red-400" :
+            "bg-slate-600"
+          }`} />
+          <span className="text-[10px] text-slate-500 capitalize">{status}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1.5">
       {metrics.map((m, i) => (
         <motion.div
           key={m.label}
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.05 }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/50 border border-slate-700/40 rounded-lg"
+          className="flex items-center gap-1.5 px-3 py-2 bg-white/[0.03] border border-white/[0.06] rounded-lg hover:bg-white/[0.05] transition-colors"
         >
           <m.icon className={`h-3.5 w-3.5 ${m.color}`} />
-          <span className="text-[10px] text-slate-500 uppercase tracking-wide">{m.label}</span>
+          <span className="text-[10px] text-slate-500 uppercase tracking-wide hidden xl:inline">{m.label}</span>
           <span className={`text-xs font-mono font-medium ${m.color}`}>{m.value}</span>
         </motion.div>
       ))}
 
       {/* Status indicator */}
-      <div className="ml-2 flex items-center gap-1.5">
+      <div className="ml-1.5 flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-white/[0.02]">
         <motion.div
           className={`h-2 w-2 rounded-full ${
             status === "streaming" ? "bg-green-400" :
@@ -56,7 +82,7 @@ export default function MetricsBar() {
           animate={status === "streaming" ? { scale: [1, 1.4, 1], opacity: [1, 0.6, 1] } : {}}
           transition={{ repeat: Infinity, duration: 1.2 }}
         />
-        <span className="text-[10px] text-slate-500 capitalize">{status}</span>
+        <span className="text-[10px] text-slate-500 capitalize font-medium">{status}</span>
       </div>
     </div>
   );

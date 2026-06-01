@@ -8,9 +8,10 @@ import {
   RefreshCw, Lock, Unlock, Eye, EyeOff,
   Globe, Terminal, Code2, KeyRound, FileWarning, ScrollText,
   AlertTriangle, CheckCircle2, XCircle, Radio,
-  ChevronRight, Plus, X, Trash2, ToggleLeft, ToggleRight,
+  ChevronRight, Plus, X, Trash2, ToggleLeft, ToggleRight, Menu,
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 import type { SecurityPosture as SecurityPostureData, SecurityAuditEvent } from "@/components/security/types";
 
 
@@ -78,7 +79,9 @@ export default function SecurityPage() {
   const [liveEvents, setLiveEvents] = useState<SecurityAuditEvent[]>([]);
   const [vaultKeys, setVaultKeys] = useState<string[]>([]);
   const [hostPending, setHostPending] = useState<{ pattern: string; namespace?: string }[]>([]);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const { isMobile, isDesktop } = useBreakpoint();
 
   // Fetch
   const fetchData = useCallback(async () => {
@@ -223,18 +226,52 @@ export default function SecurityPage() {
     fetchData();
   };
 
+  const pendingCount = hostPending.length;
+
   return (
-    <div className="flex h-[calc(100vh-3rem)] overflow-hidden bg-[#060610]">
+    <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden bg-[#060610] relative">
+
+      {/* ── Header ────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04]">
+        <button
+          onClick={() => {
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+          <Shield className="h-4 w-4 text-violet-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight">Security</h1>
+          <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Real-time monitoring, threat detection & governance</p>
+        </div>
+        {!isDesktop && pendingCount > 0 && (
+          <button onClick={() => setInboxOpen(true)} className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 transition-all touch-target shrink-0">
+            <ShieldAlert className="h-3.5 w-3.5" />
+            <span>{pendingCount}</span>
+          </button>
+        )}
+        <button onClick={fetchData} className="p-1.5 text-slate-600 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0">
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      <div className="flex flex-1 min-h-0 overflow-hidden">
 
       {/* ── LEFT: Main Dashboard ──────────────────────────────────── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-y-auto">
 
         {/* Hero: Score + Status */}
-        <div className="shrink-0 px-6 pt-5 pb-4">
-          <div className="flex items-start gap-6">
+        <div className="shrink-0 px-3 sm:px-5 lg:px-6 pt-2 sm:pt-4 pb-3 sm:pb-4">
+          <div className="flex items-start gap-3 sm:gap-6">
             {/* Score Ring */}
             <div className="relative shrink-0">
-              <svg width="120" height="120" viewBox="0 0 120 120" className="drop-shadow-lg">
+              <svg width={isMobile ? 80 : 120} height={isMobile ? 80 : 120} viewBox="0 0 120 120" className="drop-shadow-lg">
                 <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="8" />
                 <motion.circle
                   cx="60" cy="60" r="52" fill="none" stroke={sc.ring} strokeWidth="8"
@@ -247,42 +284,39 @@ export default function SecurityPage() {
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <motion.span
-                  className={`text-3xl font-black ${sc.text}`}
+                  className={`text-2xl sm:text-3xl font-black ${sc.text}`}
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
                 >{score}</motion.span>
-                <span className="text-[11px] text-slate-600 -mt-1">/ 100</span>
+                <span className="text-[10px] sm:text-[11px] text-slate-600 -mt-1">/ 100</span>
               </div>
             </div>
 
             {/* Status info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <Shield className={`h-5 w-5 ${sc.text}`} />
-                <h1 className="text-lg font-bold text-white">Security Command Center</h1>
-                <div className="flex items-center gap-1 ml-auto">
+                <Shield className={`h-4 w-4 sm:h-5 sm:w-5 ${sc.text}`} />
+                <h1 className="text-sm sm:text-lg font-bold text-white truncate">Security Center</h1>
+                <div className="flex items-center gap-1 ml-auto shrink-0">
                   <Radio className="h-3 w-3 text-emerald-400 animate-pulse" />
-                  <span className="text-[11px] text-emerald-400 font-medium">LIVE</span>
+                  <span className="text-[10px] sm:text-[11px] text-emerald-400 font-medium">LIVE</span>
                 </div>
               </div>
-              <p className="text-xs text-slate-500 mb-3">Real-time security monitoring, threat detection, and governance controls</p>
+              <p className="text-[11px] sm:text-xs text-slate-500 mb-2 sm:mb-3 hidden lg:block">Real-time monitoring & governance controls</p>
 
               {/* Quick stats */}
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                 <StatPill icon={XCircle} value={stats.blocked} label="Blocked" color="text-red-400" bg="bg-red-500/10 border-red-500/20" />
                 <StatPill icon={CheckCircle2} value={stats.approved} label="Approved" color="text-emerald-400" bg="bg-emerald-500/10 border-emerald-500/20" />
-                <StatPill icon={KeyRound} value={stats.secrets_detected} label="Secrets" color="text-amber-400" bg="bg-amber-500/10 border-amber-500/20" />
-                <StatPill icon={AlertTriangle} value={posture?.host?.pending_count || 0} label="Pending" color="text-violet-400" bg="bg-violet-500/10 border-violet-500/20" />
-                <button onClick={fetchData} className="ml-auto p-1.5 text-slate-600 hover:text-slate-300 transition-colors">
-                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                </button>
+                <StatPill icon={KeyRound} value={stats.secrets_detected} label="Secrets" color="text-amber-400" bg="bg-amber-500/10 border-amber-500/20" compact={isMobile} />
+                <StatPill icon={AlertTriangle} value={posture?.host?.pending_count || 0} label="Pending" color="text-violet-400" bg="bg-violet-500/10 border-violet-500/20" compact={isMobile} />
               </div>
             </div>
           </div>
         </div>
 
         {/* Category Cards */}
-        <div className="shrink-0 px-6 pb-4">
-          <div className="grid grid-cols-5 gap-3">
+        <div className="shrink-0 px-3 sm:px-5 lg:px-6 pb-3 sm:pb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
             {categories.map((cat, i) => {
               const cs = scoreColor(cat.score);
               const isActive = activePanel === cat.id;
@@ -290,17 +324,17 @@ export default function SecurityPage() {
                 <motion.button
                   key={cat.id}
                   onClick={() => setActivePanel(isActive ? null : cat.id)}
-                  className={`relative text-left p-3 rounded-xl border transition-all group ${
+                  className={`relative text-left p-2.5 sm:p-3 rounded-xl border transition-all group touch-target ${
                     isActive ? `border-white/[0.15] bg-white/[0.04] ${cs.glow} shadow-lg` : "border-white/[0.06] bg-white/[0.015] hover:border-white/[0.1] hover:bg-white/[0.03]"
                   }`}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.08 }}
                 >
-                  <div className="flex items-center gap-2 mb-2">
-                    <cat.icon className={`h-4 w-4 ${isActive ? cs.text : "text-slate-500 group-hover:text-slate-300"} transition-colors`} />
-                    <span className={`text-xs font-bold ${isActive ? "text-white" : "text-slate-400"}`}>{cat.label}</span>
-                    <span className={`ml-auto text-xs font-bold ${cs.text}`}>{cat.score}</span>
+                  <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
+                    <cat.icon className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${isActive ? cs.text : "text-slate-500 group-hover:text-slate-300"} transition-colors`} />
+                    <span className={`text-[11px] sm:text-xs font-bold truncate ${isActive ? "text-white" : "text-slate-400"}`}>{cat.label}</span>
+                    <span className={`ml-auto text-[11px] sm:text-xs font-bold ${cs.text} shrink-0`}>{cat.score}</span>
                   </div>
                   <div className="w-full h-1 bg-white/[0.04] rounded-full overflow-hidden">
                     <motion.div
@@ -309,7 +343,7 @@ export default function SecurityPage() {
                       transition={{ duration: 1, delay: 0.3 + i * 0.08 }}
                     />
                   </div>
-                  <p className="text-xs text-slate-600 mt-1.5 line-clamp-1">{cat.desc}</p>
+                  <p className="text-[10px] sm:text-xs text-slate-600 mt-1 sm:mt-1.5 line-clamp-1 hidden sm:block">{cat.desc}</p>
                 </motion.button>
               );
             })}
@@ -317,7 +351,7 @@ export default function SecurityPage() {
         </div>
 
         {/* Active Panel Content */}
-        <div className="flex-1 min-h-0 px-6 pb-4">
+        <div className="flex-1 min-h-0 px-3 sm:px-5 lg:px-6 pb-3 sm:pb-4">
           <AnimatePresence mode="wait">
             {activePanel === "network" && (
               <ControlPanel key="network" title="Network Egress Control" icon={Globe} color="cyan">
@@ -346,10 +380,10 @@ export default function SecurityPage() {
             )}
             {!activePanel && (
               <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full flex items-center justify-center">
-                <div className="text-center">
-                  <ShieldCheck className="h-12 w-12 text-slate-800 mx-auto mb-3" />
-                  <p className="text-sm text-slate-600">Select a security category above to view controls</p>
-                  <p className="text-xs text-slate-700 mt-1">Click any card to expand its configuration panel</p>
+                <div className="text-center px-4">
+                  <ShieldCheck className="h-10 w-10 sm:h-12 sm:w-12 text-slate-800 mx-auto mb-3" />
+                  <p className="text-xs sm:text-sm text-slate-600">Select a security category above to view controls</p>
+                  <p className="text-[11px] text-slate-700 mt-1 hidden sm:block">Click any card to expand its configuration panel</p>
                 </div>
               </motion.div>
             )}
@@ -357,21 +391,59 @@ export default function SecurityPage() {
         </div>
       </div>
 
-      {/* ── RIGHT: Security Inbox ─────────────────────────────────── */}
-      <SecurityInbox
-        events={events} liveEvents={liveEvents} hostPending={hostPending}
-        onApprovePending={approvePending} onDenyPending={denyPending}
-      />
+      {/* ── RIGHT: Security Inbox (desktop inline) ────────────────── */}
+      {isDesktop && (
+        <SecurityInbox
+          events={events} liveEvents={liveEvents} hostPending={hostPending}
+          onApprovePending={approvePending} onDenyPending={denyPending}
+        />
+      )}
+      </div>{/* close flex row wrapper */}
+
+      {/* ── Mobile/Tablet: Security Inbox bottom sheet ────────────── */}
+      <AnimatePresence>
+        {!isDesktop && inboxOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 mobile-overlay z-40"
+              onClick={() => setInboxOpen(false)}
+            />
+            <motion.div
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 400, damping: 35 }}
+              className="fixed left-0 right-0 bottom-0 z-50 flex flex-col bg-[#08080f] border-t border-white/[0.08] rounded-t-2xl"
+              style={{ height: "75vh" }}
+            >
+              <div className="flex items-center justify-center py-2 shrink-0">
+                <div className="w-10 h-1 rounded-full bg-white/[0.12]" />
+              </div>
+              <div className="flex items-center justify-between px-4 pb-2 shrink-0">
+                <span className="text-sm font-semibold text-slate-200">Security Inbox</span>
+                <button onClick={() => setInboxOpen(false)} className="p-2 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] touch-target">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <SecurityInbox
+                events={events} liveEvents={liveEvents} hostPending={hostPending}
+                onApprovePending={approvePending} onDenyPending={denyPending}
+                embedded
+              />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 // ── Security Inbox (right sidebar) ──────────────────────────────────────
 
-function SecurityInbox({ events, liveEvents, hostPending, onApprovePending, onDenyPending }: {
+function SecurityInbox({ events, liveEvents, hostPending, onApprovePending, onDenyPending, embedded }: {
   events: SecurityAuditEvent[]; liveEvents: SecurityAuditEvent[];
   hostPending: { pattern: string; namespace?: string }[];
   onApprovePending: (p: string, ns?: string) => void; onDenyPending: (p: string, ns?: string) => void;
+  embedded?: boolean;
 }) {
   const [filter, setFilter] = useState<"action" | "blocked" | "all">("action");
 
@@ -403,8 +475,9 @@ function SecurityInbox({ events, liveEvents, hostPending, onApprovePending, onDe
   const blockedCount = blocked.length;
 
   return (
-    <div className="w-[320px] shrink-0 border-l border-white/[0.04] flex flex-col bg-[#08080f]">
+    <div className={`${embedded ? "flex-1 min-h-0" : "w-[320px] shrink-0 border-l border-white/[0.04]"} flex flex-col bg-[#08080f]`}>
       {/* Header */}
+      {!embedded && (
       <div className="shrink-0 px-3 py-2.5 border-b border-white/[0.04]">
         <div className="flex items-center gap-2 mb-2">
           <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
@@ -426,6 +499,26 @@ function SecurityInbox({ events, liveEvents, hostPending, onApprovePending, onDe
           ))}
         </div>
       </div>
+      )}
+
+      {/* Filter tabs (embedded mode) */}
+      {embedded && (
+        <div className="shrink-0 px-3 pb-2">
+          <div className="flex gap-1 p-0.5 bg-white/[0.02] rounded-lg">
+            {([
+              { id: "action" as const, label: "Action", count: pendingCount },
+              { id: "blocked" as const, label: "Blocked", count: blockedCount },
+              { id: "all" as const, label: "All", count: actionItems.length },
+            ]).map(f => (
+              <button key={f.id} onClick={() => setFilter(f.id)}
+                className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-[11px] font-medium rounded-md transition-all touch-target ${filter === f.id ? "bg-violet-500/15 text-violet-300" : "text-slate-600 hover:text-slate-400"}`}>
+                {f.label}
+                {f.count > 0 && <span className={`text-[10px] ${filter === f.id ? "text-violet-400" : "text-slate-700"}`}>{f.count}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Items */}
       <div className="flex-1 overflow-y-auto">
@@ -491,12 +584,12 @@ function SecurityInbox({ events, liveEvents, hostPending, onApprovePending, onDe
 
 // ── Reusable Components ─────────────────────────────────────────────────
 
-function StatPill({ icon: Icon, value, label, color, bg }: { icon: any; value: number; label: string; color: string; bg: string }) {
+function StatPill({ icon: Icon, value, label, color, bg, compact }: { icon: any; value: number; label: string; color: string; bg: string; compact?: boolean }) {
   return (
-    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border ${bg}`}>
+    <div className={`flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg border ${bg}`}>
       <Icon className={`h-3 w-3 ${color}`} />
       <span className={`text-[11px] font-bold ${color}`}>{value}</span>
-      <span className="text-xs text-slate-600">{label}</span>
+      {!compact && <span className="text-[11px] sm:text-xs text-slate-600 hidden sm:inline">{label}</span>}
     </div>
   );
 }
@@ -721,8 +814,8 @@ function CodePanel({ posture, events, onToggle, onTogglePattern }: { posture: Se
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        <div className={`p-4 rounded-xl border-2 transition-all ${posture?.validator?.reject_dangerous ? "border-emerald-500/30 bg-emerald-500/[0.05]" : "border-red-500/30 bg-red-500/[0.05]"}`}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        <div className={`p-3 sm:p-4 rounded-xl border-2 transition-all ${posture?.validator?.reject_dangerous ? "border-emerald-500/30 bg-emerald-500/[0.05]" : "border-red-500/30 bg-red-500/[0.05]"}`}>
           <div className="flex items-center gap-3 mb-2">
             <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${posture?.validator?.reject_dangerous ? "bg-emerald-500/15" : "bg-red-500/15"}`}>
               {posture?.validator?.reject_dangerous ? <ShieldCheck className="h-4 w-4 text-emerald-400" /> : <ShieldAlert className="h-4 w-4 text-red-400" />}
@@ -754,12 +847,12 @@ function CodePanel({ posture, events, onToggle, onTogglePattern }: { posture: Se
 
       <div>
         <span className="text-xs text-slate-500 font-medium">Blocked Patterns ({patterns.length}/{allPatterns.length} active)</span>
-        <div className="mt-2 grid grid-cols-3 gap-2">
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {allPatterns.map(p => {
             const disabled = disabledPatterns.has(p.name);
             return (
               <button key={p.name} onClick={() => onTogglePattern(p.name, !disabled)} data-tooltip={p.why}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all text-left group ${disabled ? "bg-white/[0.01] border-white/[0.03] opacity-40" : "bg-white/[0.02] border-white/[0.06] hover:border-white/[0.1]"}`}>
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border transition-all text-left group touch-target ${disabled ? "bg-white/[0.01] border-white/[0.03] opacity-40" : "bg-white/[0.02] border-white/[0.06] hover:border-white/[0.1]"}`}>
                 <div className={`h-2 w-2 rounded-full shrink-0 ${disabled ? "bg-slate-600" : p.severity === "critical" ? "bg-red-400" : p.severity === "high" ? "bg-amber-400" : "bg-blue-400"}`} />
                 <span className={`text-xs font-mono truncate flex-1 ${disabled ? "text-slate-600 line-through" : "text-slate-300"}`}>{p.name}</span>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${disabled ? "bg-white/[0.02] text-slate-700" : p.severity === "critical" ? "bg-red-500/10 text-red-400" : p.severity === "high" ? "bg-amber-500/10 text-amber-400" : "bg-blue-500/10 text-blue-400"}`}>{disabled ? "off" : p.severity}</span>
@@ -869,12 +962,12 @@ function DLPPanel({ posture, events, onTogglePattern, vaultKeys, onAddSecret, on
 
       <div>
         <span className="text-xs text-slate-500 font-medium">DLP Patterns ({activeCount}/{allPatterns.length} active)</span>
-        <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
           {allPatterns.map(p => {
             const disabled = disabledPatterns.has(p.name);
             return (
               <button key={p.name} onClick={() => onTogglePattern(p.name, !disabled)}
-                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-all text-left ${disabled ? "bg-white/[0.01] border-white/[0.03] opacity-40" : "bg-white/[0.02] border-white/[0.06] hover:border-white/[0.1]"}`}>
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all text-left touch-target ${disabled ? "bg-white/[0.01] border-white/[0.03] opacity-40" : "bg-white/[0.02] border-white/[0.06] hover:border-white/[0.1]"}`}>
                 <span className="text-sm">{p.icon}</span>
                 <span className={`text-xs flex-1 ${disabled ? "text-slate-600 line-through" : "text-slate-300"}`}>{p.name}</span>
                 <span className={`text-[10px] px-1.5 py-0.5 rounded ${disabled ? "bg-white/[0.02] text-slate-700" : "bg-emerald-500/10 text-emerald-400"}`}>{disabled ? "Off" : "Active"}</span>
@@ -971,7 +1064,7 @@ function GovernancePanel({ posture, onSave }: { posture: SecurityPostureData | n
       </div>
 
       {/* Template toggles */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {RULE_TEMPLATES.map(tpl => {
           const active = activeTemplates.has(tpl.id);
           return (

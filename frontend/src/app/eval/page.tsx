@@ -6,10 +6,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   FlaskConical, Plus, Play, Trash2, ChevronRight, CheckCircle2,
   XCircle, Clock, BarChart3, GitCompare, Loader2, Upload, Download,
-  FileText, AlertCircle,
+  FileText, AlertCircle, Menu, PanelLeftOpen,
 } from "lucide-react";
-import PageHeader from "@/components/page-header";
 import { useTenant, tenantHeaders } from "@/context/tenant";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { useToast } from "@/components/ui/toast";
 import ConfirmDialog from "@/components/ui/confirm";
 
@@ -83,11 +83,13 @@ function EvalInner() {
   const { tenant } = useTenant();
   const th = tenantHeaders(tenant);
   const { success: toastOk, error: toastErr } = useToast();
+  const { isMobile, isMobileOrTablet } = useBreakpoint();
 
   // Confirm dialog
   const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; action: () => void } | null>(null);
 
   const [tab, setTab] = useState<"datasets" | "runs">("datasets");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [runs, setRuns] = useState<EvalRun[]>([]);
   const [scorers, setScorers] = useState<Scorer[]>([]);
@@ -242,16 +244,51 @@ function EvalInner() {
   };
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
-      <PageHeader
-        title="Evaluation"
-        subtitle="Test datasets, run evaluations, detect regressions"
-        icon={FlaskConical}
-      />
+    <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04]">
+        <button
+          onClick={() => {
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        {isMobileOrTablet && (
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0"
+            aria-label="Toggle sidebar"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </button>
+        )}
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+          <FlaskConical className="h-4 w-4 text-violet-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight">Evaluation</h1>
+          <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Test datasets, run evaluations, detect regressions</p>
+        </div>
+      </div>
 
       <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Left sidebar */}
-        <div className="w-64 shrink-0 border-r border-white/[0.04] flex flex-col">
+        {/* Left sidebar — desktop inline, mobile overlay */}
+        {isMobileOrTablet && sidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 mobile-overlay z-40"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+        <div className={`${
+          isMobileOrTablet
+            ? `fixed left-0 top-0 bottom-0 z-50 w-[280px] bg-surface-1 border-r border-white/[0.06] transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`
+            : "w-64 shrink-0 border-r border-white/[0.04]"
+        } flex flex-col`}>
           {/* Tab selector */}
           <div className="flex items-center gap-0.5 p-2 border-b border-white/[0.04]">
             {(["datasets", "runs"] as const).map(t => (
@@ -283,7 +320,7 @@ function EvalInner() {
                 {datasets.map(ds => (
                   <button
                     key={ds.id}
-                    onClick={() => fetchDatasetDetail(ds.id)}
+                    onClick={() => { fetchDatasetDetail(ds.id); if (isMobileOrTablet) setSidebarOpen(false); }}
                     className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
                       selectedDataset?.id === ds.id ? "bg-violet-500/10 border border-violet-500/20" : "hover:bg-white/[0.02]"
                     }`}
@@ -365,7 +402,7 @@ function EvalInner() {
         </div>
 
         {/* Main content */}
-        <div className="flex-1 min-w-0 overflow-y-auto p-4">
+        <div className="flex-1 min-w-0 overflow-y-auto p-3 sm:p-4">
           <AnimatePresence mode="wait">
             {/* Dataset detail (hidden when viewing a run) */}
             {selectedDataset && !runDetail && (

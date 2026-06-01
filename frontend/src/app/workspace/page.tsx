@@ -25,9 +25,9 @@ import {
   Plus,
   HardDrive,
   AlertCircle,
+  Menu,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
-import PageHeader from "@/components/page-header";
 import EmptyState from "@/components/empty-state";
 import { renderMarkdown } from "@/components/markdown";
 
@@ -360,13 +360,21 @@ export default function WorkspacePage() {
 
   const restoreCheckpoint = async (id: string) => {
     try {
-      await fetch(`${BASE}/workspace/checkpoints/${id}/restore`, {
+      const res = await fetch(`${BASE}/workspace/checkpoints/${id}/restore`, {
         method: "POST",
         headers,
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({} as any));
+      // Return to root: the current folder may have been emptied/removed by the
+      // restore, and restored files often live in subfolders.
+      setSelectedFile(null);
+      setCurrentPath("");
       loadFiles();
       loadStats();
-      showToast("Checkpoint restored");
+      loadCheckpoints();
+      const n = typeof data.files === "number" ? data.files : null;
+      showToast(n !== null ? `Checkpoint restored · ${n} file${n === 1 ? "" : "s"}` : "Checkpoint restored");
     } catch (_e) {
       showToast("Failed to restore checkpoint", "error");
     }
@@ -394,7 +402,7 @@ export default function WorkspacePage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full relative" onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
+    <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] relative overflow-hidden" onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
       {/* Toast */}
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl border text-xs font-medium animate-slide-in shadow-xl  ${
@@ -410,9 +418,24 @@ export default function WorkspacePage() {
       )}
 
       {/* Header bar */}
-      <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-white/[0.04]">
-        <FolderOpen className="h-4 w-4 text-violet-400 shrink-0" />
-        <h1 className="text-sm font-semibold text-slate-200">Workspace</h1>
+      <div className="shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 border-b border-white/[0.04]">
+        <button
+          onClick={() => {
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+          <FolderOpen className="h-4 w-4 text-violet-400" />
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight">Workspace</h1>
+          <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Files, checkpoints & artifacts</p>
+        </div>
 
         {/* Stats pills */}
         {stats && (
@@ -437,11 +460,11 @@ export default function WorkspacePage() {
         <div className="flex-1" />
 
         {/* Actions */}
-        <button onClick={() => setShowNewFolder(!showNewFolder)} className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] rounded-lg transition-all">
-          <FolderPlus className="h-3 w-3" /> New Folder
+        <button onClick={() => setShowNewFolder(!showNewFolder)} className="flex items-center gap-1 px-2 py-1.5 text-[10px] sm:text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] rounded-lg transition-all touch-target">
+          <FolderPlus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">New Folder</span>
         </button>
-        <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] rounded-lg transition-all">
-          <Upload className="h-3 w-3" /> Upload
+        <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 px-2 py-1.5 text-[10px] sm:text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] rounded-lg transition-all touch-target">
+          <Upload className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Upload</span>
         </button>
         <button onClick={() => { loadFiles(); loadStats(); loadCheckpoints(); }} className="p-1.5 text-slate-600 hover:text-slate-300 transition-colors">
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -527,8 +550,8 @@ export default function WorkspacePage() {
 
       {/* File browser + Preview — full height */}
       <div className="flex flex-1 min-h-0">
-        {/* File list */}
-        <div className={`border-r border-white/[0.04] overflow-y-auto transition-all ${selectedFile ? "w-1/2" : "flex-1"}`}>
+        {/* File list — on mobile it gives way fully to the preview when a file is open */}
+        <div className={`border-r border-white/[0.04] overflow-y-auto transition-all ${selectedFile ? "hidden md:block md:w-1/2" : "flex-1"}`}>
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-6 w-6 text-violet-400 animate-spin" />
@@ -728,9 +751,9 @@ export default function WorkspacePage() {
           )}
         </div>
 
-        {/* File preview panel */}
+        {/* File preview panel — full width on mobile, half on desktop */}
         {selectedFile && (
-          <div className="w-1/2 flex flex-col min-h-0 overflow-hidden animate-slide-in-right">
+          <div className="w-full md:w-1/2 flex flex-col min-h-0 overflow-hidden animate-slide-in-right">
             {/* Preview header */}
             <div className="flex items-center justify-between border-b border-[#2a2a3a] px-4 py-3">
               <div className="flex items-center gap-2.5 min-w-0">

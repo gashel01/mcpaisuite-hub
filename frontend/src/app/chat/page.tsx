@@ -2,8 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
-  Cpu, Globe, GlobeLock, Trash2, FileDown, Terminal, ShieldAlert,
-  FileText, Loader2, ArrowDown, Bot, PanelLeft, Search, X,
+  Cpu, Trash2, FileDown, ShieldAlert,
+  FileText, Loader2, ArrowDown, Bot, PanelLeft, Search, X, Menu,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
 import { BASE_URL } from "@/types";
@@ -465,7 +465,7 @@ export default function ChatPage() {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] md:h-[calc(100vh)] -m-4 -mb-4 md:-m-6 md:-mb-6">
+    <div className="obs-page flex -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)]">
       {/* History sidebar */}
       <ChatHistory
         conversations={conversations} convId={convId}
@@ -488,39 +488,38 @@ export default function ChatPage() {
         )}
 
         {/* Header */}
-        <div className="flex flex-wrap items-center gap-2 md:gap-3 px-4 py-2.5 shrink-0 border-b border-white/[0.04] bg-white/[0.01]">
-          <div className="flex items-center gap-2.5 flex-1 min-w-0">
-            {!showHistory && (
-              <button onClick={() => setShowHistory(true)} className="text-slate-600 hover:text-violet-400 p-1 transition-colors hidden md:block" data-tooltip="Show history">
-                <PanelLeft className="h-4 w-4" />
-              </button>
-            )}
-            <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/20 to-violet-800/10 border border-violet-500/15 flex items-center justify-center shrink-0">
-              <Cpu className="h-4 w-4 text-violet-400" />
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold text-slate-100 leading-tight">Kernel Chat</h1>
-              <p className="text-[10px] text-slate-600 hidden sm:block">Full orchestrator &middot; 80+ tools</p>
-            </div>
+        <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04]">
+          {/* Nav menu (mobile) */}
+          <button
+            onClick={() => {
+              const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+              if (btn) btn.click();
+            }}
+            className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+            aria-label="Navigation"
+          >
+            <Menu className="h-4 w-4" />
+          </button>
+          {!showHistory && (
+            <button onClick={() => setShowHistory(true)} className="text-slate-600 hover:text-violet-400 p-1.5 transition-colors hidden md:block" data-tooltip="Show history">
+              <PanelLeft className="h-4 w-4" />
+            </button>
+          )}
+          <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+            <Cpu className="h-4 w-4 text-violet-400" />
           </div>
-          <div className="flex items-center gap-1">
-            <a href="/security" data-tooltip={networkEnabled ? "Web enabled" : "Web disabled"} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${networkEnabled ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40" : "bg-white/[0.03] text-slate-500 border border-white/[0.06] hover:text-slate-300"}`}>
-              {networkEnabled ? <Globe className="h-3.5 w-3.5" /> : <GlobeLock className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">{networkEnabled ? "Web" : "Offline"}</span>
-            </a>
-            <a href="/security" data-tooltip="Host access" className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${hostPending.length > 0 ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse" : "bg-white/[0.03] text-slate-500 border border-white/[0.06] hover:text-slate-300"}`}>
-              <Terminal className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Host</span>
-              {hostPending.length > 0 && <span className="bg-amber-500 text-black text-[10px] font-bold rounded-full h-4 min-w-[16px] flex items-center justify-center">{hostPending.length}</span>}
-            </a>
-            <div className="w-px h-4 bg-white/[0.06] mx-0.5" />
-            <button onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) setSearchQuery(""); }} className={`p-1.5 transition-colors ${searchOpen ? "text-violet-400" : "text-slate-600 hover:text-violet-400"}`} data-tooltip="Search">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-sm font-semibold text-slate-100 leading-tight">Kernel Chat</h1>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Full orchestrator &middot; 80+ tools</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) setSearchQuery(""); }} className={`p-1.5 rounded-lg transition-colors touch-target ${searchOpen ? "text-violet-400" : "text-slate-600 hover:text-violet-400"}`} data-tooltip="Search">
               <Search className="h-3.5 w-3.5" />
             </button>
-            <button onClick={exportPDF} disabled={messages.length === 0} className="text-slate-600 hover:text-violet-400 disabled:opacity-20 disabled:cursor-not-allowed p-1.5 transition-colors" data-tooltip="Export">
+            <button onClick={exportPDF} disabled={messages.length === 0} className="text-slate-600 hover:text-violet-400 disabled:opacity-20 disabled:cursor-not-allowed p-1.5 rounded-lg transition-colors touch-target hidden sm:block" data-tooltip="Export">
               <FileDown className="h-3.5 w-3.5" />
             </button>
-            <button onClick={clearChat} className="text-slate-600 hover:text-red-400 p-1.5 transition-colors" data-tooltip="Clear chat">
+            <button onClick={clearChat} className="text-slate-600 hover:text-red-400 p-1.5 rounded-lg transition-colors touch-target" data-tooltip="Clear chat">
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>

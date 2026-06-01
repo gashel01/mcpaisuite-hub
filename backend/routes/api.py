@@ -1165,8 +1165,8 @@ async def list_checkpoints(x_tenant_id: str = Header(default="")):
 @router.post("/workspace/checkpoints/{checkpoint_id}/restore")
 async def restore_checkpoint(checkpoint_id: str, x_tenant_id: str = Header(default="")):
     ws, n = _get_ws(x_tenant_id)
-    entry = await ws.restore_checkpoint(checkpoint_id, namespace=n)
-    return {"restored": checkpoint_id, "path": entry.path}
+    cp = await ws.restore_checkpoint(checkpoint_id, namespace=n)
+    return {"restored": checkpoint_id, "label": cp.label, "files": len(cp.file_contents)}
 
 
 @router.get("/workspace/tenants")

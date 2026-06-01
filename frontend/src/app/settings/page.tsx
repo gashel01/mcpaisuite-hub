@@ -5,10 +5,11 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   Settings, Save, Loader2, Cpu, Brain, HardDrive, Shield, Database, Clock, Search,
   Check, ChevronRight, ChevronDown, Plug, CircleCheck, CircleX, Server, Wifi, WifiOff, Wrench, RefreshCw,
-  Sparkles, Undo2, AlertTriangle, Zap, Cloud, Monitor, X, ArrowRight, ArrowLeft, Rocket, Radio, Link2, Link2Off,
+  Sparkles, Undo2, AlertTriangle, Zap, Cloud, Monitor, X, ArrowRight, ArrowLeft, Rocket, Radio, Link2, Link2Off, Menu,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import PageHeader from "@/components/page-header";
+// PageHeader replaced by inline header for better mobile layout
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -545,9 +546,11 @@ function StickySaveBar({ dirtyCount, dirtyTabs, saving, onSave, onDiscard }: {
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const { isMobile, isMobileOrTablet } = useBreakpoint();
   const [cfg, setCfg] = useState<FullConfig>(DEFAULTS);
   const [savedCfg, setSavedCfg] = useState<FullConfig>(DEFAULTS);
   const [tab, setTab] = useState<TabId>("llm");
+  const [navOpen, setNavOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ service: string; ok: boolean; detail: string } | null>(null);
@@ -771,24 +774,92 @@ export default function SettingsPage() {
     setShowWizard(false);
   };
 
+  const currentTabObj = TABS.find(t => t.id === tab);
+
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] overflow-hidden">
+    <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden">
       {/* Setup Wizard */}
       {showWizard && <SetupWizard onComplete={handleWizardComplete} onSkip={() => setShowWizard(false)} />}
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 shrink-0">
-        <PageHeader icon={Settings} title="Settings" subtitle="Configure LLM, engine, storage & servers" />
+      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04]">
+        {/* Nav menu (mobile) */}
+        <button
+          onClick={() => {
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+          <Settings className="h-4 w-4 text-violet-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight truncate">Settings</h1>
+          <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Configure LLM, engine, storage & servers</p>
+        </div>
         <PresetSelector onApply={applyPreset} />
       </div>
 
       {/* Health Overview */}
-      <div className="px-4 shrink-0">
-        <HealthBar health={health} onServiceClick={switchTab} />
+      <div className="px-3 sm:px-4 shrink-0">
+        <HealthBar health={health} onServiceClick={(t) => { switchTab(t); setNavOpen(false); }} />
       </div>
 
-      <div className="flex-1 min-h-0 px-4 pb-2 flex gap-3">
-        {/* Tab navigation — persistent left sidebar */}
+      {/* Mobile tab selector */}
+      {isMobileOrTablet && (
+        <div className="px-3 pb-1.5 shrink-0 flex items-center gap-2">
+          <button
+            onClick={() => setNavOpen(!navOpen)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] text-xs font-medium text-slate-300 hover:bg-white/[0.05] transition-all touch-target flex-1"
+          >
+            {currentTabObj && <currentTabObj.icon className={`h-3.5 w-3.5 ${currentTabObj.color}`} />}
+            <span>{currentTabObj?.label || "Select"}</span>
+            <ChevronDown className={`h-3 w-3 ml-auto text-slate-500 transition-transform ${navOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+      )}
+
+      {/* Mobile nav dropdown */}
+      <AnimatePresence>
+        {isMobileOrTablet && navOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="px-3 pb-2 shrink-0 overflow-hidden"
+          >
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 p-1.5 rounded-xl border border-white/[0.06] bg-white/[0.015]">
+              {TABS.map((t) => {
+                const Icon = t.icon;
+                const active = tab === t.id;
+                const isDirty = dirtyTabs.includes(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => { switchTab(t.id); setNavOpen(false); }}
+                    className={`relative flex items-center gap-2 px-2.5 py-2.5 rounded-lg text-[11px] font-medium transition-colors touch-target ${
+                      active ? "bg-violet-500/10 text-violet-300 border border-violet-500/20" : "text-slate-500 hover:text-slate-300 hover:bg-white/[0.03] border border-transparent"
+                    }`}
+                  >
+                    <Icon className={`h-3.5 w-3.5 ${active ? t.color : ""}`} />
+                    <span className="truncate">{t.label}</span>
+                    {isDirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 min-h-0 px-3 sm:px-4 pb-2 flex gap-3">
+        {/* Tab navigation — persistent left sidebar (desktop only) */}
+        {!isMobileOrTablet && (
         <nav className="w-48 shrink-0 rounded-xl border border-white/[0.06] bg-white/[0.015] flex flex-col p-1.5 overflow-y-auto">
           {TABS.map((t, i) => {
             const Icon = t.icon;
@@ -825,6 +896,7 @@ export default function SettingsPage() {
             );
           })}
         </nav>
+        )}
 
         {/* Tab content */}
         <div className="flex-1 min-w-0 min-h-0 rounded-xl border border-white/[0.06] bg-white/[0.01] overflow-y-auto">

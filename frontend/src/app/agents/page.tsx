@@ -8,10 +8,9 @@ import {
   Settings, ChevronRight, Save, Download, Globe,
   X, Clock, AlertCircle, MessageSquare, Sparkles,
   PanelLeftOpen, PanelLeftClose, ArrowLeftRight, ArrowRight,
-  History, Calendar, Copy, Trash, FolderOpen as FolderIcon,
+  History, Calendar, Copy, Trash, FolderOpen as FolderIcon, Menu,
 } from "lucide-react";
 import Link from "next/link";
-import PageHeader from "@/components/page-header";
 import CopyButton from "@/components/copy-button";
 import { renderMarkdown } from "@/components/markdown";
 import { useTenant, tenantHeaders } from "@/context/tenant";
@@ -26,6 +25,7 @@ import CompareView, { CompareTray, type CompareItem } from "./compare-view";
 import OutputPanel from "./output-panel";
 import { useWorkflowStore } from "@/stores/workflow-store";
 import LibraryPanel from "./library-panel";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 
 
 
@@ -122,6 +122,10 @@ function AgentsPageInner() {
   const [evalCases, setEvalCases] = useState<{input: string; expected: string; result?: string; passed?: boolean}[]>([]);
   const [evalRunning, setEvalRunning] = useState(false);
   const [savedTemplates, setSavedTemplates] = useState<{id: string; name: string; config: AgentSession["config"]; createdAt: number}[]>([]);
+
+  // Responsive
+  const { isMobile } = useBreakpoint();
+  const [mobileTab, setMobileTab] = useState<"build" | "output">("build");
 
   // Workflow library panel
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -342,6 +346,9 @@ function AgentsPageInner() {
 
   const handleRun = useCallback(async () => {
     if (!canRun || !activeId || isRunning) return;
+
+    // On mobile, surface the live output as soon as the run starts
+    if (isMobile) setMobileTab("output");
 
     const sessionId = activeId;
     // Close any stale SSE connection from a previous run
@@ -863,7 +870,7 @@ function AgentsPageInner() {
       store.setStatus(sessionId, "failed");
       store.setResult(sessionId, String(e), { tokens: 0, cost: 0, turns: 0, duration: Date.now() - startTime });
     }
-  }, [canRun, activeId, isRunning, goal, agents, pattern, teamConstitution, th, store, wfStore]);
+  }, [canRun, activeId, isRunning, goal, agents, pattern, teamConstitution, th, store, wfStore, isMobile]);
 
   const handleStop = useCallback(() => {
     if (!activeId) return;
@@ -991,8 +998,64 @@ function AgentsPageInner() {
 
   // ── Render ────────────────────────────────────────────────────────────
 
+  const libraryPanelEl = (
+    <LibraryPanel
+      open={libraryOpen} setOpen={setLibraryOpen}
+      workflows={wfStore.workflows}
+      schedules={wfStore.schedules}
+      activeWorkflowId={session?.workflowId}
+      activeVersionId={session?.versionId}
+      activeRunId={(session as any)?.runId}
+      canSave={!!session && session.config.agents.length > 0}
+      onSave={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }}
+      onLoadVersion={(wf, ver) => {
+        // Dedup: check if already open
+        const existing = sessions.find(s => s.workflowId === wf.id && s.versionId === ver.id && !s.runId);
+        if (existing) { store.setActive(existing.id); if (isMobile) setLibraryOpen(false); return; }
+        const newSess = store.createSession();
+        store.updateConfig(newSess, ver.config);
+        useAgentSessionStore.setState(s => ({
+          sessions: s.sessions.map(sess => sess.id === newSess ? { ...sess, graph: ver.graph, readOnly: false, workflowId: wf.id, versionId: ver.id, workflowName: wf.name } : sess),
+        }));
+        if (isMobile) setLibraryOpen(false);
+      }}
+      onViewRun={(wf, ver, run) => {
+        // Dedup: check if run already open
+        const existing = sessions.find(s => s.runId === run.id);
+        if (existing) { store.setActive(existing.id); if (isMobile) setLibraryOpen(false); return; }
+        const newSess = store.createSession();
+        store.updateConfig(newSess, ver.config);
+        useAgentSessionStore.setState(s => ({
+          sessions: s.sessions.map(sess => sess.id === newSess ? {
+            ...sess, graph: ver.graph, readOnly: true, status: run.status as any,
+            answer: run.answer, metrics: run.metrics, liveEvents: run.liveEvents || [],
+            feedback: run.feedback, workflowId: wf.id, versionId: ver.id, runId: run.id, workflowName: wf.name,
+            completedAgents: ver.config.agents.map((_: any, i: number) => i),
+          } : sess),
+        }));
+        if (isMobile) { setLibraryOpen(false); setMobileTab("output"); }
+      }}
+      onForkVersion={(wf, ver) => {
+        // Fork always creates a new session (intentional — new editable copy)
+        const newSess = store.createSession();
+        store.updateConfig(newSess, ver.config);
+        useAgentSessionStore.setState(s => ({
+          sessions: s.sessions.map(sess => sess.id === newSess ? { ...sess, graph: ver.graph ? JSON.parse(JSON.stringify(ver.graph)) : null, readOnly: false, workflowId: wf.id, versionId: ver.id, workflowName: wf.name } : sess),
+        }));
+        if (isMobile) setLibraryOpen(false);
+      }}
+      onDeleteWorkflow={(id) => wfStore.deleteWorkflow(id, th)}
+      onDeleteSchedule={(id) => {
+        fetch(`${BASE_URL}/agents/taskforce/schedules/${id}`, { method: "DELETE", headers: th }).catch(() => {});
+        wfStore.loadSchedules(th);
+      }}
+      compareItems={compareItems}
+      onAddToCompare={(item) => setCompareItems(prev => prev.some(i => i.id === item.id) ? prev : [...prev, item])}
+    />
+  );
+
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
+    <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden">
 
       {/* Save dialog (modal overlay) */}
       {showSaveDialog && (
@@ -1015,57 +1078,55 @@ function AgentsPageInner() {
         </>
       )}
 
-      <div className="flex gap-3 flex-1 min-h-0 mt-2">
-      <LibraryPanel
-        open={libraryOpen} setOpen={setLibraryOpen}
-        workflows={wfStore.workflows}
-        schedules={wfStore.schedules}
-        activeWorkflowId={session?.workflowId}
-        activeVersionId={session?.versionId}
-        activeRunId={(session as any)?.runId}
-        canSave={!!session && session.config.agents.length > 0}
-        onSave={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }}
-        onLoadVersion={(wf, ver) => {
-          // Dedup: check if already open
-          const existing = sessions.find(s => s.workflowId === wf.id && s.versionId === ver.id && !s.runId);
-          if (existing) { store.setActive(existing.id); return; }
-          const newSess = store.createSession();
-          store.updateConfig(newSess, ver.config);
-          useAgentSessionStore.setState(s => ({
-            sessions: s.sessions.map(sess => sess.id === newSess ? { ...sess, graph: ver.graph, readOnly: false, workflowId: wf.id, versionId: ver.id, workflowName: wf.name } : sess),
-          }));
-        }}
-        onViewRun={(wf, ver, run) => {
-          // Dedup: check if run already open
-          const existing = sessions.find(s => s.runId === run.id);
-          if (existing) { store.setActive(existing.id); return; }
-          const newSess = store.createSession();
-          store.updateConfig(newSess, ver.config);
-          useAgentSessionStore.setState(s => ({
-            sessions: s.sessions.map(sess => sess.id === newSess ? {
-              ...sess, graph: ver.graph, readOnly: true, status: run.status as any,
-              answer: run.answer, metrics: run.metrics, liveEvents: run.liveEvents || [],
-              feedback: run.feedback, workflowId: wf.id, versionId: ver.id, runId: run.id, workflowName: wf.name,
-              completedAgents: ver.config.agents.map((_: any, i: number) => i),
-            } : sess),
-          }));
-        }}
-        onForkVersion={(wf, ver) => {
-          // Fork always creates a new session (intentional — new editable copy)
-          const newSess = store.createSession();
-          store.updateConfig(newSess, ver.config);
-          useAgentSessionStore.setState(s => ({
-            sessions: s.sessions.map(sess => sess.id === newSess ? { ...sess, graph: ver.graph ? JSON.parse(JSON.stringify(ver.graph)) : null, readOnly: false, workflowId: wf.id, versionId: ver.id, workflowName: wf.name } : sess),
-          }));
-        }}
-        onDeleteWorkflow={(id) => wfStore.deleteWorkflow(id, th)}
-        onDeleteSchedule={(id) => {
-          fetch(`${BASE_URL}/agents/taskforce/schedules/${id}`, { method: "DELETE", headers: th }).catch(() => {});
-          wfStore.loadSchedules(th);
-        }}
-        compareItems={compareItems}
-        onAddToCompare={(item) => setCompareItems(prev => prev.some(i => i.id === item.id) ? prev : [...prev, item])}
-      />
+      {/* Header */}
+      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04]">
+        <button
+          onClick={() => {
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => setLibraryOpen(true)}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Library"
+        >
+          <FolderIcon className="h-4 w-4" />
+        </button>
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+          <Bot className="h-4 w-4 text-violet-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight">Agents</h1>
+          <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Multi-agent orchestration & workflows</p>
+        </div>
+        <button
+          onClick={() => store.createSession()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/20 transition-all touch-target shrink-0"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">New Session</span>
+        </button>
+      </div>
+
+      <div className="flex gap-2 sm:gap-3 flex-1 min-h-0 px-2 sm:px-3 py-2 sm:py-3">
+
+      {/* Library — inline on desktop */}
+      {!isMobile && libraryPanelEl}
+
+      {/* Library — slide-in drawer on mobile */}
+      {isMobile && libraryOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden" onClick={() => setLibraryOpen(false)} />
+          <div className="fixed top-0 left-0 bottom-0 z-50 w-[272px] max-w-[85vw] p-2 flex md:hidden animate-slide-in bg-[#0c0c14] border-r border-white/[0.08] shadow-2xl shadow-black/50">
+            {libraryPanelEl}
+          </div>
+        </>
+      )}
 
       {/* ── Main Content ──────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 flex flex-col min-h-0 gap-2">
@@ -1135,10 +1196,29 @@ function AgentsPageInner() {
 
       {/* ── Main Layout ───────────────────────────────────────────────── */}
       {(!compareMode || compareItems.length < 2) && session && (
-        <div className="flex gap-3 flex-1 min-h-0 animate-fade-in">
+        <div className="flex flex-col md:flex-row gap-2 md:gap-3 flex-1 min-h-0 animate-fade-in">
+
+          {/* Mobile Build / Output switcher */}
+          {isMobile && (
+            <div className="flex items-center gap-1 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.06] shrink-0">
+              <button
+                onClick={() => setMobileTab("build")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[11px] font-medium transition-all touch-target ${mobileTab === "build" ? "bg-violet-500/15 text-violet-300" : "text-slate-500"}`}
+              >
+                <Settings className="h-3.5 w-3.5" /> Build
+              </button>
+              <button
+                onClick={() => setMobileTab("output")}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[11px] font-medium transition-all touch-target ${mobileTab === "output" ? "bg-violet-500/15 text-violet-300" : "text-slate-500"}`}
+              >
+                <Activity className="h-3.5 w-3.5" /> Output
+                {session.liveEvents.length > 0 && <span className="text-[8px] px-1 rounded bg-violet-500/20 text-violet-300">{session.liveEvents.length}</span>}
+              </button>
+            </div>
+          )}
 
           {/* ── Left: Config Panel ─────────────────────────────────────── */}
-          <div className="transition-all duration-300 ease-in-out flex flex-col min-h-0 gap-2 flex-1" style={{ minWidth: 0 }}>
+          <div className={`transition-all duration-300 ease-in-out flex-col min-h-0 gap-2 flex-1 ${isMobile && mobileTab !== "build" ? "hidden" : "flex"}`} style={{ minWidth: 0 }}>
 
             {/* Goal + Templates (disabled during run or read-only) */}
             <div className={isRunning || isReadOnly ? "opacity-60 pointer-events-none select-none" : ""}>
@@ -1341,13 +1421,15 @@ function AgentsPageInner() {
           </div>
 
           {/* ── Right: Output Panel ──────────────────────────────────────── */}
-          <OutputPanel
-            session={session} agents={agents} isRunning={isRunning} isDone={isDone}
-            isConfiguring={isConfiguring} isWaiting={isWaiting} open={rightPanelOpen}
-            setOpen={setRightPanelOpen} tenant={tenant} th={th} store={store}
-            showEval={showEval} setShowEval={setShowEval}
-            HumanGateActionsComponent={HumanGateActions}
-          />
+          {(!isMobile || mobileTab === "output") && (
+            <OutputPanel
+              session={session} agents={agents} isRunning={isRunning} isDone={isDone}
+              isConfiguring={isConfiguring} isWaiting={isWaiting} open={isMobile ? true : rightPanelOpen}
+              setOpen={setRightPanelOpen} tenant={tenant} th={th} store={store}
+              showEval={showEval} setShowEval={setShowEval}
+              HumanGateActionsComponent={HumanGateActions} mobile={isMobile}
+            />
+          )}
         </div>
       )}
 

@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import {
   Upload, Brain, Network, Sparkles, Loader2, MessageSquare,
-  PanelRightOpen, PanelRightClose, Activity, FileText, Lightbulb,
+  PanelRightClose, Activity, FileText, Lightbulb, Menu,
 } from "lucide-react";
 import Link from "next/link";
 import { useTenant, tenantHeaders } from "@/context/tenant";
@@ -82,6 +82,16 @@ export default function KnowledgePage() {
     setShowSearchResults(true);
     searchHook.search(query, searchScope);
   }, [query, searchScope, searchHook]);
+
+  // Selecting a scope (All/Facts/Docs) also filters the visible graph so the
+  // choice has an immediate effect even without running a search.
+  const applyScope = useCallback((s: SearchMode) => {
+    setSearchScope(s);
+    if (s === "all") { setShowEntities(true); setShowFacts(true); setShowDocs(true); }
+    else if (s === "facts") { setShowEntities(true); setShowFacts(true); setShowDocs(false); }
+    else if (s === "documents") { setShowEntities(false); setShowFacts(false); setShowDocs(true); }
+    // self_rag / react are search strategies — they don't change graph layers
+  }, []);
 
   // ── Drag & drop ───────────────────────────────────────────────────────
 
@@ -354,8 +364,8 @@ export default function KnowledgePage() {
 
   return (
     <div
-      className="flex flex-col relative -m-4 md:-m-5"
-      style={{ height: "calc(100vh - 1rem)" }}
+      className="obs-page flex flex-col relative -mx-4 -mb-4 -mt-16 md:-m-5"
+      style={{ height: "calc(100vh)" }}
       onDragOver={e => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={handleDrop}
@@ -375,6 +385,31 @@ export default function KnowledgePage() {
         </div>
       )}
 
+      {/* ── Header ────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04] bg-[#040410]">
+        <button
+          onClick={() => {
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+          <Brain className="h-4 w-4 text-violet-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight">Knowledge</h1>
+          <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Knowledge graph, facts & documents</p>
+        </div>
+        <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/20 transition-all touch-target shrink-0">
+          <Upload className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Upload</span>
+        </button>
+      </div>
+
       {/* ── Main layout ──────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 flex">
 
@@ -389,7 +424,7 @@ export default function KnowledgePage() {
           {/* HUD: Top left */}
           <TopLeftHUD
             query={query} setQuery={setQuery}
-            searchScope={searchScope} setSearchScope={setSearchScope}
+            searchScope={searchScope} setSearchScope={applyScope}
             searching={searchHook.searching} onSearch={handleSearch}
             totalFacts={totalFacts} totalSources={totalSources} totalNodes={totalNodes}
             showEntities={showEntities} showFacts={showFacts} showDocs={showDocs}
@@ -398,6 +433,14 @@ export default function KnowledgePage() {
             onToggleDocs={() => setShowDocs(v => !v)}
             stats={data.memoryStats} entityCount={data.entityNodes.length} insights={insights}
             activeUploads={activeUploads}
+            graphControls={{
+              graphMode, setGraphMode,
+              graphExtracting: data.graphExtracting, extractProgress: data.extractProgress,
+              graphStatus: data.graphStatus,
+              onExtractGraph: () => data.extractGraph(false),
+              onUploadClick: () => fileRef.current?.click(), onRefresh: data.loadAll,
+              sideOpen, onOpenSide: () => setSideOpen(true),
+            }}
           />
 
           {/* HUD: Top right */}
@@ -408,7 +451,7 @@ export default function KnowledgePage() {
             graphStatus={data.graphStatus}
             onExtractGraph={() => data.extractGraph(false)}
             onUploadClick={() => fileRef.current?.click()} onRefresh={data.loadAll}
-            sideOpen={sideOpen}
+            sideOpen={sideOpen} onOpenSide={() => setSideOpen(true)}
           />
 
           {/* Focus indicator */}
@@ -645,12 +688,7 @@ export default function KnowledgePage() {
             </div>
           )}
 
-          {/* Sidebar toggle (when closed) */}
-          {!sideOpen && (
-            <button onClick={() => setSideOpen(true)} className="absolute top-3 right-3 z-20 p-2 bg-black/50  border border-white/[0.08] rounded-xl text-slate-500 hover:text-slate-300 transition-all">
-              <PanelRightOpen className="h-4 w-4" />
-            </button>
-          )}
+          {/* Sidebar open toggle lives inside TopRightHUD (avoids overlap) */}
         </div>
 
         {/* ── Right sidebar ─────────────────────────────────────────── */}

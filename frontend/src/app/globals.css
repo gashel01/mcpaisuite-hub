@@ -204,6 +204,83 @@ main {
   border-color: rgba(139, 92, 246, 0.2);
 }
 
+/* ── Glass panel ─────────────────────────────────────────────────── */
+.glass-panel {
+  background: linear-gradient(135deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.01) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.glass-panel-strong {
+  background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.015) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+/* ── Observability pro cards ──────────────────────────────────────── */
+.obs-card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0.008) 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.obs-card:hover {
+  border-color: rgba(139, 92, 246, 0.18);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.2), 0 0 0 1px rgba(139,92,246,0.06);
+  transform: translateY(-1px);
+}
+
+/* ── Mobile overlay backdrop ──────────────────────────────────────── */
+.mobile-overlay {
+  background: rgba(5, 5, 12, 0.7);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* ── Pro header gradient ──────────────────────────────────────────── */
+.obs-header {
+  background: linear-gradient(180deg, rgba(12,12,20,0.95) 0%, rgba(10,10,16,0.8) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+/* ── Subtle noise texture (pro depth feel) ────────────────────────── */
+.noise-texture::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Status dot pulse ─────────────────────────────────────────────── */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
+  50% { opacity: 0.7; box-shadow: 0 0 0 4px transparent; }
+}
+.status-dot-live {
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+/* ── Mobile bottom sheet ──────────────────────────────────────────── */
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.animate-sheet-up { animation: sheet-up 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* ── Touch-friendly interactive ───────────────────────────────────── */
+@media (pointer: coarse) {
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
 /* Tooltip base */
 [data-tooltip] {
   position: relative;
@@ -267,6 +344,11 @@ main {
   textarea:focus-visible {
     @apply outline-none ring-2 ring-violet-500/40 ring-offset-1 ring-offset-[#0a0a10];
   }
+}
+
+/* ── Hide layout hamburger when observability page owns the top bar ── */
+:root:has(.obs-page) > body button[aria-label="Open menu"].fixed {
+  display: none !important;
 }
 
 /* ── LLM Thinking blocks ───────────────────────────────────────────── */

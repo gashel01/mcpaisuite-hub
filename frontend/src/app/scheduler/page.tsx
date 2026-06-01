@@ -3,8 +3,7 @@ import { getApiUrl } from "@/lib/api-url";
 
 import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence } from "framer-motion";
-import { Clock, RefreshCw } from "lucide-react";
-import PageHeader from "@/components/page-header";
+import { Clock, RefreshCw, Menu } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import type { ScheduledJob, SchedulerStats } from "@/types/scheduler";
 
@@ -129,24 +128,37 @@ export default function SchedulerPage() {
   /* ── Render ──────────────────────────────────────────────────── */
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] overflow-hidden">
-      <div className="px-4 pt-2 shrink-0">
-        <PageHeader
-          icon={Clock}
-          title="Schedules"
-          subtitle="Monitor and manage your scheduled agent tasks"
-          actions={[
-            {
-              label: "Refresh",
-              icon: RefreshCw,
-              onClick: fetchData,
-              loading: loading,
-            },
-          ]}
-        />
+    <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04]">
+        <button
+          onClick={() => {
+            const btn = document.querySelector<HTMLButtonElement>('button[aria-label="Open menu"]');
+            if (btn) btn.click();
+          }}
+          className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-white/[0.04] transition-all touch-target shrink-0 md:hidden"
+          aria-label="Navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+        <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-violet-600/15 to-violet-800/8 border border-violet-500/15 flex items-center justify-center shrink-0">
+          <Clock className="h-4 w-4 text-violet-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-sm font-semibold text-slate-100 leading-tight">Scheduled Tasks</h1>
+          <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Monitor and manage your scheduled agent tasks</p>
+        </div>
+        <button
+          onClick={fetchData}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-slate-200 border border-white/[0.06] transition-all touch-target shrink-0 disabled:opacity-40"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-4 pt-3 sm:pt-4 pb-3 sm:pb-4 space-y-3 sm:space-y-4">
         <SchedulerHero
           stats={stats}
           loading={loading}
