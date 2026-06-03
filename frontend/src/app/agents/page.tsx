@@ -1420,7 +1420,7 @@ function AgentsPageInner() {
             </div>{/* end disabled-during-run wrapper */}
 
             <div className="flex-1 min-h-0">
-            <FlowEditor key={activeId} agents={agents} pattern={pattern} triggerType={triggerType} workspaceEnabled={workspaceEnabled} workspaceName={session?.config.workspaceName} workspaceMode={session?.config.workspaceMode} humanGates={humanGates} errorNodeIds={errorNodeIds} errorReasons={errorReasons} validationWarnings={[...agentsWithoutRole.length > 0 ? [`${agentsWithoutRole.length} agent${agentsWithoutRole.length > 1 ? "s" : ""} missing a role`] : [], ...flowWarnings]} activeAgentIndex={session?.activeAgentIndex ?? -1} activeAgentIndices={session?.activeAgentIndices ?? []} completedAgents={session?.completedAgents ?? []} isRunning={isRunning} locked={isRunning || isDone || isReadOnly} waitingNodeId={waitingNodeId} deniedNodeIds={deniedNodeIds} approvedNodeIds={approvedNodeIds} revisionNodeIds={revisionNodeIds} agentOutputs={(() => {
+            <FlowEditor key={activeId} agents={agents} pattern={pattern} triggerType={triggerType} triggerConfig={{ cronExpression: session?.config.cronExpression, intervalSeconds: session?.config.intervalSeconds, scheduleDate: session?.config.scheduleDate, scheduleTime: session?.config.scheduleTime, webhookPath: session?.config.webhookPath, watchCommand: session?.config.watchCommand, watchCondition: session?.config.watchCondition }} workspaceEnabled={workspaceEnabled} workspaceName={session?.config.workspaceName} workspaceMode={session?.config.workspaceMode} humanGates={humanGates} errorNodeIds={errorNodeIds} errorReasons={errorReasons} validationWarnings={[...agentsWithoutRole.length > 0 ? [`${agentsWithoutRole.length} agent${agentsWithoutRole.length > 1 ? "s" : ""} missing a role`] : [], ...flowWarnings]} activeAgentIndex={session?.activeAgentIndex ?? -1} activeAgentIndices={session?.activeAgentIndices ?? []} completedAgents={session?.completedAgents ?? []} isRunning={isRunning} locked={isRunning || isDone || isReadOnly} waitingNodeId={waitingNodeId} deniedNodeIds={deniedNodeIds} approvedNodeIds={approvedNodeIds} revisionNodeIds={revisionNodeIds} agentOutputs={(() => {
               const outputs: Record<number, string> = {};
               (session?.liveEvents || []).forEach(e => {
                 if (e.type === "message" && e.content) outputs[e.agentIndex] = e.content;
@@ -1444,6 +1444,18 @@ function AgentsPageInner() {
                 };
               });
               setAgents(synced);
+
+              // Sync the trigger node (type + cron/interval/… value) back to the session
+              // config so scheduling/runs actually use what the user set on the canvas.
+              const trig = nodes.find(n => n.type === "trigger");
+              if (trig && activeId) {
+                const td = trig.data as any;
+                const tPatch: any = { triggerType: td.triggerType || "manual" };
+                for (const kk of ["cronExpression", "intervalSeconds", "scheduleDate", "scheduleTime", "webhookPath", "watchCommand", "watchCondition"]) {
+                  if (td[kk] !== undefined && td[kk] !== "") tPatch[kk] = td[kk];
+                }
+                store.updateConfig(activeId, tPatch);
+              }
 
               // Validate connectivity + collect error node IDs with reason
               const triggerNode = nodes.find(n => n.type === "trigger");

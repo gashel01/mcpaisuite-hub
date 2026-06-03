@@ -29,6 +29,7 @@ interface FlowEditorProps {
   agents: TeamAgent[];
   pattern: string;
   triggerType?: string;
+  triggerConfig?: Record<string, any>;
   workspaceEnabled?: boolean;
   workspaceName?: string;
   workspaceMode?: string;
@@ -275,14 +276,14 @@ function gid() { return `n${++_idC}-${Date.now().toString(36).slice(-4)}`; }
 
 function buildInitialFlow(
   agents: TeamAgent[], pattern: string,
-  opts?: { triggerType?: string; workspaceEnabled?: boolean; workspaceName?: string; workspaceMode?: string; humanGates?: number[] }
+  opts?: { triggerType?: string; workspaceEnabled?: boolean; workspaceName?: string; workspaceMode?: string; humanGates?: number[]; triggerConfig?: Record<string, any> }
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const tt = (opts?.triggerType || "manual") as TriggerType;
   const sid = gid(), eid = gid();
 
-  nodes.push({ id: sid, type: "trigger", position: { x: 300, y: 0 }, data: { triggerType: tt, label: tt === "manual" ? "Manual Run" : tt } });
+  nodes.push({ id: sid, type: "trigger", position: { x: 300, y: 0 }, data: { triggerType: tt, label: tt === "manual" ? "Manual Run" : tt, ...(opts?.triggerConfig || {}) } });
 
   const hGates = opts?.humanGates || [];
   const yStep = 120;
@@ -454,7 +455,7 @@ function buildInitialFlow(
 
 // ── Main Component ─────────────────────────────────────────────────────────
 
-export default function FlowEditor({ agents, pattern, triggerType: propTriggerType, workspaceEnabled, workspaceName, workspaceMode, humanGates, errorNodeIds, errorReasons, validationWarnings, graphRef, initialGraph, activeAgentIndex = -1, activeAgentIndices = [], completedAgents = [], isRunning = false, locked = false, waitingNodeId = null, deniedNodeIds = [], approvedNodeIds = [], revisionNodeIds = [], agentOutputs = {}, onPatternChange, onUpdateFlow }: FlowEditorProps) {
+export default function FlowEditor({ agents, pattern, triggerType: propTriggerType, triggerConfig, workspaceEnabled, workspaceName, workspaceMode, humanGates, errorNodeIds, errorReasons, validationWarnings, graphRef, initialGraph, activeAgentIndex = -1, activeAgentIndices = [], completedAgents = [], isRunning = false, locked = false, waitingNodeId = null, deniedNodeIds = [], approvedNodeIds = [], revisionNodeIds = [], agentOutputs = {}, onPatternChange, onUpdateFlow }: FlowEditorProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -512,7 +513,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
         setEdges(initialGraph.edges.map((e: any) => ({ ...e })));
       } else {
         const { nodes: n, edges: e } = buildInitialFlow(agents, pattern, {
-          triggerType: propTriggerType, workspaceEnabled, workspaceName, workspaceMode, humanGates,
+          triggerType: propTriggerType, triggerConfig, workspaceEnabled, workspaceName, workspaceMode, humanGates,
         });
         setNodes(n);
         setEdges(e);
@@ -542,6 +543,51 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
     setNodes(n);
     setEdges(e);
   }, [configKey]); // eslint-disable-line
+
+  // Soft-sync agent node DATA (tools, instructions, maxTurns, type, role) from the agents prop
+  // WITHOUT a structural rebuild — so AI-architect refinements that change tools/instructions
+  // reflect on existing nodes (positions/edges kept). Without this, the debounced sync-back
+  // would overwrite the architect's change with stale node data. The `changed` guard keeps it
+  // from looping (returns the same nodes when nothing differs).
+  const agentDataKey = agents.map(a => `${a.type}|${a.role}|${(a.tools || []).join(",")}|${a.instructions || ""}|${a.max_turns}`).join("§");
+  useEffect(() => {
+    if (isFirstMount.current) return;
+    setNodes(nds => {
+      let ai = 0;
+      let changed = false;
+      const out = nds.map(n => {
+        if (n.type !== "agent") return n;
+        const a = agents[ai++];
+        if (!a) return n;
+        const d = n.data as any;
+        const sameTools = JSON.stringify(d.tools || []) === JSON.stringify(a.tools || []);
+        if (d.agentType === a.type && d.role === a.role && (d.instructions || "") === (a.instructions || "") && d.maxTurns === a.max_turns && sameTools) return n;
+        changed = true;
+        return { ...n, data: { ...d, agentType: a.type, role: a.role, label: d.label || a.name || a.role || a.type, maxTurns: a.max_turns, instructions: a.instructions, tools: a.tools || [] } };
+      });
+      return changed ? out : nds;
+    });
+  }, [agentDataKey]); // eslint-disable-line
+
+  // Soft-sync the trigger node's type + value (cron/interval/…) from props without rebuild,
+  // so AI-architect trigger changes show on the existing node.
+  const triggerKey = `${propTriggerType}|${JSON.stringify(triggerConfig || {})}`;
+  useEffect(() => {
+    if (isFirstMount.current) return;
+    setNodes(nds => {
+      let changed = false;
+      const out = nds.map(n => {
+        if (n.type !== "trigger") return n;
+        const d = n.data as any;
+        const want = { triggerType: propTriggerType || "manual", ...(triggerConfig || {}) };
+        const same = (d.triggerType || "manual") === want.triggerType && Object.keys(triggerConfig || {}).every(k => d[k] === (triggerConfig as any)[k]);
+        if (same) return n;
+        changed = true;
+        return { ...n, data: { ...d, ...want, label: want.triggerType === "manual" ? "Manual Run" : want.triggerType } };
+      });
+      return changed ? out : nds;
+    });
+  }, [triggerKey]); // eslint-disable-line
 
   // Update graph ref immediately (for handleRun to read)
   useEffect(() => {
@@ -983,11 +1029,14 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
             </div>
 
             {/* Trigger */}
-            {selectedNode.type === "trigger" && (
+            {selectedNode.type === "trigger" && (() => {
+              const td = selectedNode.data as TriggerNodeData & Record<string, any>;
+              const tt = td.triggerType || "manual";
+              return (
               <>
                 <div>
                   <label className="text-[9px] text-slate-500 block mb-1">Trigger Type</label>
-                  <select value={(selectedNode.data as TriggerNodeData).triggerType || "manual"} onChange={e => updateNodeData(selectedNode.id, { triggerType: e.target.value, label: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px]">
+                  <select value={tt} onChange={e => updateNodeData(selectedNode.id, { triggerType: e.target.value, label: e.target.value === "manual" ? "Manual Run" : e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px]">
                     <option value="manual">👆 Manual</option>
                     <option value="scheduled">⏰ Scheduled</option>
                     <option value="cron">🔄 Cron</option>
@@ -996,8 +1045,53 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
                     <option value="webhook">🔗 Webhook</option>
                   </select>
                 </div>
+                {tt === "cron" && (
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1">Cron expression</label>
+                    <input value={td.cronExpression || ""} onChange={e => updateNodeData(selectedNode.id, { cronExpression: e.target.value })} placeholder="0 * * * *  (every hour)" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {[["Hourly","0 * * * *"],["Daily 9am","0 9 * * *"],["Every 15m","*/15 * * * *"],["Mon 8am","0 8 * * 1"]].map(([lbl,expr]) => (
+                        <button key={expr} onClick={() => updateNodeData(selectedNode.id, { cronExpression: expr })} className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/8 border border-emerald-500/20 text-emerald-300 hover:bg-emerald-500/15">{lbl}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {tt === "interval" && (
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1">Every (seconds)</label>
+                    <input type="number" min={5} value={td.intervalSeconds || 3600} onChange={e => updateNodeData(selectedNode.id, { intervalSeconds: Number(e.target.value) })} className="w-full !py-1.5 !px-2 !text-[11px]" />
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {[["1m",60],["5m",300],["15m",900],["1h",3600],["1d",86400]].map(([lbl,s]) => (
+                        <button key={s} onClick={() => updateNodeData(selectedNode.id, { intervalSeconds: s })} className="text-[8px] px-1.5 py-0.5 rounded bg-cyan-500/8 border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/15">{lbl}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {tt === "scheduled" && (
+                  <div className="flex gap-1.5">
+                    <div className="flex-1"><label className="text-[9px] text-slate-500 block mb-1">Date</label>
+                      <input type="date" value={td.scheduleDate || ""} onChange={e => updateNodeData(selectedNode.id, { scheduleDate: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px]" /></div>
+                    <div className="flex-1"><label className="text-[9px] text-slate-500 block mb-1">Time</label>
+                      <input type="time" value={td.scheduleTime || ""} onChange={e => updateNodeData(selectedNode.id, { scheduleTime: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px]" /></div>
+                  </div>
+                )}
+                {tt === "webhook" && (
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1">Webhook path</label>
+                    <input value={td.webhookPath || ""} onChange={e => updateNodeData(selectedNode.id, { webhookPath: e.target.value })} placeholder="/hooks/my-trigger" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                  </div>
+                )}
+                {tt === "watch" && (
+                  <>
+                    <div><label className="text-[9px] text-slate-500 block mb-1">Watch command</label>
+                      <input value={td.watchCommand || ""} onChange={e => updateNodeData(selectedNode.id, { watchCommand: e.target.value })} placeholder="curl -s https://… | grep …" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" /></div>
+                    <div><label className="text-[9px] text-slate-500 block mb-1">Re-run when</label>
+                      <input value={td.watchCondition || ""} onChange={e => updateNodeData(selectedNode.id, { watchCondition: e.target.value })} placeholder="output changed / non-empty" className="w-full !py-1.5 !px-2 !text-[11px]" /></div>
+                  </>
+                )}
               </>
-            )}
+              );
+            })()}
 
             {/* Agent */}
             {selectedNode.type === "agent" && (() => {
@@ -1017,7 +1111,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
                   <div>
                     <label className="text-[9px] text-slate-500 block mb-1">Type</label>
                     <select value={d.agentType || "code"} onChange={e => updateNodeData(selectedNode.id, { agentType: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px] capitalize">
-                      {["code","research","file","memory","plan","custom"].map(t => <option key={t} value={t}>{t}</option>)}
+                      {["code","research","file","memory","plan","rag","ltp","custom"].map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
                   <div>
