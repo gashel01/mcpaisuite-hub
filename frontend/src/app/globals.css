@@ -392,3 +392,25 @@ main {
 .react-flow__node.selected > div {
   outline: none !important;
 }
+
+/* Entrance animation when nodes/edges mount (AI builds the graph, pattern changes).
+   Opacity-only so it never fights React Flow's positioning transform or the selected scale. */
+@keyframes rf-node-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.react-flow__node {
+  animation: rf-node-in 0.3s ease;
+}
+.react-flow__edge {
+  animation: rf-node-in 0.45s ease;
+}
+/* A soft scale-pop on the inner card — applied to a child so the wrapper transform is untouched.
+   No fill-mode, so the selected-state scale on the inner div still works after it plays. */
+@keyframes rf-card-pop {
+  from { transform: scale(0.9); }
+  to { transform: scale(1); }
+}
+.react-flow__node > div {
+  animation: rf-card-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}

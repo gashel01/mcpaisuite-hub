@@ -466,6 +466,31 @@ function buildInitialFlow(
     for (let i = 0; i < chain.length - 1; i++) edges.push({ id: gid(), source: chain[i].id, target: chain[i + 1].id, ...es });
   }
 
+  // Human gates: sequential/fallback interleave them via buildChain. Every OTHER pattern
+  // (parallel/supervisor/debate/swarm) wires agents directly, leaving the human node dangling.
+  // Splice each gate's human node into its agent's forward output so it's never an orphan.
+  if (pattern !== "sequential" && hGates.length) {
+    for (const gi of hGates) {
+      const agent = agentNodes[gi];
+      if (!agent) continue;
+      const hIdx = hGates.filter(g => g <= gi).length - 1;
+      const human = humanNodes[hIdx];
+      if (!human) continue;
+      let redirected = false;
+      for (const e of [...edges]) {
+        if (e.source === agent.id && e.target !== human.id && !["feedback", "loop", "evaluate"].includes(String(e.label))) {
+          edges.push(autoEdge(human.id, e.target)); // human → original forward target
+          e.target = human.id;                      // agent → human
+          redirected = true;
+        }
+      }
+      if (!redirected) {
+        edges.push(autoEdge(agent.id, human.id));
+        edges.push(autoEdge(human.id, lastTarget));
+      }
+    }
+  }
+
   return { nodes, edges };
 }
 
