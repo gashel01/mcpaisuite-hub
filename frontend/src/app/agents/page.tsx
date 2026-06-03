@@ -132,6 +132,8 @@ function AgentsPageInner() {
   const [buildChat, setBuildChat] = useState<{ role: "user" | "architect"; text: string }[]>([]);
   const [buildInput, setBuildInput] = useState("");
   const [buildSuggestions, setBuildSuggestions] = useState<string[]>([]);
+  // Reset the architect conversation when switching sessions (it's per-workflow).
+  useEffect(() => { setBuildChat([]); setBuildSuggestions([]); setBuildInput(""); }, [activeId]);
 
   // Workflow library panel
   const [libraryOpen, setLibraryOpen] = useState(false);
