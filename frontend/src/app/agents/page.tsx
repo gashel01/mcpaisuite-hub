@@ -134,6 +134,10 @@ function AgentsPageInner() {
   const [buildSuggestions, setBuildSuggestions] = useState<string[]>([]);
   const [buildMissing, setBuildMissing] = useState<string[]>([]);
   const buildScrollRef = useRef<HTMLDivElement>(null);
+
+  // Run parameters: {placeholders} in the goal/instructions become typed inputs before a run.
+  const [runParamsOpen, setRunParamsOpen] = useState(false);
+  const [runParamValues, setRunParamValues] = useState<Record<string, string>>({});
   // Reset the architect conversation when switching sessions (it's per-workflow).
   useEffect(() => { setBuildChat([]); setBuildSuggestions([]); setBuildMissing([]); setBuildInput(""); }, [activeId]);
   // Auto-scroll the architect thread to the latest as narration streams in.
@@ -449,8 +453,22 @@ function AgentsPageInner() {
 
   // ── Run ────────────────────────────────────────────────────────────────
 
-  const handleRun = useCallback(async () => {
+  const handleRun = useCallback(async (paramsOverride?: Record<string, string>) => {
     if (!canRun || !activeId || isRunning) return;
+
+    // ── Run parameters: if the workflow has {placeholders}, collect them first ──
+    const _nodeInstr = (flowGraphRef.current?.nodes || []).map((n: any) => String((n.data as any)?.instructions || ""));
+    const _vars = Array.from(new Set(
+      [goal, ...agents.map(a => a.instructions || ""), ..._nodeInstr]
+        .flatMap(t => [...String(t).matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map(m => m[1]))
+    ));
+    const _params = paramsOverride || runParamValues;
+    if (_vars.length && _vars.some(v => !(_params[v]?.trim()))) {
+      setRunParamValues(prev => { const next = { ...prev }; _vars.forEach(v => { if (!(v in next)) next[v] = ""; }); return next; });
+      setRunParamsOpen(true);
+      return;
+    }
+    const subst = (t: string) => String(t || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (m, k) => _params[k] ?? m);
 
     // On mobile, surface the live output as soon as the run starts
     if (isMobile) setMobileTab("output");
@@ -532,10 +550,12 @@ function AgentsPageInner() {
     const hasGraphNodes = checkNodes.length > 0;
     const isTeam = currentAgents.length > 1 || hasGraphNodes; // Always use taskforce when graph exists
 
-    // Merge constitution INTO the goal so agents treat it as the actual topic/context
+    // Merge constitution INTO the goal so agents treat it as the actual topic/context.
+    // Run-parameter {placeholders} are substituted into the goal here.
+    const substGoal = subst(currentGoal);
     const effectiveGoal = currentConstitution
-      ? `${currentGoal}\n\nContext & requirements: ${currentConstitution}`
-      : currentGoal;
+      ? `${substGoal}\n\nContext & requirements: ${subst(currentConstitution)}`
+      : substGoal;
 
     try {
       if (isTeam) {
@@ -550,15 +570,15 @@ function AgentsPageInner() {
           constitution: currentConstitution || undefined,
           agents: currentAgents.map(a => ({
             type: a.type, role: a.role, max_turns: a.max_turns,
-            ...(a.instructions ? { instructions: a.instructions } : {}),
+            ...(a.instructions ? { instructions: subst(a.instructions) } : {}),
             ...(a.tools?.length ? { tools: a.tools } : {}),
           })),
         };
 
-        // Always send the graph — it's the source of truth
+        // Always send the graph — it's the source of truth (substitute placeholders in node instructions)
         if (hasGraph) {
           config.graph = {
-            nodes: flowNodes.map(n => ({ id: n.id, type: n.type, data: n.data, position: n.position })),
+            nodes: flowNodes.map(n => ({ id: n.id, type: n.type, data: (n.data as any)?.instructions ? { ...n.data, instructions: subst((n.data as any).instructions) } : n.data, position: n.position })),
             edges: flowEdges.map(e => ({ source: e.source, target: e.target, label: e.label, style: e.style })),
           };
         }
@@ -985,7 +1005,7 @@ function AgentsPageInner() {
       store.setStatus(sessionId, "failed");
       store.setResult(sessionId, String(e), { tokens: 0, cost: 0, turns: 0, duration: Date.now() - startTime });
     }
-  }, [canRun, activeId, isRunning, goal, agents, pattern, teamConstitution, th, store, wfStore, isMobile]);
+  }, [canRun, activeId, isRunning, goal, agents, pattern, teamConstitution, th, store, wfStore, isMobile, runParamValues]);
 
   const handleStop = useCallback(() => {
     if (!activeId) return;
@@ -1171,6 +1191,54 @@ function AgentsPageInner() {
 
   return (
     <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden">
+
+      {/* Run parameters (modal) — fill {placeholders} + preview before running */}
+      {runParamsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setRunParamsOpen(false)}>
+          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50 animate-scale-in" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06]">
+              <div className="flex items-center gap-2"><Settings className="h-4 w-4 text-violet-400" /><h3 className="text-sm font-semibold text-slate-200">Run parameters</h3></div>
+              <button onClick={() => setRunParamsOpen(false)}><X className="h-4 w-4 text-slate-500 hover:text-slate-300" /></button>
+            </div>
+            <div className="px-5 py-4 space-y-3 max-h-[60vh] overflow-y-auto">
+              <p className="text-[11px] text-slate-500">This workflow uses placeholders — fill them in and they're substituted everywhere they appear.</p>
+              {Object.keys(runParamValues).map((k, i) => (
+                <div key={k}>
+                  <label className="text-[10px] font-medium text-violet-300 block mb-1">{k}</label>
+                  <input
+                    autoFocus={i === 0}
+                    value={runParamValues[k]}
+                    onChange={e => setRunParamValues(p => ({ ...p, [k]: e.target.value }))}
+                    onKeyDown={e => { if (e.key === "Enter" && !Object.values(runParamValues).some(v => !v.trim())) { setRunParamsOpen(false); handleRun(runParamValues); } }}
+                    placeholder={`Enter ${k}…`}
+                    className="w-full !py-2 !px-3 text-sm"
+                  />
+                </div>
+              ))}
+              <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+                <div className="text-[10px] text-slate-500 mb-1">Preview — goal</div>
+                <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap break-words">
+                  {String(goal).split(/(\{[a-zA-Z0-9_]+\})/g).map((part, idx) => {
+                    const m = part.match(/^\{([a-zA-Z0-9_]+)\}$/);
+                    if (m) return <span key={idx} className="px-1 rounded bg-violet-500/20 text-violet-200 font-medium">{runParamValues[m[1]]?.trim() || m[1]}</span>;
+                    return <span key={idx}>{part}</span>;
+                  })}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/[0.06]">
+              <button onClick={() => setRunParamsOpen(false)} className="px-3.5 py-2 text-[12px] text-slate-400 hover:text-slate-200 rounded-lg transition-colors">Cancel</button>
+              <button
+                disabled={Object.values(runParamValues).some(v => !v.trim())}
+                onClick={() => { setRunParamsOpen(false); handleRun(runParamValues); }}
+                className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-lg transition-all"
+              >
+                <Play className="h-3.5 w-3.5" /> Run
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Save dialog (modal overlay) */}
       {showSaveDialog && (
@@ -1540,7 +1608,7 @@ function AgentsPageInner() {
                 {isDone ? (
                   <>
                     {!isReadOnly && (
-                      <button onClick={handleRun} disabled={!canRun}
+                      <button onClick={() => handleRun()} disabled={!canRun}
                         className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium rounded-lg transition-all">
                         <Play className="h-4 w-4" /> Run Again
                       </button>
@@ -1578,7 +1646,7 @@ function AgentsPageInner() {
                   </>
                 ) : (
                   <>
-                    <button onClick={handleRun} disabled={!canRun} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium rounded-lg transition-all">
+                    <button onClick={() => handleRun()} disabled={!canRun} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium rounded-lg transition-all">
                       <Play className="h-4 w-4" /> Run
                     </button>
                     {agents.length > 0 && !session?.workflowId && (
