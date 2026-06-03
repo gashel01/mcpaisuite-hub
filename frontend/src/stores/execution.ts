@@ -50,6 +50,10 @@ interface ExecutionStore {
   events: StreamEvent[];
   activeEventId: string | null;
 
+  // Live token stream — assistant text for the current turn, accumulated from
+  // llm.delta events as they arrive (typewriter). Reset at each turn boundary.
+  streamingText: string;
+
   // Graph state
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -120,6 +124,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
   taskId: null,
   events: [],
   activeEventId: null,
+  streamingText: "",
   nodes: [],
   edges: [],
   turns: 0,
@@ -138,6 +143,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       taskId,
       status: "connecting",
       events: [],
+      streamingText: "",
       nodes: [],
       edges: [],
       activeEventId: null,
@@ -154,6 +160,15 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
 
   addEvent: (event) => {
     const state = get();
+
+    // Live token stream: accumulate assistant text without creating a node or event row
+    // per token (there can be hundreds). A new turn starts fresh.
+    if (event.type === "token") {
+      if (event.message) set({ streamingText: state.streamingText + event.message });
+      return;
+    }
+    const streamingText = event.type === "turn_started" ? "" : state.streamingText;
+
     const newEvents = [...state.events, event];
     const node = eventToNode(event);
 
@@ -202,6 +217,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       nodes: newNodes,
       edges: newEdges,
       activeEventId: event.id,
+      streamingText,
       turns,
       tokens,
       cost,
@@ -219,6 +235,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       taskId: null,
       events: [],
       activeEventId: null,
+      streamingText: "",
       nodes: [],
       edges: [],
       turns: 0,

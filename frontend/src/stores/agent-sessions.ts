@@ -58,6 +58,7 @@ export interface AgentSession {
   activeAgentIndices: number[]; // all currently running agents
   completedAgents: number[];
   answer: string | null;
+  streamingText: string; // live assistant text for the current turn (typewriter), reset at boundaries
   metrics: { tokens: number; cost: number; turns: number; duration: number } | null;
   feedback: { rating: "good" | "bad" | null; comment: string } | null;
   readOnly: boolean;
@@ -82,6 +83,8 @@ interface AgentSessionStore {
   setActiveAgent: (id: string, index: number) => void;
   completeAgent: (id: string, index: number) => void;
   setResult: (id: string, answer: string, metrics: AgentSession["metrics"]) => void;
+  appendStreamToken: (id: string, text: string) => void;
+  resetStreamToken: (id: string) => void;
   setTaskId: (id: string, taskId: string) => void;
   setConvId: (id: string, convId: string) => void;
   setFeedback: (id: string, rating: "good" | "bad", comment?: string) => void;
@@ -115,6 +118,7 @@ function makeEmptySession(): AgentSession {
     activeAgentIndices: [],
     completedAgents: [],
     answer: null,
+    streamingText: "",
     metrics: null,
     feedback: null,
     createdAt: Date.now(),
@@ -184,7 +188,7 @@ export const useAgentSessionStore = create<AgentSessionStore>((set, get) => ({
           ...sess,
           status,
           // Clear previous run data when starting a NEW run, not when resuming from waiting
-          ...(status === "running" && sess.status !== "waiting" ? { liveEvents: [], completedAgents: [], activeAgentIndex: -1, activeAgentIndices: [], answer: null, metrics: null } : {}),
+          ...(status === "running" && sess.status !== "waiting" ? { liveEvents: [], completedAgents: [], activeAgentIndex: -1, activeAgentIndices: [], answer: null, streamingText: "", metrics: null } : {}),
         } : sess
       ),
     }));
@@ -194,6 +198,23 @@ export const useAgentSessionStore = create<AgentSessionStore>((set, get) => ({
     set((s) => ({
       sessions: s.sessions.map((sess) =>
         sess.id === id ? { ...sess, liveEvents: [...sess.liveEvents, event] } : sess
+      ),
+    }));
+  },
+
+  appendStreamToken: (id, text) => {
+    if (!text) return;
+    set((s) => ({
+      sessions: s.sessions.map((sess) =>
+        sess.id === id ? { ...sess, streamingText: sess.streamingText + text } : sess
+      ),
+    }));
+  },
+
+  resetStreamToken: (id) => {
+    set((s) => ({
+      sessions: s.sessions.map((sess) =>
+        sess.id === id && sess.streamingText ? { ...sess, streamingText: "" } : sess
       ),
     }));
   },
@@ -233,6 +254,7 @@ export const useAgentSessionStore = create<AgentSessionStore>((set, get) => ({
           ? {
               ...sess,
               answer,
+              streamingText: "",
               metrics,
               // Keep failed status if already set, otherwise completed
               status: sess.status === "failed" ? "failed" as const : "completed" as const,

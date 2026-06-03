@@ -506,6 +506,16 @@ function AgentsPageInner() {
               const event = JSON.parse(ev.data);
               const eventData = event.data || {};
 
+              // Live token stream (typewriter) — high frequency, handle and skip the rest.
+              if (event.type === "llm.delta") {
+                store.appendStreamToken(sessionId, event.message || "");
+                return;
+              }
+              // New turn / agent → clear the previous turn's streamed text.
+              if (event.type === "turn.started" || event.message === "agent.started" || event.message === "wave.started") {
+                store.resetStreamToken(sessionId);
+              }
+
               // Wave marker (parallel group indicator)
               if (event.message === "wave.started") {
                 const waveNum = eventData.wave || 1;

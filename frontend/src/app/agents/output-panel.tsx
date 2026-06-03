@@ -100,6 +100,20 @@ export default function OutputPanel({
             </div>
           )}
 
+          {/* Live token stream (typewriter) — assistant text as it's generated */}
+          {isRunning && session.streamingText && (
+            <div className="shrink-0 border-b border-white/[0.04] max-h-[45%] overflow-y-auto px-4 py-3 animate-fade-in">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Loader2 className="h-3 w-3 text-violet-400 animate-spin" />
+                <span className="text-[10px] font-medium text-violet-300">Streaming&hellip;</span>
+              </div>
+              <p className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+                {session.streamingText}
+                <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-violet-400 align-middle animate-pulse" />
+              </p>
+            </div>
+          )}
+
           {/* Output section (top) */}
           {isDone && session.answer && (
             <div className="shrink-0 border-b border-white/[0.04] max-h-[50%] overflow-y-auto animate-fade-in">

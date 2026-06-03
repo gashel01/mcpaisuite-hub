@@ -22,6 +22,7 @@ function normalizeType(raw: string, message?: string): string {
     "tool.succeeded": "tool_result",
     "tool.failed": "tool_result",
     "llm.called": "token",
+    "llm.delta": "token",
     "llm.response": "token",
     "context.bootstrapped": "context_bootstrapped",
     "plan.enforced": "plan_enforced",
