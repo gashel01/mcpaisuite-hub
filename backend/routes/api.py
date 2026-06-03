@@ -393,6 +393,79 @@ async def delete_llm_connection(cid: str):
     return {"deleted": cid}
 
 
+# ── Environment Variables: secrets/config exposed to tools/MCP as process env ──
+_ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "env_vars.json")
+
+
+def _load_env_store() -> dict:
+    try:
+        return json.load(open(_ENV_PATH, encoding="utf-8")) if os.path.isfile(_ENV_PATH) else {}
+    except Exception:
+        return {}
+
+
+def _save_env_store(d: dict) -> None:
+    os.makedirs(os.path.dirname(_ENV_PATH), exist_ok=True)
+    with open(_ENV_PATH, "w", encoding="utf-8") as f:
+        json.dump(d, f)
+
+
+def _inject_env() -> None:
+    """Load saved vars into the process environment (called at import + on change)."""
+    for k, v in _load_env_store().items():
+        try:
+            os.environ[k] = str(v.get("value", ""))
+        except Exception:
+            pass
+
+
+_inject_env()
+
+
+@router.get("/env")
+async def list_env():
+    store = _load_env_store()
+    out = []
+    for k, v in sorted(store.items()):
+        secret = bool(v.get("secret", True))
+        out.append({"key": k, "secret": secret,
+                    "preview": "" if secret else str(v.get("value", "")),
+                    "updated_at": v.get("updated_at")})
+    return {"vars": out}
+
+
+@router.get("/env/{key}")
+async def get_env(key: str):
+    v = _load_env_store().get(key)
+    if v is None:
+        raise HTTPException(404, "variable not found")
+    return {"key": key, "value": v.get("value", ""), "secret": bool(v.get("secret", True))}
+
+
+@router.post("/env")
+async def set_env(body: dict):
+    key = (body.get("key") or "").strip()
+    if not key:
+        raise HTTPException(400, "key is required")
+    store = _load_env_store()
+    store[key] = {"value": body.get("value", ""), "secret": bool(body.get("secret", True)),
+                  "updated_at": int(_time.time() * 1000)}
+    _save_env_store(store)
+    os.environ[key] = str(body.get("value", ""))
+    return {"key": key, "secret": store[key]["secret"]}
+
+
+@router.delete("/env/{key}")
+async def delete_env(key: str):
+    store = _load_env_store()
+    if key not in store:
+        raise HTTPException(404, "variable not found")
+    del store[key]
+    _save_env_store(store)
+    os.environ.pop(key, None)
+    return {"deleted": key}
+
+
 # ── Test Connection ──────────────────────────────────────────────────────────
 
 class TestConnectionRequest(BaseModel):
