@@ -210,15 +210,26 @@ function BootstrapItem({ source }: { source: string | { tool: string; summary: s
 // ── Standalone TurnItem for live progress ──────────────────────────────────
 
 export function TurnItem({ turn }: { turn: Turn }) {
+  // Assistant reasoning (the text the LLM emits before deciding to call a tool, or its
+  // final answer) — persist it in the trace so it doesn't vanish when the turn completes.
+  const reasoning = (turn.content || "").trim();
   if (turn.role === "tool_call" && turn.tool_name) {
     return (
-      <div className="flex items-start gap-2 text-xs">
-        <Wrench className="h-3.5 w-3.5 text-violet-400 mt-0.5 shrink-0" />
-        <div className="bg-violet-500/[0.05] border border-violet-500/15 rounded-lg px-3 py-2 w-full">
-          <span className="text-violet-300 font-mono font-medium">{turn.tool_name}</span>
+      <div className="space-y-1.5">
+        {reasoning && (
+          <p className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">{reasoning}</p>
+        )}
+        <div className="flex items-start gap-2 text-xs">
+          <Wrench className="h-3.5 w-3.5 text-violet-400 mt-0.5 shrink-0" />
+          <div className="bg-violet-500/[0.05] border border-violet-500/15 rounded-lg px-3 py-2 w-full">
+            <span className="text-violet-300 font-mono font-medium">{turn.tool_name}</span>
+          </div>
         </div>
       </div>
     );
+  }
+  if (turn.role === "assistant" && reasoning) {
+    return <p className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">{reasoning}</p>;
   }
   if (turn.role === "tool_result") {
     const ok = turn.tool_success !== false;

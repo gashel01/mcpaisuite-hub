@@ -287,15 +287,15 @@ async def stream_task(conversation_id: str, task_id: str, x_tenant_id: str = Hea
                 yield f"data: {json.dumps({'type': 'turn', 'turn': t}, default=str)}\n\n"
             last_turn_count = len(turns)
 
-            # Stream the in-progress assistant text as the new suffix of the buffer.
-            # The streamed text persists on the client until the NEXT turn begins (buffer
-            # reset) — so a question that triggers ask_user stays visible above the prompt
-            # instead of vanishing when the turn completes.
+            # Stream the in-progress assistant text as the new suffix of the buffer. Once a
+            # turn completes, its reasoning is rendered as a trace item (TurnItem shows the
+            # turn's content), so we stop streaming that turn's text and let the next turn's
+            # text start fresh — the per-tool reasoning persists in the trace, not just the last.
             buf = task.metadata.get("stream_buffer", "") or ""
+            if new_turns:
+                sent_len = len(buf)  # completed turn is now a trace item; don't re-stream it
             if len(buf) < sent_len:
-                # Buffer was reset for a new turn — tell the client to clear the old text.
-                sent_len = 0
-                yield f"data: {json.dumps({'type': 'delta_reset'})}\n\n"
+                sent_len = 0  # buffer reset for a new turn
             if len(buf) > sent_len:
                 yield f"data: {json.dumps({'type': 'delta', 'text': buf[sent_len:]})}\n\n"
                 sent_len = len(buf)
