@@ -324,16 +324,22 @@ function AgentsPageInner() {
     setBuildChat(c => [...c, { role: "user", text: msg }, { role: "architect", text: "" }]);
     const archIdx = buildChat.length + 1; // index of the architect message we'll stream into
 
-    // Current team snapshot for refinement context.
-    const curAgents = (store.sessions.find(s => s.id === aid)?.config.agents) || [];
-    const curPattern = (store.sessions.find(s => s.id === aid)?.config.pattern) || "sequential";
+    // Current workflow snapshot for refinement context (agents + trigger + workspace + gates).
+    const curCfg = store.sessions.find(s => s.id === aid)?.config;
+    const curAgents = curCfg?.agents || [];
 
     try {
       const res = await fetch(`${BASE_URL}/agents/architect`, {
         method: "POST", headers: { "Content-Type": "application/json", ...th },
         body: JSON.stringify({
           message: msg, history,
-          current: { pattern: curPattern, agents: curAgents.map(a => ({ type: a.type, role: a.role, instructions: a.instructions, max_turns: a.max_turns, tools: a.tools })) },
+          current: {
+            pattern: curCfg?.pattern || "sequential",
+            agents: curAgents.map(a => ({ type: a.type, role: a.role, instructions: a.instructions, max_turns: a.max_turns, tools: a.tools })),
+            trigger: { type: curCfg?.triggerType || "manual", cron: curCfg?.cronExpression, interval_seconds: curCfg?.intervalSeconds, webhook_path: curCfg?.webhookPath },
+            human_gates: curCfg?.humanGates || [],
+            workspace: { enabled: !!curCfg?.workspaceEnabled, name: curCfg?.workspaceName, mode: curCfg?.workspaceMode },
+          },
         }),
       });
       if (!res.body) throw new Error("no stream");
@@ -366,7 +372,23 @@ function AgentsPageInner() {
                 instructions: a.instructions || "", tools: Array.isArray(a.tools) ? a.tools : [],
               };
             });
-            store.updateConfig(aid, { pattern: ev.pattern || "sequential", agents: next });
+            // Trigger (manual / cron / interval / scheduled / watch / webhook).
+            const tr = ev.trigger || { type: "manual" };
+            const trigCfg: any = { triggerType: tr.type || "manual" };
+            if (tr.cron) trigCfg.cronExpression = tr.cron;
+            if (tr.interval_seconds) trigCfg.intervalSeconds = tr.interval_seconds;
+            if (tr.webhook_path) trigCfg.webhookPath = tr.webhook_path;
+            if (tr.schedule_date) trigCfg.scheduleDate = tr.schedule_date;
+            if (tr.schedule_time) trigCfg.scheduleTime = tr.schedule_time;
+            if (tr.watch_command) trigCfg.watchCommand = tr.watch_command;
+            if (tr.watch_condition) trigCfg.watchCondition = tr.watch_condition;
+            // Workspace + human gates.
+            const ws = ev.workspace || {};
+            const wsCfg: any = ws.enabled
+              ? { workspaceEnabled: true, workspaceName: ws.name || "", workspaceMode: ws.mode || "persistent" }
+              : { workspaceEnabled: false };
+            const humanGates = Array.isArray(ev.human_gates) ? ev.human_gates.filter((x: any) => typeof x === "number") : [];
+            store.updateConfig(aid, { pattern: ev.pattern || "sequential", agents: next, ...trigCfg, ...wsCfg, humanGates });
             if (ev.missing && ev.missing.length) {
               setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: m.text + `\n\n⚠ Needs connecting: ${ev.missing.join(", ")}` } : m));
             }

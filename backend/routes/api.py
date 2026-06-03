@@ -1818,7 +1818,16 @@ async def architect_stream(body: dict):
     llm = k._engine._llm
 
     cur_agents = current.get("agents") or []
-    current_json = json.dumps({"pattern": current.get("pattern", "sequential"), "agents": cur_agents}, indent=2) if cur_agents else "(none yet — you're starting fresh)"
+    if cur_agents:
+        current_json = json.dumps({
+            "pattern": current.get("pattern", "sequential"),
+            "trigger": current.get("trigger") or {"type": "manual"},
+            "agents": cur_agents,
+            "human_gates": current.get("human_gates") or [],
+            "workspace": current.get("workspace") or {"enabled": False},
+        }, indent=2)
+    else:
+        current_json = "(none yet — you're starting fresh)"
 
     MARKER = "===TEAM==="
     system = f"""You are the agent architect for the MCP AI Suite — a sharp, friendly designer of multi-agent teams who works conversationally.
@@ -1830,20 +1839,36 @@ You are MID-CONVERSATION with the user. They may ask you to build a new team or 
 CURRENT TEAM (refine THIS; if empty you're starting fresh):
 {current_json}
 
-PATTERNS: sequential (pipeline A→B→C), parallel (independent, simultaneous), supervisor (one agent reviews the others), debate (agents argue, a judge decides), swarm (collaborate with feedback loops — powerful but expensive).
-AGENT TYPES: code (execute_code, write_file), research (web_search, fetch_webpage), file (read/write files), memory (store/query facts), plan, rag (knowledge base), custom (you name the exact tools).
+You design a WORKFLOW GRAPH on a canvas. Building blocks you control:
+
+PATTERNS (how agents relate): sequential (pipeline A→B→C), parallel (independent, simultaneous), supervisor (one agent reviews the others), debate (agents argue, a judge decides), swarm (collaborate with feedback loops — powerful but expensive).
+
+AGENT TYPES: code (execute_code, write_file), research (web_search, fetch_webpage), file (read/write files), memory (store/query facts), plan, rag (knowledge base), ltp (compile-once deterministic plan — cheap + reliable for fixed multi-step procedures), custom (you name the exact tools).
+
+TRIGGER (how the workflow STARTS — this is a node you set, do NOT say you 'lack a scheduler'):
+- manual: user clicks Run (default).
+- cron: recurring on a cron expression — e.g. every hour = "0 * * * *", daily 9am = "0 9 * * *".
+- interval: recurring every N seconds — e.g. every hour = 3600.
+- scheduled: one-shot at a specific date/time.
+- watch: re-run when a shell command's output meets a condition.
+- webhook: run when an HTTP endpoint is hit.
+→ If the user wants recurring/automated/"every X" work, SET the trigger (cron or interval). The platform's scheduler runs it — you do NOT need a separate scheduler agent for the timing.
+
+HUMAN GATES: list agent indices (0-based) that should pause for human review/approval after they finish.
+WORKSPACE: a shared file area across agents — enable it when agents must pass files between steps.
 
 HOW TO REPLY — two parts, in this exact order:
-1) Talk to the user like a real architect pairing with them: what you understood, what you're choosing and WHY, and honestly flag anything missing/risky (e.g. a capability that isn't connected). Warm, specific, concise — 2 to 5 short sentences. This part is streamed live, so write it naturally.
+1) Talk to the user like a real architect pairing with them: what you understood, what you're choosing and WHY (incl. the trigger if it's not manual), and honestly flag anything genuinely missing (e.g. an alerting channel that isn't connected). Warm, specific, concise — 2 to 5 short sentences. Streamed live, so write naturally. Do NOT claim you lack scheduling — you have the trigger node.
 2) Then a line containing EXACTLY {MARKER}
-3) Then ONLY a JSON object (no markdown, no prose after it) describing the FULL desired team after this request:
-{{"pattern":"sequential|parallel|supervisor|debate|swarm","agents":[{{"type":"code|research|file|memory|plan|rag|custom","role":"short role name","instructions":"specific actionable instructions","max_turns":3,"tools":["optional exact tool names"]}}],"estimated_cost":"$0.XX","estimated_duration":"XXs","missing":["capabilities needed but not connected"]}}
+3) Then ONLY a JSON object (no markdown, no prose after it) — the FULL desired workflow after this request:
+{{"pattern":"sequential|parallel|supervisor|debate|swarm","trigger":{{"type":"manual|cron|interval|scheduled|watch|webhook","cron":"0 * * * *","interval_seconds":3600,"webhook_path":"/hook","watch_command":"","watch_condition":""}},"agents":[{{"type":"code|research|file|memory|plan|rag|ltp|custom","role":"short role name","instructions":"specific actionable instructions","max_turns":3,"tools":["optional exact tool names"]}}],"human_gates":[],"workspace":{{"enabled":false,"name":"","mode":"persistent"}},"estimated_cost":"$0.XX","estimated_duration":"XXs","missing":["genuinely-unavailable capabilities only"]}}
+(Only include the trigger sub-fields relevant to the chosen type; omit the others.)
 
 RULES:
-- Only use capabilities that are actually available above.
-- When REFINING, return the COMPLETE updated team (keep existing agents unchanged unless the request changes them) — never just the delta.
+- Only use capabilities actually available above. The TRIGGER is always available — never list it under "missing".
+- When REFINING, return the COMPLETE updated workflow (keep existing agents/trigger unless the request changes them) — never just the delta.
 - Keep it minimal: fewer agents = faster + cheaper.
-- If the request is just a question or chit-chat, answer it in part 1 and still emit {MARKER} + the current team unchanged."""
+- If the request is just a question or chit-chat, answer it in part 1 and still emit {MARKER} + the current workflow unchanged."""
 
     messages = []
     for h in history[-8:]:
@@ -1930,7 +1955,10 @@ RULES:
                 team = json.loads(m.group(0)) if m else {}
             yield sse({"type": "team",
                        "pattern": team.get("pattern", "sequential"),
+                       "trigger": team.get("trigger") or {"type": "manual"},
                        "agents": team.get("agents", []) or [],
+                       "human_gates": team.get("human_gates") or [],
+                       "workspace": team.get("workspace") or {"enabled": False},
                        "estimated_cost": team.get("estimated_cost", ""),
                        "estimated_duration": team.get("estimated_duration", ""),
                        "missing": team.get("missing") or []})
