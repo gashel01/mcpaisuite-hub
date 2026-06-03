@@ -1735,6 +1735,70 @@ Respond in this exact JSON format (no markdown, no explanation):
         raise HTTPException(500, f"Suggestion failed: {exc}")
 
 
+@router.post("/agents/build")
+async def build_team_stream(body: dict):
+    """Chat-to-build (spike): stream a narrated team build for a goal.
+
+    Reuses /agents/suggest for the architecture, then streams narration + one event per
+    agent so the client can pop nodes onto the canvas as the 'build' is described — the
+    same feel as a conversational agent builder, on top of the existing suggest brain.
+    Event types: step (narration line), agent (add this agent), done (pattern + estimates),
+    error.
+    """
+    _require()
+    goal = (body.get("goal") or "").strip()
+    if not goal:
+        raise HTTPException(400, "goal is required")
+
+    async def gen():
+        def sse(ev: dict) -> str:
+            return f"data: {json.dumps(ev)}\n\n"
+
+        try:
+            yield sse({"type": "step", "text": "Reading your goal and the tools available here…"})
+            await asyncio.sleep(0.4)
+
+            suggestion = await suggest_agents({"goal": goal})
+            pattern = suggestion.get("pattern", "sequential")
+            agents = suggestion.get("agents", []) or []
+            reasoning = (suggestion.get("reasoning") or "").strip()
+            missing = suggestion.get("missing") or []
+
+            if reasoning:
+                yield sse({"type": "step", "text": reasoning})
+                await asyncio.sleep(0.5)
+
+            n = len(agents)
+            yield sse({"type": "step", "text": f"Going with a {pattern} workflow — {n} agent{'s' if n != 1 else ''}."})
+            await asyncio.sleep(0.4)
+
+            for a in agents:
+                role = a.get("role") or a.get("type") or "agent"
+                tools = a.get("tools") or []
+                tdesc = f" using {', '.join(tools[:3])}" if tools else ""
+                yield sse({"type": "step", "text": f"➕ Adding {role}{tdesc}…"})
+                yield sse({"type": "agent", "pattern": pattern, "agent": a})
+                await asyncio.sleep(0.55)
+
+            if missing:
+                yield sse({"type": "step", "text": "⚠ You'll need to connect: " + ", ".join(missing)})
+                await asyncio.sleep(0.3)
+
+            cost = suggestion.get("estimated_cost", "")
+            dur = suggestion.get("estimated_duration", "")
+            tail = " · ".join([x for x in [f"~{cost}" if cost else "", dur] if x])
+            yield sse({"type": "step", "text": f"✓ Team ready{(' — ' + tail) if tail else ''}. Review it and hit Run."})
+            yield sse({"type": "done", "pattern": pattern, "reasoning": reasoning,
+                       "estimated_cost": cost, "estimated_duration": dur, "missing": missing})
+        except HTTPException as exc:
+            yield sse({"type": "error", "message": str(exc.detail)})
+        except Exception as exc:  # noqa: BLE001
+            yield sse({"type": "error", "message": str(exc)[:200]})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
 # ── Workflows (hierarchical: workflow → versions → runs) ────────────────────
 
 import os, json as _json, shutil, time as _time

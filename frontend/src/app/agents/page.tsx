@@ -127,6 +127,10 @@ function AgentsPageInner() {
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<"build" | "output">("build");
 
+  // Chat-to-build (AI builds the team, narrated + incremental)
+  const [building, setBuilding] = useState(false);
+  const [buildSteps, setBuildSteps] = useState<string[]>([]);
+
   // Workflow library panel
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryTab, setLibraryTab] = useState<"workflows" | "runs" | "scheduled">("workflows");
@@ -306,6 +310,54 @@ function AgentsPageInner() {
   const agentsWithoutRole = agents.filter(a => !a.role.trim());
   const hasFlowErrors = flowWarnings.length > 0 || errorNodeIds.length > 0;
   const canRun = goal.trim() && agents.length > 0 && agentsWithoutRole.length === 0 && flowWarnings.length === 0;
+
+  // ── Chat-to-build: AI assembles the team, narrated, nodes pop in one by one ──
+  const handleBuild = useCallback(async () => {
+    if (!goal.trim() || !activeId || building) return;
+    setBuilding(true);
+    setBuildSteps([]);
+    setAgents(() => []); // build fresh
+    try {
+      const res = await fetch(`${BASE_URL}/agents/build`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...th },
+        body: JSON.stringify({ goal }),
+      });
+      if (!res.body) throw new Error("no stream");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() || "";
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data:")) continue;
+          let ev: any;
+          try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (ev.type === "step") {
+            setBuildSteps(s => [...s, ev.text]);
+          } else if (ev.type === "agent") {
+            const a = ev.agent || {};
+            setAgents(prev => [...prev, {
+              id: newId(), name: "", description: "", type: a.type || "custom",
+              role: a.role || "", max_turns: a.max_turns || 5,
+              instructions: a.instructions || "", tools: Array.isArray(a.tools) ? a.tools : [],
+            }]);
+            if (ev.pattern && activeId) store.updateConfig(activeId, { pattern: ev.pattern });
+          } else if (ev.type === "error") {
+            setBuildSteps(s => [...s, "⚠ " + (ev.message || "build failed")]);
+          }
+        }
+      }
+    } catch (e: any) {
+      setBuildSteps(s => [...s, "⚠ " + (e?.message || "build failed")]);
+    } finally {
+      setBuilding(false);
+    }
+  }, [goal, activeId, building, th]);
 
   // ── Agent CRUD ─────────────────────────────────────────────────────────
 
@@ -1237,30 +1289,12 @@ function AgentsPageInner() {
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Goal</label>
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={async () => {
-                      if (!goal.trim() || !activeId) return;
-                      try {
-                        const res = await fetch(`${BASE_URL}/agents/suggest`, {
-                          method: "POST", headers: { "Content-Type": "application/json", ...th },
-                          body: JSON.stringify({ goal }),
-                        });
-                        const suggestion = await res.json();
-                        if (suggestion.pattern && suggestion.agents) {
-                          store.updateConfig(activeId, {
-                            pattern: suggestion.pattern,
-                            agents: suggestion.agents.map((a: any) => ({
-                              id: newId(), name: "", description: "", type: a.type, role: a.role,
-                              max_turns: a.max_turns || 5, instructions: a.instructions || "", tools: [],
-                            })),
-                          });
-                        }
-                      } catch {}
-                    }}
-                    disabled={!goal.trim() || isRunning}
+                    onClick={handleBuild}
+                    disabled={!goal.trim() || isRunning || building}
                     className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 rounded-lg transition-all disabled:opacity-30"
-                    data-tooltip="AI suggests agents for your goal"
+                    data-tooltip="AI builds the agent team for your goal"
                   >
-                    <Sparkles className="h-3 w-3" /> Suggest
+                    {building ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} {building ? "Building…" : "Build"}
                   </button>
                   <TemplateSelector templates={TEMPLATES} onSelect={applyTemplate} />
                 </div>
@@ -1273,6 +1307,23 @@ function AgentsPageInner() {
                 className="w-full !py-2.5 !px-4 text-sm"
                 disabled={isRunning}
               />
+              {/* Chat-to-build narration */}
+              {(building || buildSteps.length > 0) && (
+                <div className="mt-2 rounded-lg border border-violet-500/15 bg-violet-500/[0.04] px-3 py-2 animate-fade-in">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    {building ? <Loader2 className="h-3 w-3 text-violet-400 animate-spin" /> : <Sparkles className="h-3 w-3 text-violet-400" />}
+                    <span className="text-[10px] font-semibold text-violet-300 uppercase tracking-wide">{building ? "Building your team" : "Built"}</span>
+                    {!building && (
+                      <button onClick={() => setBuildSteps([])} className="ml-auto text-[10px] text-slate-500 hover:text-slate-300">dismiss</button>
+                    )}
+                  </div>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {buildSteps.map((s, i) => (
+                      <p key={i} className="text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words animate-fade-in">{s}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             </div>{/* end disabled-during-run wrapper */}
