@@ -288,12 +288,14 @@ async def stream_task(conversation_id: str, task_id: str, x_tenant_id: str = Hea
             last_turn_count = len(turns)
 
             # Stream the in-progress assistant text as the new suffix of the buffer.
+            # The streamed text persists on the client until the NEXT turn begins (buffer
+            # reset) — so a question that triggers ask_user stays visible above the prompt
+            # instead of vanishing when the turn completes.
             buf = task.metadata.get("stream_buffer", "") or ""
-            if new_turns:
-                # A turn just completed — its text is now a turn item; don't re-stream it.
-                sent_len = len(buf)
             if len(buf) < sent_len:
-                sent_len = 0  # buffer was reset for a new turn
+                # Buffer was reset for a new turn — tell the client to clear the old text.
+                sent_len = 0
+                yield f"data: {json.dumps({'type': 'delta_reset'})}\n\n"
             if len(buf) > sent_len:
                 yield f"data: {json.dumps({'type': 'delta', 'text': buf[sent_len:]})}\n\n"
                 sent_len = len(buf)

@@ -158,10 +158,14 @@ export default function ChatPage() {
         if (msg.type === "delta") {
           setStreamingText(prev => prev + (msg.text || ""));
         }
+        if (msg.type === "delta_reset") {
+          setStreamingText(""); // a new turn began — clear the previous turn's streamed text
+        }
         if (msg.type === "turn") {
           turns.push(msg.turn);
           setLiveTurns([...turns]);
-          setStreamingText(""); // completed turn supersedes the streamed text
+          // Keep streamingText: the assistant's text persists until the next turn (delta_reset)
+          // or completion — so an ask_user question stays visible instead of vanishing.
         }
         if (msg.type === "elicitation") {
           setElicitation({ taskId: msg.task_id, question: msg.question });
@@ -389,10 +393,15 @@ export default function ChatPage() {
             setStreamingText(prev => prev + (msg.text || ""));
           }
 
+          if (msg.type === "delta_reset") {
+            setStreamingText(""); // a new turn began — clear the previous turn's streamed text
+          }
+
           if (msg.type === "turn") {
             turns.push(msg.turn);
             setLiveTurns([...turns]);
-            setStreamingText(""); // completed turn supersedes the streamed text
+            // Keep streamingText until the next turn (delta_reset) or completion, so an
+            // ask_user question stays visible instead of vanishing when the turn completes.
           }
 
           if (msg.type === "elicitation") {
