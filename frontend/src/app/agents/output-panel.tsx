@@ -4,7 +4,7 @@ import { useState } from "react";
 import {
   Bot, Play, Loader2, CheckCircle2, XCircle, Zap, DollarSign,
   RotateCw, Activity, ChevronRight, ChevronDown, X, Clock,
-  AlertCircle, MessageSquare, ArrowRight, Download, Plus, Save,
+  AlertCircle, MessageSquare, ArrowRight, Download, Plus, Save, Maximize2,
 } from "lucide-react";
 import Link from "next/link";
 import CopyButton from "@/components/copy-button";
@@ -166,8 +166,49 @@ export default function OutputPanel({
 // ── Output Result sub-component ──────────────────────────────────────────
 
 function OutputResult({ session, store, th }: { session: AgentSession; store: any; th: Record<string, string> }) {
+  const [view, setView] = useState<"md" | "raw">("md");
+  const [expanded, setExpanded] = useState(false);
+  const answer = session.answer || "";
+  const download = () => {
+    const blob = new Blob([answer], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(session.config.goal || "output").slice(0, 40).replace(/[^a-z0-9]+/gi, "_")}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const ViewToggle = () => (
+    <div className="flex rounded-md bg-white/[0.03] border border-white/[0.06] p-0.5 text-[9px] font-medium">
+      <button onClick={() => setView("md")} className={`px-1.5 py-0.5 rounded ${view === "md" ? "bg-violet-500/20 text-violet-300" : "text-slate-500 hover:text-slate-300"}`}>Markdown</button>
+      <button onClick={() => setView("raw")} className={`px-1.5 py-0.5 rounded ${view === "raw" ? "bg-violet-500/20 text-violet-300" : "text-slate-500 hover:text-slate-300"}`}>Raw</button>
+    </div>
+  );
+  const Body = ({ max }: { max: string }) => (
+    view === "raw"
+      ? <pre className={`px-4 py-3 text-[12px] text-slate-300 whitespace-pre-wrap break-words font-mono ${max} overflow-y-auto`}>{answer}</pre>
+      : <div className={`px-4 py-3 prose-kernel text-sm ${max} overflow-y-auto`}>{renderMarkdown(answer)}</div>
+  );
   return (
     <div className="p-4 space-y-3">
+      {/* Full-screen report */}
+      {expanded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setExpanded(false)}>
+          <div className="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl animate-scale-in" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.06]">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              <span className="text-sm font-semibold text-slate-200">Report</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <ViewToggle />
+                <button onClick={download} title="Download .md" className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]"><Download className="h-3.5 w-3.5" /></button>
+                <CopyButton text={answer} />
+                <button onClick={() => setExpanded(false)} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]"><X className="h-3.5 w-3.5" /></button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0"><Body max="max-h-[calc(85vh-3.5rem)]" /></div>
+          </div>
+        </div>
+      )}
       {session.status === "failed" ? (
         <div className="rounded-xl border border-red-500/20 bg-red-500/[0.03] px-4 py-3">
           <div className="flex items-center gap-2 mb-2">
@@ -182,11 +223,14 @@ function OutputResult({ session, store, th }: { session: AgentSession; store: an
           <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.04] bg-white/[0.01]">
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
             <span className="text-[11px] font-semibold text-emerald-400">Output</span>
-            <div className="ml-auto"><CopyButton text={session.answer || ""} /></div>
+            <div className="ml-auto flex items-center gap-1.5">
+              <ViewToggle />
+              <button onClick={download} title="Download .md" className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]"><Download className="h-3 w-3" /></button>
+              <button onClick={() => setExpanded(true)} title="Expand" className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]"><Maximize2 className="h-3 w-3" /></button>
+              <CopyButton text={answer} />
+            </div>
           </div>
-          <div className="px-4 py-3 prose-kernel text-sm max-h-[300px] overflow-y-auto">
-            {renderMarkdown(session.answer || "")}
-          </div>
+          <Body max="max-h-[300px]" />
           {/* Feedback */}
           {session.status === "completed" && (
             <div className="px-4 py-2.5 border-t border-white/[0.04] flex items-center gap-2">
