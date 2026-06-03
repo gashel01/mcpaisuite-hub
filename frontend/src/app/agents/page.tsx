@@ -1446,18 +1446,29 @@ function AgentsPageInner() {
                   tools: d.tools ?? existing?.tools ?? [],
                 };
               });
-              setAgents(synced);
+              // Only write back when VALUES actually changed — the debounced sync fires on
+              // every node touch (incl. React Flow's own measurements), and an unconditional
+              // store write here would re-render → re-measure → sync → … a CPU-burning loop
+              // (the cause of other tabs hanging). Compare by value signature, ignoring ids.
+              const aSig = (a: any) => `${a.type}|${a.role}|${(a.tools || []).join(",")}|${a.instructions || ""}|${a.max_turns}|${a.name || ""}`;
+              if (synced.map(aSig).join("§") !== agents.map(aSig).join("§")) {
+                setAgents(synced);
+              }
 
               // Sync the trigger node (type + cron/interval/… value) back to the session
-              // config so scheduling/runs actually use what the user set on the canvas.
+              // config so scheduling/runs use what the user set — but only when it changed.
               const trig = nodes.find(n => n.type === "trigger");
               if (trig && activeId) {
                 const td = trig.data as any;
-                const tPatch: any = { triggerType: td.triggerType || "manual" };
-                for (const kk of ["cronExpression", "intervalSeconds", "scheduleDate", "scheduleTime", "webhookPath", "watchCommand", "watchCondition"]) {
-                  if (td[kk] !== undefined && td[kk] !== "") tPatch[kk] = td[kk];
+                const cfg = session?.config as any;
+                const tKeys = ["cronExpression", "intervalSeconds", "scheduleDate", "scheduleTime", "webhookPath", "watchCommand", "watchCondition"];
+                const newType = td.triggerType || "manual";
+                const trigChanged = newType !== (cfg?.triggerType || "manual") || tKeys.some(kk => td[kk] !== undefined && td[kk] !== "" && td[kk] !== cfg?.[kk]);
+                if (trigChanged) {
+                  const tPatch: any = { triggerType: newType };
+                  for (const kk of tKeys) if (td[kk] !== undefined && td[kk] !== "") tPatch[kk] = td[kk];
+                  store.updateConfig(activeId, tPatch);
                 }
-                store.updateConfig(activeId, tPatch);
               }
 
               // Validate connectivity + collect error node IDs with reason
