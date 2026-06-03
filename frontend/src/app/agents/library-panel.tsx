@@ -25,6 +25,7 @@ interface LibraryPanelProps {
   onDeleteWorkflow: (id: string) => void;
   onDeleteSchedule: (id: string) => void;
   onActivateVersion?: (workflowId: string, versionId: string) => void;
+  liveWorkflows?: Record<string, "live" | "paused">;
   compareItems?: CompareItem[];
   onAddToCompare?: (item: CompareItem) => void;
 }
@@ -32,7 +33,7 @@ interface LibraryPanelProps {
 export default function LibraryPanel(props: LibraryPanelProps) {
   const { open, setOpen, workflows, schedules, activeWorkflowId, activeVersionId, activeRunId,
     canSave, onSave, onLoadVersion, onViewRun, onForkVersion, onDeleteWorkflow, onDeleteSchedule,
-    onActivateVersion, compareItems = [], onAddToCompare } = props;
+    onActivateVersion, liveWorkflows = {}, compareItems = [], onAddToCompare } = props;
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const selectedWorkflow = selectedWorkflowId ? workflows.find(w => w.id === selectedWorkflowId) : null;
 
@@ -187,6 +188,11 @@ export default function LibraryPanel(props: LibraryPanelProps) {
                         <div className="flex items-center gap-2">
                           <FolderOpen className="h-3 w-3 text-violet-400 shrink-0" />
                           <span className="text-[10px] font-semibold text-slate-200 truncate flex-1">{wf.name}</span>
+                          {liveWorkflows[wf.id] && (
+                            <span className={`flex items-center gap-1 text-[8px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 border ${liveWorkflows[wf.id] === "paused" ? "text-amber-300 bg-amber-500/12 border-amber-500/20" : "text-emerald-300 bg-emerald-500/12 border-emerald-500/20"}`} data-tooltip={liveWorkflows[wf.id] === "paused" ? "Deployed but taken offline" : "Deployed — live API endpoint"}>
+                              <span className={`h-1 w-1 rounded-full ${liveWorkflows[wf.id] === "paused" ? "bg-amber-400" : "bg-emerald-400"}`} /> {liveWorkflows[wf.id] === "paused" ? "Offline" : "Live"}
+                            </span>
+                          )}
                           <button onClick={e => { e.stopPropagation(); onDeleteWorkflow(wf.id); }} className="p-1 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all">
                             <Trash className="h-2.5 w-2.5" />
                           </button>

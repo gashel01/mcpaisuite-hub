@@ -27,6 +27,7 @@ export interface WorkflowRun {
   liveEvents: any[];
   note?: string;
   tags?: string[];
+  taskId?: string;
   createdAt: number;
   completedAt?: number;
 }

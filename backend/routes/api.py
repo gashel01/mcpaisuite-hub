@@ -1429,6 +1429,7 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
                     "duration_ms": result.duration_ms,
                     "goal": result.goal,
                     "pattern": result.pattern,
+                    "task_id": task.id,
                 }
                 task.total_tokens = result.total_tokens
                 task.total_cost = result.total_cost
@@ -1518,6 +1519,8 @@ async def publish_deployment(body: dict, x_tenant_id: str = Header(default="")):
     if not config.get("agents") and not config.get("graph"):
         raise HTTPException(400, "config (agents or graph) is required")
     tenant = x_tenant_id
+    workflow_id = body.get("workflow_id")
+    version_id = body.get("version_id")
     did = "dep_" + _secrets.token_hex(5)
     token = "kmcp_" + _secrets.token_urlsafe(24)
 
@@ -1539,6 +1542,7 @@ async def publish_deployment(body: dict, x_tenant_id: str = Header(default="")):
             "id": did, "name": name, "release_notes": notes, "config": config,
             "token": token, "tenant": tenant, "created_at": _time.time(),
             "runs": 0, "version": 1, "status": "live",
+            "workflowId": workflow_id, "versionId": version_id,
         }
         _save_deploy(dep)
         yield sse({"type": "done", "id": did, "name": name,
@@ -1690,6 +1694,7 @@ async def _execute_deployment(dep: dict, inputs: dict, blocking: bool, timeout: 
             _json.dump({
                 "id": rid, "deploymentId": did, "deploymentName": dep.get("name"),
                 "source": source, "status": status, "inputs": inputs, "error": err,
+                "taskId": result.get("task_id"),
                 "answer": result.get("final_output"),
                 "metrics": {"tokens": result.get("total_tokens", 0), "cost": result.get("total_cost", 0),
                             "turns": result.get("total_turns", 0), "duration": result.get("duration_ms", int((_time.time() - started) * 1000))},

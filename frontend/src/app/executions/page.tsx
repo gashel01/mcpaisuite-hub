@@ -224,6 +224,9 @@ export default function ExecutionsPage() {
                     {detail.source === "builder" && detail.workflowId && (
                       <Link href={`/agents?wf=${detail.workflowId}${detail.versionId ? `&v=${detail.versionId}` : ""}&r=${detail.id}`} className="inline-flex items-center gap-1 text-violet-400 hover:text-violet-300">Open in builder <ArrowUpRight className="h-2.5 w-2.5" /></Link>
                     )}
+                    {detail.taskId && (
+                      <Link href={`/observability?task=${detail.taskId}`} className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300">View full trace <ArrowUpRight className="h-2.5 w-2.5" /></Link>
+                    )}
                   </div>
 
                   {/* Inputs (api runs) */}

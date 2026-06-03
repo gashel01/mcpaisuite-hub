@@ -147,7 +147,7 @@ function AgentsPageInner() {
   const [publishing, setPublishing] = useState(false);
   const [publishLog, setPublishLog] = useState<{ phase: string; text: string }[]>([]);
   const [publishResult, setPublishResult] = useState<{ id: string; name: string; endpoint: string; token: string } | null>(null);
-  const [deployments, setDeployments] = useState<{ id: string; name: string; endpoint: string; runs: number; created_at: number; release_notes?: string }[]>([]);
+  const [deployments, setDeployments] = useState<{ id: string; name: string; endpoint: string; runs: number; created_at: number; release_notes?: string; workflowId?: string; status?: string }[]>([]);
   const [copied, setCopied] = useState<string>("");
   // Reset the architect conversation when switching sessions (it's per-workflow).
   useEffect(() => { setBuildChat([]); setBuildSuggestions([]); setBuildMissing([]); setBuildInput(""); }, [activeId]);
@@ -167,6 +167,7 @@ function AgentsPageInner() {
     fetch(`${BASE_URL}/agents`).then(r => r.json()).then(d => setAgentInfos(d.agents || [])).catch(() => {}).finally(() => setLoadingInfos(false));
     wfStore.load(th);
     wfStore.loadSchedules(th);
+    loadDeployments();
     store.loadHistory();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -925,6 +926,7 @@ function AgentsPageInner() {
                           status: data.success !== false ? "completed" : "failed",
                           answer: answer || null, metrics,
                           liveEvents: sess.liveEvents.slice(-30),
+                          ...(sess.taskId ? { taskId: sess.taskId } : {}),
                         }, th);
                       }
                     })
@@ -1201,7 +1203,8 @@ function AgentsPageInner() {
       const res = await fetch(`${BASE_URL}/deployments/publish`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({ name: publishName.trim() || "My automation", release_notes: publishNotes, config: buildDeployConfig() }),
+        body: JSON.stringify({ name: publishName.trim() || "My automation", release_notes: publishNotes, config: buildDeployConfig(),
+          workflow_id: session?.workflowId, version_id: session?.versionId }),
       });
       const reader = res.body?.getReader();
       const dec = new TextDecoder();
@@ -1228,7 +1231,7 @@ function AgentsPageInner() {
     } finally {
       setPublishing(false);
     }
-  }, [publishing, publishName, publishNotes, buildDeployConfig, th, loadDeployments]);
+  }, [publishing, publishName, publishNotes, buildDeployConfig, th, loadDeployments, session?.workflowId, session?.versionId]);
 
   const deleteDeployment = useCallback(async (id: string) => {
     try { await fetch(`${BASE_URL}/deployments/${id}`, { method: "DELETE", headers: th }); } catch { /* ignore */ }
@@ -1246,9 +1249,20 @@ function AgentsPageInner() {
 
   // ── Render ────────────────────────────────────────────────────────────
 
+  // Map workflowId → deployment status, so the library can flag genuinely-deployed workflows
+  const liveWorkflows = useMemo(() => {
+    const m: Record<string, "live" | "paused"> = {};
+    for (const d of deployments) {
+      if (!d.workflowId) continue;
+      if (d.status !== "paused" || !m[d.workflowId]) m[d.workflowId] = d.status === "paused" ? "paused" : "live";
+    }
+    return m;
+  }, [deployments]);
+
   const libraryPanelEl = (
     <LibraryPanel
       open={libraryOpen} setOpen={setLibraryOpen}
+      liveWorkflows={liveWorkflows}
       workflows={wfStore.workflows}
       schedules={wfStore.schedules}
       activeWorkflowId={session?.workflowId}
