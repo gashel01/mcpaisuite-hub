@@ -132,8 +132,11 @@ function AgentsPageInner() {
   const [buildChat, setBuildChat] = useState<{ role: "user" | "architect"; text: string }[]>([]);
   const [buildInput, setBuildInput] = useState("");
   const [buildSuggestions, setBuildSuggestions] = useState<string[]>([]);
+  const buildScrollRef = useRef<HTMLDivElement>(null);
   // Reset the architect conversation when switching sessions (it's per-workflow).
   useEffect(() => { setBuildChat([]); setBuildSuggestions([]); setBuildInput(""); }, [activeId]);
+  // Auto-scroll the architect thread to the latest as narration streams in.
+  useEffect(() => { const el = buildScrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [buildChat]);
 
   // Workflow library panel
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -1367,7 +1370,7 @@ function AgentsPageInner() {
                       <button onClick={() => setBuildChat([])} className="ml-auto text-[10px] text-slate-500 hover:text-slate-300">clear</button>
                     )}
                   </div>
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  <div ref={buildScrollRef} className="space-y-2 max-h-56 overflow-y-auto pr-1 scroll-smooth">
                     {buildChat.map((m, i) => (
                       m.role === "user" ? (
                         <div key={i} className="flex justify-end">
@@ -1419,8 +1422,8 @@ function AgentsPageInner() {
 
             </div>{/* end disabled-during-run wrapper */}
 
-            <div className="flex-1 min-h-0">
-            <FlowEditor key={activeId} agents={agents} pattern={pattern} triggerType={triggerType} triggerConfig={{ cronExpression: session?.config.cronExpression, intervalSeconds: session?.config.intervalSeconds, scheduleDate: session?.config.scheduleDate, scheduleTime: session?.config.scheduleTime, webhookPath: session?.config.webhookPath, watchCommand: session?.config.watchCommand, watchCondition: session?.config.watchCondition }} workspaceEnabled={workspaceEnabled} workspaceName={session?.config.workspaceName} workspaceMode={session?.config.workspaceMode} humanGates={humanGates} errorNodeIds={errorNodeIds} errorReasons={errorReasons} validationWarnings={[...agentsWithoutRole.length > 0 ? [`${agentsWithoutRole.length} agent${agentsWithoutRole.length > 1 ? "s" : ""} missing a role`] : [], ...flowWarnings]} activeAgentIndex={session?.activeAgentIndex ?? -1} activeAgentIndices={session?.activeAgentIndices ?? []} completedAgents={session?.completedAgents ?? []} isRunning={isRunning} locked={isRunning || isDone || isReadOnly} waitingNodeId={waitingNodeId} deniedNodeIds={deniedNodeIds} approvedNodeIds={approvedNodeIds} revisionNodeIds={revisionNodeIds} agentOutputs={(() => {
+            <div className="flex-1 min-h-0 relative">
+            <FlowEditor key={activeId} agents={agents} pattern={pattern} triggerType={triggerType} triggerConfig={{ cronExpression: session?.config.cronExpression, intervalSeconds: session?.config.intervalSeconds, scheduleDate: session?.config.scheduleDate, scheduleTime: session?.config.scheduleTime, webhookPath: session?.config.webhookPath, watchCommand: session?.config.watchCommand, watchCondition: session?.config.watchCondition }} workspaceEnabled={workspaceEnabled} workspaceName={session?.config.workspaceName} workspaceMode={session?.config.workspaceMode} humanGates={humanGates} errorNodeIds={errorNodeIds} errorReasons={errorReasons} validationWarnings={[...agentsWithoutRole.length > 0 ? [`${agentsWithoutRole.length} agent${agentsWithoutRole.length > 1 ? "s" : ""} missing a role`] : [], ...flowWarnings]} activeAgentIndex={session?.activeAgentIndex ?? -1} activeAgentIndices={session?.activeAgentIndices ?? []} completedAgents={session?.completedAgents ?? []} isRunning={isRunning} locked={isRunning || isDone || isReadOnly || building} waitingNodeId={waitingNodeId} deniedNodeIds={deniedNodeIds} approvedNodeIds={approvedNodeIds} revisionNodeIds={revisionNodeIds} agentOutputs={(() => {
               const outputs: Record<number, string> = {};
               (session?.liveEvents || []).forEach(e => {
                 if (e.type === "message" && e.content) outputs[e.agentIndex] = e.content;
@@ -1495,6 +1498,15 @@ function AgentsPageInner() {
               setErrorNodeIds(Object.keys(reasons));
               setErrorReasons(reasons);
             }} />
+            {/* Block + overlay the canvas while the AI is editing the graph */}
+            {building && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0a0a10]/55 backdrop-blur-[2px] cursor-wait animate-fade-in">
+                <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-violet-500/12 border border-violet-500/25 shadow-xl">
+                  <Loader2 className="h-4 w-4 text-violet-400 animate-spin" />
+                  <span className="text-[13px] font-medium text-violet-200">AI is building your workflow&hellip;</span>
+                </div>
+              </div>
+            )}
             </div>
 
             {/* Run / Stop / Fork */}
