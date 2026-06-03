@@ -222,7 +222,7 @@ export default function ExecutionsPage() {
                   <div className="flex flex-wrap gap-2 text-[10px]">
                     <span className="text-slate-500">Started <span className="text-slate-300">{fmtDate(detail.createdAt)}</span></span>
                     {detail.source === "builder" && detail.workflowId && (
-                      <Link href={`/agents`} className="inline-flex items-center gap-1 text-violet-400 hover:text-violet-300">Open in builder <ArrowUpRight className="h-2.5 w-2.5" /></Link>
+                      <Link href={`/agents?wf=${detail.workflowId}${detail.versionId ? `&v=${detail.versionId}` : ""}&r=${detail.id}`} className="inline-flex items-center gap-1 text-violet-400 hover:text-violet-300">Open in builder <ArrowUpRight className="h-2.5 w-2.5" /></Link>
                     )}
                   </div>
 
