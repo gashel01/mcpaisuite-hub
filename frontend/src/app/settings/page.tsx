@@ -1396,6 +1396,8 @@ function ToolsPanel() {
   const [connectForm, setConnectForm] = useState<{name: string; transport: string; command: string; url: string} | null>(null);
   const [lcForm, setLcForm] = useState<{module: string; className: string} | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [toolQuery, setToolQuery] = useState("");
+  const [browseCat, setBrowseCat] = useState<"all" | "built-in" | "mcp" | "langchain">("all");
 
   const loadTools = async () => {
     setLoading(true);
@@ -1470,19 +1472,60 @@ function ToolsPanel() {
     <>
       <SectionHeader icon={Wrench} color="text-violet-400" title="Tool Library" desc="Built-in, MCP servers, and LangChain community tools" />
 
-      {/* Stats */}
+      {/* Stats — clickable to filter the browser below */}
       <div className="grid grid-cols-3 gap-3 mb-4">
         {[
-          { count: tools?.built_in?.count || 0, label: "Built-in", color: "text-violet-400" },
-          { count: tools?.mcp_external?.count || 0, label: "MCP External", color: "text-cyan-400" },
-          { count: tools?.langchain?.count || 0, label: "LangChain", color: "text-amber-400" },
+          { count: tools?.built_in?.count || 0, label: "Built-in", color: "text-violet-400", cat: "built-in" as const, ring: "border-violet-500/40" },
+          { count: tools?.mcp_external?.count || 0, label: "MCP External", color: "text-cyan-400", cat: "mcp" as const, ring: "border-cyan-500/40" },
+          { count: tools?.langchain?.count || 0, label: "LangChain", color: "text-amber-400", cat: "langchain" as const, ring: "border-amber-500/40" },
         ].map(stat => (
-          <div key={stat.label} className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-3 text-center hover:bg-white/[0.03] transition-colors">
+          <button key={stat.label} onClick={() => setBrowseCat(browseCat === stat.cat ? "all" : stat.cat)}
+            className={`rounded-xl border bg-white/[0.015] p-3 text-center hover:bg-white/[0.03] transition-all ${browseCat === stat.cat ? stat.ring + " bg-white/[0.03]" : "border-white/[0.06]"}`}>
             <p className={`text-lg font-bold ${stat.color}`}>{stat.count}</p>
             <p className="text-[10px] text-slate-500">{stat.label}</p>
-          </div>
+          </button>
         ))}
       </div>
+
+      {/* Browse all tools — searchable catalog of what agents can actually use */}
+      {(() => {
+        const all: { name: string; description: string; category: string }[] = [];
+        (tools?.built_in?.tools || []).forEach((t: any) => all.push({ ...t, category: "built-in" }));
+        (tools?.mcp_external?.tools || []).forEach((t: any) => all.push({ ...t, category: "mcp" }));
+        (tools?.langchain?.tools || []).forEach((t: any) => all.push({ ...t, category: "langchain" }));
+        const q = toolQuery.trim().toLowerCase();
+        const filtered = all.filter(t => (browseCat === "all" || t.category === browseCat) &&
+          (!q || t.name.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q)));
+        const badge = (c: string) => c === "mcp" ? "text-cyan-300 bg-cyan-500/12" : c === "langchain" ? "text-amber-300 bg-amber-500/12" : "text-violet-300 bg-violet-500/12";
+        return (
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-3 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-slate-300">Browse tools</h3>
+              <span className="text-[9px] text-slate-600">{filtered.length} of {all.length}{browseCat !== "all" ? ` · ${browseCat}` : ""}</span>
+            </div>
+            <div className="relative mb-2">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-600" />
+              <input value={toolQuery} onChange={e => setToolQuery(e.target.value)} placeholder="Search 100+ tools by name or what they do…" className="w-full !pl-8 !py-1.5 !text-[11px] !bg-[#08080f] !border-white/[0.06]" />
+              {browseCat !== "all" && <button onClick={() => setBrowseCat("all")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-slate-500 hover:text-slate-300">clear filter</button>}
+            </div>
+            <div className="max-h-[280px] overflow-y-auto space-y-1 pr-1">
+              {filtered.length === 0 ? (
+                <p className="text-[10px] text-slate-600 text-center py-4">No tools match “{toolQuery}”.</p>
+              ) : filtered.map(t => (
+                <div key={t.name} className="flex items-start gap-2 rounded-lg border border-white/[0.05] bg-white/[0.01] px-2.5 py-1.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-mono text-slate-200 truncate">{t.name}</span>
+                      <span className={`text-[7px] px-1 py-0.5 rounded shrink-0 ${badge(t.category)}`}>{t.category === "built-in" ? "native" : t.category}</span>
+                    </div>
+                    {t.description && <div className="text-[9px] text-slate-500 leading-snug line-clamp-2 mt-0.5">{t.description}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Connected MCP Servers */}
       <div className="space-y-2 mb-4">
