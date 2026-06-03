@@ -311,6 +311,15 @@ def _apply_llm_to_kernel(kwargs: dict) -> None:
         kernel._agent_registry._llm._base_url = kwargs.get("api_base")
 
 
+def _activate_connection_globally(c: dict) -> None:
+    """Make a connection the live config: persist into llm_config (so it survives
+    restart + the Settings tab reflects it) AND hot-reload the running kernel."""
+    llm_config.update(provider=c.get("provider"), model=c.get("model", ""),
+                      api_key=c.get("api_key", ""), base_url=c.get("base_url", ""))
+    save_json(LLM_CONFIG_PATH, llm_config)
+    _apply_llm_to_kernel(litellm_kwargs())
+
+
 @router.get("/llm/connections")
 async def list_llm_connections():
     return {"connections": [_public_conn(c) for c in _all_conns()]}
@@ -337,7 +346,7 @@ async def create_llm_connection(body: dict):
                 _save_conn(c)
     _save_conn(conn)
     if conn["is_default"]:
-        _apply_llm_to_kernel(litellm_kwargs({k: conn[k] for k in ("provider", "model", "api_key", "base_url")}))
+        _activate_connection_globally(conn)
     return _public_conn(conn)
 
 
@@ -358,7 +367,7 @@ async def update_llm_connection(cid: str, body: dict):
         c["api_key"] = body["api_key"]
     _save_conn(c)
     if c.get("is_default"):
-        _apply_llm_to_kernel(litellm_kwargs({k: c[k] for k in ("provider", "model", "api_key", "base_url")}))
+        _activate_connection_globally(c)
     return _public_conn(c)
 
 
@@ -373,7 +382,7 @@ async def set_default_connection(cid: str):
             _save_conn(other)
     c["is_default"] = True
     _save_conn(c)
-    _apply_llm_to_kernel(litellm_kwargs({k: c[k] for k in ("provider", "model", "api_key", "base_url")}))
+    _activate_connection_globally(c)
     return _public_conn(c)
 
 
@@ -389,7 +398,7 @@ async def delete_llm_connection(cid: str):
         if rest:
             rest[0]["is_default"] = True
             _save_conn(rest[0])
-            _apply_llm_to_kernel(litellm_kwargs({k: rest[0][k] for k in ("provider", "model", "api_key", "base_url")}))
+            _activate_connection_globally(rest[0])
     return {"deleted": cid}
 
 
