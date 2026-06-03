@@ -6,13 +6,14 @@ import { useState, useEffect } from "react";
 import {
   MessageSquare,
   Settings, Bot, Activity, Menu, X, Database, FolderOpen, Users, Plus,
-  ChevronDown, Clock, Shield, FlaskConical, Radio, History,
+  ChevronDown, Clock, Shield, FlaskConical, Radio, History, Rocket,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
 
 const NAV_MAIN = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/deployments", label: "Deployments", icon: Rocket },
   { href: "/executions", label: "Executions", icon: History },
 ] as const;
 

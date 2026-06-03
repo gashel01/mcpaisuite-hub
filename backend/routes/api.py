@@ -1564,11 +1564,45 @@ async def list_deployments():
     return {"deployments": out}
 
 
+def _deploy_input_keys(config: dict) -> list:
+    """Extract the {placeholder} names a deployment expects as per-call inputs."""
+    import re as _re
+    texts = [str(config.get("goal", ""))]
+    for a in config.get("agents", []):
+        texts.append(str(a.get("instructions", "")))
+    for n in (config.get("graph") or {}).get("nodes", []) or []:
+        texts.append(str((n.get("data") or {}).get("instructions", "")))
+    keys = []
+    for t in texts:
+        for m in _re.findall(r"\{([a-zA-Z0-9_]+)\}", t):
+            if m not in keys:
+                keys.append(m)
+    return keys
+
+
+@router.get("/deployments/{did}")
+async def get_deployment(did: str):
+    """Public deployment detail (no token): meta + the input keys it expects + run count."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    rdir = os.path.join(_DEPLOY_DIR, did, "runs")
+    run_count = len([f for f in os.listdir(rdir) if f.endswith(".json")]) if os.path.isdir(rdir) else 0
+    return {**_public_deploy(dep), "endpoint": f"/api/deployments/{did}/run",
+            "inputs": _deploy_input_keys(dep.get("config", {})), "run_count": run_count}
+
+
 @router.delete("/deployments/{did}")
 async def delete_deployment(did: str):
     p = _deploy_path(did)
-    if os.path.isfile(p):
+    rdir = os.path.join(_DEPLOY_DIR, did)
+    found = os.path.isfile(p)
+    if found:
         os.remove(p)
+    # Clean the deployment's run-history dir so it stops showing in /executions
+    if os.path.isdir(rdir):
+        shutil.rmtree(rdir, ignore_errors=True)
+    if found:
         return {"deleted": did}
     raise HTTPException(404, "deployment not found")
 

@@ -1851,7 +1851,7 @@ function AgentsPageInner() {
                     </button>
                     {!isReadOnly && agents.length > 0 && (
                       <button onClick={openPublish}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-sky-300 border border-white/[0.06] hover:border-sky-500/25 text-sm font-medium rounded-lg transition-all shrink-0"
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-sky-600/15 hover:bg-sky-600/25 text-sky-300 border border-sky-500/25 text-sm font-medium rounded-lg transition-all shrink-0"
                         data-tooltip="Publish as a callable API endpoint (bearer-token auth)">
                         <Rocket className="h-4 w-4" /> Publish
                       </button>
@@ -1896,7 +1896,7 @@ function AgentsPageInner() {
                     )}
                     {agents.length > 0 && !isReadOnly && (
                       <button onClick={openPublish} disabled={!canRun}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-sky-300 border border-white/[0.06] hover:border-sky-500/25 disabled:opacity-30 text-sm font-medium rounded-lg transition-all shrink-0"
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-sky-600/15 hover:bg-sky-600/25 text-sky-300 border border-sky-500/25 disabled:opacity-30 text-sm font-medium rounded-lg transition-all shrink-0"
                         data-tooltip="Publish as a callable API endpoint (bearer-token auth)">
                         <Rocket className="h-4 w-4" /> Publish
                       </button>
