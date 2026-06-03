@@ -21,6 +21,12 @@ interface Deployment {
   version?: number;
   status?: string;
   inputs?: string[];
+  isOwner?: boolean;
+  config?: {
+    goal?: string;
+    pattern?: string;
+    agents?: { type?: string; role?: string; instructions?: string }[];
+  };
 }
 
 function fmtDate(s?: number) {
@@ -42,6 +48,8 @@ export default function DeploymentsPage() {
   const [testInputs, setTestInputs] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; output: string } | null>(null);
+  const [rotating, setRotating] = useState(false);
+  const [rotatedToken, setRotatedToken] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,6 +68,7 @@ export default function DeploymentsPage() {
     setTestInputs({});
     setTestResult(null);
     setTesting(false);
+    setRotatedToken(null);
     try {
       const r = await fetch(`${BASE}/deployments/${dep.id}`, { headers: th });
       setSelected(await r.json());
@@ -95,6 +104,16 @@ export default function DeploymentsPage() {
     setSelected(null);
     load();
   }, [BASE, th, load]);
+
+  const rotateToken = useCallback(async (id: string) => {
+    setRotating(true);
+    try {
+      const r = await fetch(`${BASE}/deployments/${id}/rotate-token`, { method: "POST", headers: th });
+      const d = await r.json();
+      if (r.ok && d.token) setRotatedToken(d.token);
+    } catch { /* ignore */ }
+    finally { setRotating(false); }
+  }, [BASE, th]);
 
   const copy = useCallback((text: string, key: string) => {
     navigator.clipboard?.writeText(text).then(() => { setCopied(key); setTimeout(() => setCopied(""), 1500); }).catch(() => {});
@@ -207,10 +226,49 @@ export default function DeploymentsPage() {
                 </div>
               )}
 
-              {/* Auth note */}
-              <div className="flex items-start gap-2 rounded-lg border border-amber-500/15 bg-amber-500/[0.04] px-3 py-2">
-                <KeyRound className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
-                <p className="text-[10.5px] text-slate-400 leading-relaxed">Calls require the <span className="text-amber-300">bearer token</span> issued when you published. It's shown only once — re-publish to rotate it.</p>
+              {/* Deployed workflow (owner-only) */}
+              {selected.config && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1.5"><Bot className="h-3 w-3 text-violet-400" /><span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Deployed workflow</span><span className="text-[9px] text-slate-600">· {selected.config.pattern || "sequential"}</span></div>
+                  <div className="rounded-lg border border-white/[0.06] bg-[#08080f] px-3 py-2.5 space-y-2">
+                    {selected.config.goal && (
+                      <div>
+                        <div className="text-[9px] text-slate-600 uppercase tracking-wide mb-0.5">Goal</div>
+                        <p className="text-[11px] text-slate-300 leading-relaxed">{selected.config.goal}</p>
+                      </div>
+                    )}
+                    {(selected.config.agents || []).map((a, i) => (
+                      <div key={i} className="border-t border-white/[0.05] pt-2 first:border-t-0 first:pt-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-medium text-slate-200">{a.role || `Agent ${i + 1}`}</span>
+                          {a.type && <span className="text-[9px] text-violet-300/80 bg-violet-500/10 px-1.5 py-0.5 rounded">{a.type}</span>}
+                        </div>
+                        {a.instructions && <p className="text-[10.5px] text-slate-500 leading-relaxed mt-0.5">{a.instructions}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Auth / token */}
+              <div className="rounded-lg border border-amber-500/15 bg-amber-500/[0.04] px-3 py-2.5">
+                <div className="flex items-start gap-2">
+                  <KeyRound className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
+                  <p className="flex-1 text-[10.5px] text-slate-400 leading-relaxed">Calls require the <span className="text-amber-300">bearer token</span> from when you published — it's shown only once. Lost it? Rotate to issue a new one (the old token stops working).</p>
+                  <button onClick={() => rotateToken(selected.id)} disabled={rotating}
+                    className="shrink-0 flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded transition-all disabled:opacity-40">
+                    {rotating ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <RefreshCw className="h-2.5 w-2.5" />} Rotate
+                  </button>
+                </div>
+                {rotatedToken && (
+                  <div className="mt-2.5 animate-fade-in">
+                    <div className="text-[9px] text-amber-400/90 font-medium mb-1">New token — copy it now, it won't be shown again:</div>
+                    <div className="flex items-center gap-2 rounded border border-amber-500/20 bg-[#08080f] px-2.5 py-1.5">
+                      <code className="flex-1 text-[11px] text-amber-300 break-all">{rotatedToken}</code>
+                      <button onClick={() => copy(rotatedToken, "rot")} className="text-slate-500 hover:text-slate-200 shrink-0">{copied === "rot" ? <CheckCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* curl */}

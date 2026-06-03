@@ -1581,15 +1581,32 @@ def _deploy_input_keys(config: dict) -> list:
 
 
 @router.get("/deployments/{did}")
-async def get_deployment(did: str):
-    """Public deployment detail (no token): meta + the input keys it expects + run count."""
+async def get_deployment(did: str, x_tenant_id: str = Header(default="")):
+    """Deployment detail (never the token). The owner (matching tenant) also gets the
+    deployed config back, so they can review goal/agents/instructions later."""
     dep = _load_deploy(did)
     if not dep:
         raise HTTPException(404, "deployment not found")
     rdir = os.path.join(_DEPLOY_DIR, did, "runs")
     run_count = len([f for f in os.listdir(rdir) if f.endswith(".json")]) if os.path.isdir(rdir) else 0
+    is_owner = x_tenant_id == dep.get("tenant", "")
     return {**_public_deploy(dep), "endpoint": f"/api/deployments/{did}/run",
-            "inputs": _deploy_input_keys(dep.get("config", {})), "run_count": run_count}
+            "inputs": _deploy_input_keys(dep.get("config", {})), "run_count": run_count,
+            "isOwner": is_owner, **({"config": dep.get("config")} if is_owner else {})}
+
+
+@router.post("/deployments/{did}/rotate-token")
+async def rotate_deployment_token(did: str, x_tenant_id: str = Header(default="")):
+    """Owner-only: issue a fresh bearer token and invalidate the old one. Returned once."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    if x_tenant_id != dep.get("tenant", ""):
+        raise HTTPException(403, "not the owner of this deployment")
+    new_token = "kmcp_" + _secrets.token_urlsafe(24)
+    dep["token"] = new_token
+    _save_deploy(dep)
+    return {"token": new_token}
 
 
 @router.delete("/deployments/{did}")
