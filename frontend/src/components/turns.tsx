@@ -21,22 +21,28 @@ export function TurnsPanel({ turns, tokens, cost, bootstrapSources }: { turns: T
     else if (t.role === "system" && t.content && t.content.startsWith("LLM error")) inlineSteps.push("error");
   }
 
-  // Pair tool_calls with their results
-  const pairedTurns: { call: Turn; result?: Turn }[] = [];
-  const otherTurns: Turn[] = [];
+  // Build the trace IN ORDER: assistant reasoning, tool call+result pairs, system notes —
+  // so the LLM's thinking before each tool call is preserved, not just the tool names.
+  // The final assistant turn is the answer (already shown in the message bubble) — skip it.
+  let lastAssistantIdx = -1;
+  for (let i = 0; i < turns.length; i++) {
+    if (turns[i].role === "assistant" && (turns[i].content || "").trim()) lastAssistantIdx = i;
+  }
+  type Item = { kind: "reasoning" | "tool" | "other"; turn: Turn; result?: Turn; key: string };
+  const orderedItems: Item[] = [];
   for (let i = 0; i < turns.length; i++) {
     const t = turns[i];
     if (t.role === "tool_call") {
       const result = turns[i + 1]?.role === "tool_result" ? turns[i + 1] : undefined;
-      pairedTurns.push({ call: t, result });
+      orderedItems.push({ kind: "tool", turn: t, result, key: `tc-${i}` });
       if (result) i++; // skip result, already paired
     } else if (t.role === "tool_result") {
-      // Orphan result (no preceding call) — show standalone
-      otherTurns.push(t);
+      orderedItems.push({ kind: "other", turn: t, key: `ot-${i}` });
     } else if (t.role === "system") {
-      otherTurns.push(t);
+      orderedItems.push({ kind: "other", turn: t, key: `sy-${i}` });
+    } else if (t.role === "assistant" && (t.content || "").trim() && i !== lastAssistantIdx) {
+      orderedItems.push({ kind: "reasoning", turn: t, key: `as-${i}` });
     }
-    // skip user/assistant turns in trace
   }
 
   return (
@@ -63,12 +69,13 @@ export function TurnsPanel({ turns, tokens, cost, bootstrapSources }: { turns: T
               <BootstrapItem source={src} />
             </div>
           ))}
-          {pairedTurns.map((pair, i) => (
-            <div key={`tc-${i}`} className="animate-stagger" style={{ animationDelay: `${(hasBootstrap ? bootstrapSources!.length : 0) * 50 + i * 50}ms` }}>
-              <ToolCallItem call={pair.call} result={pair.result} allTurns={turns} />
+          {orderedItems.map((item, i) => (
+            <div key={item.key} className="animate-stagger" style={{ animationDelay: `${(hasBootstrap ? bootstrapSources!.length : 0) * 50 + i * 30}ms` }}>
+              {item.kind === "tool" ? <ToolCallItem call={item.turn} result={item.result} allTurns={turns} />
+                : item.kind === "reasoning" ? <ReasoningItem text={item.turn.content || ""} />
+                : <OtherTurnItem turn={item.turn} />}
             </div>
           ))}
-          {otherTurns.map((turn, i) => <OtherTurnItem key={`ot-${i}`} turn={turn} />)}
         </div>
       )}
     </div>
@@ -152,6 +159,14 @@ function ToolCallItem({ call, result, allTurns }: { call: Turn; result?: Turn; a
       )}
     </div>
   );
+}
+
+// ── Assistant reasoning (the LLM's thinking before a tool call) ─────────────
+
+function ReasoningItem({ text }: { text: string }) {
+  const t = text.trim();
+  if (!t) return null;
+  return <p className="text-[12px] leading-relaxed text-slate-300/90 whitespace-pre-wrap break-words">{t}</p>;
 }
 
 // ── Other turns (system messages, orphan results) ──────────────────────────
