@@ -313,6 +313,11 @@ main {
   right: 0;
   transform: none;
 }
+/* Show above the element (for controls near the bottom of the viewport) */
+[data-tooltip][data-tooltip-top]:hover::after {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
 
 @keyframes tooltip-in {
   from { opacity: 0; transform: translateY(4px); }
