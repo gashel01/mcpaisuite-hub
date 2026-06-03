@@ -1561,19 +1561,11 @@ async def classify_task(goal: str = Query(...)):
     return {"goal": goal, "agent_type": _require().classify_task(goal)}
 
 
-@router.post("/agents/suggest")
-async def suggest_agents(body: dict):
-    """Use LLM to suggest the best agent team for a goal, taking into account available tools and settings."""
-    k = _require()
-    goal = body.get("goal", "")
-    if not goal.strip():
-        raise HTTPException(400, "goal is required")
-
-    # Gather system context for better suggestions
+def _architect_context(k):
+    """Gather the system context (capabilities, tools, model, past runs) the agent
+    architect needs. Shared by /agents/suggest, /agents/build, /agents/architect.
+    Returns (context_str, model, tool_registry, native_tools, mcp_tools, lc_tools)."""
     orch = k._engine._orchestrator
-
-    # Available tool categories
-    available_tools = []
     tool_registry = orch.get_tool_registry()
     native_tools = sorted({t["name"] for t in tool_registry if not t["name"].startswith("lc__") and not t["name"].startswith("mcp__")})
     mcp_tools = sorted({t["name"] for t in tool_registry if t["name"].startswith("mcp__")})
@@ -1600,7 +1592,6 @@ async def suggest_agents(body: dict):
 
     model = k._engine._llm._model or "unknown"
 
-    # Gather past successful runs for few-shot learning
     past_examples = ""
     try:
         from task_store import load_all_tasks
@@ -1624,17 +1615,13 @@ async def suggest_agents(body: dict):
                     "duration_s": round(t.duration_ms / 1000, 1) if t.duration_ms else 0,
                     "tokens": t.total_tokens,
                 })
-        # Keep the 5 most recent relevant ones
         if successful:
             successful = successful[-5:]
-            lines = []
-            for s in successful:
-                lines.append(f'  - Goal: "{s["goal"]}" → pattern={s["pattern"]}, {s["agents"]} agents, ${s["cost"]}, {s["duration_s"]}s')
+            lines = [f'  - Goal: "{s["goal"]}" -> pattern={s["pattern"]}, {s["agents"]} agents, ${s["cost"]}, {s["duration_s"]}s' for s in successful]
             past_examples = "\n\nPAST SUCCESSFUL RUNS (learn from these):\n" + "\n".join(lines)
     except Exception:
         pass
 
-    # Check for saved workflows that might match
     saved_workflows = ""
     try:
         import os as _os
@@ -1652,7 +1639,6 @@ async def suggest_agents(body: dict):
     except Exception:
         pass
 
-    # Model-specific advice
     model_note = ""
     ml = model.lower()
     if any(x in ml for x in ("haiku", "mini", "flash", "8b", "small")):
@@ -1671,6 +1657,18 @@ CURRENT MODEL: {model}{model_note}
 TOTAL TOOLS: {len(tool_registry)} ({len(native_tools)} native, {len(mcp_tools)} MCP, {len(lc_tools)} LangChain)
 {past_examples}{saved_workflows}
 """
+    return context, model, tool_registry, native_tools, mcp_tools, lc_tools
+
+
+@router.post("/agents/suggest")
+async def suggest_agents(body: dict):
+    """Use LLM to suggest the best agent team for a goal, taking into account available tools and settings."""
+    k = _require()
+    goal = body.get("goal", "")
+    if not goal.strip():
+        raise HTTPException(400, "goal is required")
+
+    context, model, tool_registry, native_tools, mcp_tools, lc_tools = _architect_context(k)
 
     try:
         llm = k._engine._llm
@@ -1792,6 +1790,151 @@ async def build_team_stream(body: dict):
                        "estimated_cost": cost, "estimated_duration": dur, "missing": missing})
         except HTTPException as exc:
             yield sse({"type": "error", "message": str(exc.detail)})
+        except Exception as exc:  # noqa: BLE001
+            yield sse({"type": "error", "message": str(exc)[:200]})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@router.post("/agents/architect")
+async def architect_stream(body: dict):
+    """Conversational chat-to-build. The architect thinks out loud (token-streamed
+    narration), then emits the FULL desired team after a ===TEAM=== marker. Handles both
+    initial build and refinement ("add a tester", "make it parallel") — it always returns
+    the complete updated team, which the client diffs onto the canvas.
+
+    Body: {message, current?: {pattern, agents}, history?: [{role, content}]}.
+    Events: narration (text delta), team (pattern+agents+estimates+missing), done, error.
+    """
+    k = _require()
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message is required")
+    current = body.get("current") or {}
+    history = body.get("history") or []
+
+    context, model, *_ = _architect_context(k)
+    llm = k._engine._llm
+
+    cur_agents = current.get("agents") or []
+    current_json = json.dumps({"pattern": current.get("pattern", "sequential"), "agents": cur_agents}, indent=2) if cur_agents else "(none yet — you're starting fresh)"
+
+    MARKER = "===TEAM==="
+    system = f"""You are the agent architect for the MCP AI Suite — a sharp, friendly designer of multi-agent teams who works conversationally.
+
+{context}
+
+You are MID-CONVERSATION with the user. They may ask you to build a new team or REFINE the current one.
+
+CURRENT TEAM (refine THIS; if empty you're starting fresh):
+{current_json}
+
+PATTERNS: sequential (pipeline A→B→C), parallel (independent, simultaneous), supervisor (one agent reviews the others), debate (agents argue, a judge decides), swarm (collaborate with feedback loops — powerful but expensive).
+AGENT TYPES: code (execute_code, write_file), research (web_search, fetch_webpage), file (read/write files), memory (store/query facts), plan, rag (knowledge base), custom (you name the exact tools).
+
+HOW TO REPLY — two parts, in this exact order:
+1) Talk to the user like a real architect pairing with them: what you understood, what you're choosing and WHY, and honestly flag anything missing/risky (e.g. a capability that isn't connected). Warm, specific, concise — 2 to 5 short sentences. This part is streamed live, so write it naturally.
+2) Then a line containing EXACTLY {MARKER}
+3) Then ONLY a JSON object (no markdown, no prose after it) describing the FULL desired team after this request:
+{{"pattern":"sequential|parallel|supervisor|debate|swarm","agents":[{{"type":"code|research|file|memory|plan|rag|custom","role":"short role name","instructions":"specific actionable instructions","max_turns":3,"tools":["optional exact tool names"]}}],"estimated_cost":"$0.XX","estimated_duration":"XXs","missing":["capabilities needed but not connected"]}}
+
+RULES:
+- Only use capabilities that are actually available above.
+- When REFINING, return the COMPLETE updated team (keep existing agents unchanged unless the request changes them) — never just the delta.
+- Keep it minimal: fewer agents = faster + cheaper.
+- If the request is just a question or chit-chat, answer it in part 1 and still emit {MARKER} + the current team unchanged."""
+
+    messages = []
+    for h in history[-8:]:
+        r = h.get("role")
+        c = (h.get("content") or "")[:1500]
+        if r in ("user", "assistant") and c:
+            messages.append({"role": r, "content": c})
+    messages.append({"role": "user", "content": message})
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_delta(text: str):
+        await queue.put(text)
+
+    async def run_llm():
+        try:
+            resp = await llm.complete(system=system, messages=messages, tools=[], on_delta=on_delta)
+            await queue.put(None)
+            return resp
+        except Exception:
+            await queue.put(None)
+            raise
+
+    runner = asyncio.create_task(run_llm())
+
+    async def gen():
+        def sse(ev: dict) -> str:
+            return f"data: {json.dumps(ev)}\n\n"
+
+        full = ""
+        narrated = 0
+        marker_pos = -1
+        try:
+            while True:
+                text = await queue.get()
+                if text is None:
+                    break
+                full += text
+                if marker_pos < 0:
+                    mp = full.find(MARKER)
+                    if mp >= 0:
+                        marker_pos = mp
+                        seg = full[narrated:mp]
+                        if seg:
+                            yield sse({"type": "narration", "text": seg})
+                        narrated = mp
+                    else:
+                        # Hold back the tail in case the marker is mid-formation
+                        safe = max(narrated, len(full) - len(MARKER))
+                        if safe > narrated:
+                            yield sse({"type": "narration", "text": full[narrated:safe]})
+                            narrated = safe
+
+            # LLM finished — get the authoritative full content
+            try:
+                resp = await runner
+                if resp and resp.content:
+                    full = resp.content
+            except Exception as exc:
+                yield sse({"type": "error", "message": str(exc)[:200]})
+                return
+
+            if marker_pos < 0:
+                marker_pos = full.find(MARKER)
+            if marker_pos < 0:
+                if narrated < len(full):
+                    yield sse({"type": "narration", "text": full[narrated:]})
+                yield sse({"type": "error", "message": "Architect didn't return a team. Try rephrasing."})
+                return
+            if narrated < marker_pos:
+                yield sse({"type": "narration", "text": full[narrated:marker_pos]})
+
+            jtext = full[marker_pos + len(MARKER):].strip()
+            if jtext.startswith("```"):
+                jtext = jtext.split("```")[1].strip()
+                if jtext.startswith("json"):
+                    jtext = jtext[4:].strip()
+            try:
+                team = json.loads(jtext)
+            except Exception:
+                # Last resort: grab the first {...} block
+                import re as _re
+                m = _re.search(r"\{.*\}", jtext, _re.DOTALL)
+                team = json.loads(m.group(0)) if m else {}
+            yield sse({"type": "team",
+                       "pattern": team.get("pattern", "sequential"),
+                       "agents": team.get("agents", []) or [],
+                       "estimated_cost": team.get("estimated_cost", ""),
+                       "estimated_duration": team.get("estimated_duration", ""),
+                       "missing": team.get("missing") or []})
+            yield sse({"type": "done"})
         except Exception as exc:  # noqa: BLE001
             yield sse({"type": "error", "message": str(exc)[:200]})
 

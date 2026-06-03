@@ -127,9 +127,10 @@ function AgentsPageInner() {
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<"build" | "output">("build");
 
-  // Chat-to-build (AI builds the team, narrated + incremental)
+  // Chat-to-build (conversational architect: narrate + diff the team onto the canvas)
   const [building, setBuilding] = useState(false);
-  const [buildSteps, setBuildSteps] = useState<string[]>([]);
+  const [buildChat, setBuildChat] = useState<{ role: "user" | "architect"; text: string }[]>([]);
+  const [buildInput, setBuildInput] = useState("");
 
   // Workflow library panel
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -311,16 +312,29 @@ function AgentsPageInner() {
   const hasFlowErrors = flowWarnings.length > 0 || errorNodeIds.length > 0;
   const canRun = goal.trim() && agents.length > 0 && agentsWithoutRole.length === 0 && flowWarnings.length === 0;
 
-  // ── Chat-to-build: AI assembles the team, narrated, nodes pop in one by one ──
-  const handleBuild = useCallback(async () => {
-    if (!goal.trim() || !activeId || building) return;
+  // ── Conversational chat-to-build: architect narrates (streamed), then we diff its
+  //    full team onto the canvas (match by role to keep node identity / avoid flashing). ──
+  const handleArchitect = useCallback(async (message: string) => {
+    const msg = message.trim();
+    if (!msg || !activeId || building) return;
+    const aid = activeId;
     setBuilding(true);
-    setBuildSteps([]);
-    setAgents(() => []); // build fresh
+    // Snapshot the conversation history (before adding this turn) for the backend.
+    const history = buildChat.map(m => ({ role: m.role === "architect" ? "assistant" : "user", content: m.text }));
+    setBuildChat(c => [...c, { role: "user", text: msg }, { role: "architect", text: "" }]);
+    const archIdx = buildChat.length + 1; // index of the architect message we'll stream into
+
+    // Current team snapshot for refinement context.
+    const curAgents = (store.sessions.find(s => s.id === aid)?.config.agents) || [];
+    const curPattern = (store.sessions.find(s => s.id === aid)?.config.pattern) || "sequential";
+
     try {
-      const res = await fetch(`${BASE_URL}/agents/build`, {
+      const res = await fetch(`${BASE_URL}/agents/architect`, {
         method: "POST", headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({ goal }),
+        body: JSON.stringify({
+          message: msg, history,
+          current: { pattern: curPattern, agents: curAgents.map(a => ({ type: a.type, role: a.role, instructions: a.instructions, max_turns: a.max_turns, tools: a.tools })) },
+        }),
       });
       if (!res.body) throw new Error("no stream");
       const reader = res.body.getReader();
@@ -337,27 +351,36 @@ function AgentsPageInner() {
           if (!line.startsWith("data:")) continue;
           let ev: any;
           try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
-          if (ev.type === "step") {
-            setBuildSteps(s => [...s, ev.text]);
-          } else if (ev.type === "agent") {
-            const a = ev.agent || {};
-            setAgents(prev => [...prev, {
-              id: newId(), name: "", description: "", type: a.type || "custom",
-              role: a.role || "", max_turns: a.max_turns || 5,
-              instructions: a.instructions || "", tools: Array.isArray(a.tools) ? a.tools : [],
-            }]);
-            if (ev.pattern && activeId) store.updateConfig(activeId, { pattern: ev.pattern });
+          if (ev.type === "narration") {
+            setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: m.text + ev.text } : m));
+          } else if (ev.type === "team") {
+            // Diff onto canvas: keep ids of agents whose role is unchanged so they don't flash.
+            const existing = (store.sessions.find(s => s.id === aid)?.config.agents) || [];
+            const used = new Set<string>();
+            const next = (ev.agents || []).map((a: any) => {
+              const match = existing.find(e => e.role && e.role === a.role && !used.has(e.id));
+              if (match) used.add(match.id);
+              return {
+                id: match?.id || newId(), name: match?.name || "", description: "",
+                type: a.type || "custom", role: a.role || "", max_turns: a.max_turns || 5,
+                instructions: a.instructions || "", tools: Array.isArray(a.tools) ? a.tools : [],
+              };
+            });
+            store.updateConfig(aid, { pattern: ev.pattern || "sequential", agents: next });
+            if (ev.missing && ev.missing.length) {
+              setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: m.text + `\n\n⚠ Needs connecting: ${ev.missing.join(", ")}` } : m));
+            }
           } else if (ev.type === "error") {
-            setBuildSteps(s => [...s, "⚠ " + (ev.message || "build failed")]);
+            setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: (m.text || "") + "⚠ " + (ev.message || "failed") } : m));
           }
         }
       }
     } catch (e: any) {
-      setBuildSteps(s => [...s, "⚠ " + (e?.message || "build failed")]);
+      setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: (m.text || "") + "⚠ " + (e?.message || "failed") } : m));
     } finally {
       setBuilding(false);
     }
-  }, [goal, activeId, building, th]);
+  }, [activeId, building, buildChat, th]);
 
   // ── Agent CRUD ─────────────────────────────────────────────────────────
 
@@ -1289,12 +1312,12 @@ function AgentsPageInner() {
                 <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Goal</label>
                 <div className="flex items-center gap-1.5">
                   <button
-                    onClick={handleBuild}
+                    onClick={() => handleArchitect(goal)}
                     disabled={!goal.trim() || isRunning || building}
                     className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 rounded-lg transition-all disabled:opacity-30"
-                    data-tooltip="AI builds the agent team for your goal"
+                    data-tooltip="AI architects the agent team — describe, then refine in chat"
                   >
-                    {building ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} {building ? "Building…" : "Build"}
+                    {building ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} {building ? "Building…" : "Build with AI"}
                   </button>
                   <TemplateSelector templates={TEMPLATES} onSelect={applyTemplate} />
                 </div>
@@ -1307,20 +1330,47 @@ function AgentsPageInner() {
                 className="w-full !py-2.5 !px-4 text-sm"
                 disabled={isRunning}
               />
-              {/* Chat-to-build narration */}
-              {(building || buildSteps.length > 0) && (
+              {/* Conversational chat-to-build: architect thread + refine input */}
+              {(building || buildChat.length > 0) && (
                 <div className="mt-2 rounded-lg border border-violet-500/15 bg-violet-500/[0.04] px-3 py-2 animate-fade-in">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    {building ? <Loader2 className="h-3 w-3 text-violet-400 animate-spin" /> : <Sparkles className="h-3 w-3 text-violet-400" />}
-                    <span className="text-[10px] font-semibold text-violet-300 uppercase tracking-wide">{building ? "Building your team" : "Built"}</span>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Sparkles className="h-3 w-3 text-violet-400" />
+                    <span className="text-[10px] font-semibold text-violet-300 uppercase tracking-wide">AI Architect</span>
                     {!building && (
-                      <button onClick={() => setBuildSteps([])} className="ml-auto text-[10px] text-slate-500 hover:text-slate-300">dismiss</button>
+                      <button onClick={() => setBuildChat([])} className="ml-auto text-[10px] text-slate-500 hover:text-slate-300">clear</button>
                     )}
                   </div>
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {buildSteps.map((s, i) => (
-                      <p key={i} className="text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words animate-fade-in">{s}</p>
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {buildChat.map((m, i) => (
+                      m.role === "user" ? (
+                        <div key={i} className="flex justify-end">
+                          <span className="text-[11px] bg-violet-500/15 text-violet-200 rounded-lg px-2.5 py-1.5 max-w-[85%]">{m.text}</span>
+                        </div>
+                      ) : (
+                        <p key={i} className="text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+                          {m.text}
+                          {building && i === buildChat.length - 1 && <span className="inline-block w-1 h-3 ml-0.5 bg-violet-400 align-middle animate-pulse" />}
+                        </p>
+                      )
                     ))}
+                  </div>
+                  {/* Refine input */}
+                  <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-white/[0.05]">
+                    <input
+                      value={buildInput}
+                      onChange={e => setBuildInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter" && buildInput.trim() && !building) { handleArchitect(buildInput); setBuildInput(""); } }}
+                      placeholder={building ? "Architect is thinking…" : "Refine: add a tester, make it parallel…"}
+                      disabled={building}
+                      className="flex-1 !py-1.5 !px-3 text-[11px] bg-white/[0.03] border border-white/[0.08] rounded-lg disabled:opacity-50"
+                    />
+                    <button
+                      onClick={() => { if (buildInput.trim() && !building) { handleArchitect(buildInput); setBuildInput(""); } }}
+                      disabled={!buildInput.trim() || building}
+                      className="p-1.5 rounded-lg bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 disabled:opacity-30 transition-all"
+                    >
+                      {building ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
+                    </button>
                   </div>
                 </div>
               )}
