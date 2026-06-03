@@ -132,9 +132,10 @@ function AgentsPageInner() {
   const [buildChat, setBuildChat] = useState<{ role: "user" | "architect"; text: string }[]>([]);
   const [buildInput, setBuildInput] = useState("");
   const [buildSuggestions, setBuildSuggestions] = useState<string[]>([]);
+  const [buildMissing, setBuildMissing] = useState<string[]>([]);
   const buildScrollRef = useRef<HTMLDivElement>(null);
   // Reset the architect conversation when switching sessions (it's per-workflow).
-  useEffect(() => { setBuildChat([]); setBuildSuggestions([]); setBuildInput(""); }, [activeId]);
+  useEffect(() => { setBuildChat([]); setBuildSuggestions([]); setBuildMissing([]); setBuildInput(""); }, [activeId]);
   // Auto-scroll the architect thread to the latest as narration streams in.
   useEffect(() => { const el = buildScrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [buildChat]);
 
@@ -326,6 +327,7 @@ function AgentsPageInner() {
     const aid = activeId;
     setBuilding(true);
     setBuildSuggestions([]);
+    setBuildMissing([]);
     // Snapshot the conversation history (before adding this turn) for the backend.
     const history = buildChat.map(m => ({ role: m.role === "architect" ? "assistant" : "user", content: m.text }));
     setBuildChat(c => [...c, { role: "user", text: msg }, { role: "architect", text: "" }]);
@@ -397,9 +399,7 @@ function AgentsPageInner() {
             const humanGates = Array.isArray(ev.human_gates) ? ev.human_gates.filter((x: any) => typeof x === "number") : [];
             store.updateConfig(aid, { pattern: ev.pattern || "sequential", agents: next, ...trigCfg, ...wsCfg, humanGates });
             setBuildSuggestions(Array.isArray(ev.suggestions) ? ev.suggestions.filter((s: any) => typeof s === "string").slice(0, 4) : []);
-            if (ev.missing && ev.missing.length) {
-              setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: m.text + `\n\n⚠ Needs connecting: ${ev.missing.join(", ")}` } : m));
-            }
+            setBuildMissing(Array.isArray(ev.missing) ? ev.missing.filter((s: any) => typeof s === "string") : []);
           } else if (ev.type === "error") {
             setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: (m.text || "") + "⚠ " + (ev.message || "failed") } : m));
           }
@@ -1384,6 +1384,20 @@ function AgentsPageInner() {
                       )
                     ))}
                   </div>
+                  {/* Missing capability — actionable: jump to connect it */}
+                  {!building && buildMissing.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.05] px-2.5 py-2 animate-fade-in">
+                      <div className="flex items-start gap-1.5">
+                        <AlertCircle className="h-3 w-3 text-amber-400 mt-0.5 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[10px] text-amber-300/90 leading-relaxed">Needs connecting: {buildMissing.join(", ")}</div>
+                          <Link href="/settings" className="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-amber-300 hover:text-amber-200">
+                            Connect it in Settings <ArrowRight className="h-2.5 w-2.5" />
+                          </Link>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {/* Quick-refine suggestion chips (architect-proposed, one click) */}
                   {!building && buildSuggestions.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
