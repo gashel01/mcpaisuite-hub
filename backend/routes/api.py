@@ -1609,7 +1609,35 @@ async def run_deployment(did: str, body: dict, authorization: str = Header(defau
     dep["runs"] = dep.get("runs", 0) + 1
     _save_deploy(dep)
 
-    return await create_taskforce(cfg, x_tenant_id=dep.get("tenant", ""))
+    started = _time.time()
+    result, status, err = {}, "completed", None
+    try:
+        result = await create_taskforce(cfg, x_tenant_id=dep.get("tenant", "")) or {}
+        if result.get("success") is False:
+            status = "failed"
+            err = result.get("error")
+    except Exception as exc:
+        status = "failed"
+        err = str(exc)
+        result = {"success": False, "final_output": "", "error": err}
+    finally:
+        # Log this API call into the deployment's run history (for the executions console)
+        try:
+            rdir = os.path.join(_DEPLOY_DIR, did, "runs")
+            os.makedirs(rdir, exist_ok=True)
+            now = int(_time.time() * 1000)
+            rid = f"drun-{now}"
+            _json.dump({
+                "id": rid, "deploymentId": did, "deploymentName": dep.get("name"),
+                "source": "api", "status": status, "inputs": inputs, "error": err,
+                "answer": result.get("final_output"),
+                "metrics": {"tokens": result.get("total_tokens", 0), "cost": result.get("total_cost", 0),
+                            "turns": result.get("total_turns", 0), "duration": result.get("duration_ms", int((_time.time() - started) * 1000))},
+                "createdAt": now, "completedAt": now,
+            }, open(os.path.join(rdir, f"{rid}.json"), "w"))
+        except Exception:
+            pass
+    return result
 
 
 @router.get("/agents/taskforce/schedules")
@@ -2140,6 +2168,9 @@ def _load_wf(wf_id: str) -> dict | None:
                 with open(os.path.join(rdir, rf)) as f:
                     runs.append(_json.load(f))
     wf["runs"] = runs
+    # Backfill activeVersionId for legacy workflows → newest version
+    if not wf.get("activeVersionId") and versions:
+        wf["activeVersionId"] = versions[-1]["id"]
     return wf
 
 
@@ -2162,13 +2193,14 @@ async def create_workflow(body: dict):
     os.makedirs(os.path.join(wf_dir, "versions"), exist_ok=True)
     os.makedirs(os.path.join(wf_dir, "runs"), exist_ok=True)
 
-    meta = {"id": wf_id, "name": body.get("name", "Untitled"), "createdAt": now, "updatedAt": now}
-    with open(os.path.join(wf_dir, "meta.json"), "w") as f:
-        _json.dump(meta, f)
-
     # Create v1
     v_data = body.get("version", {})
     v_id = f"v-{now}"
+    meta = {"id": wf_id, "name": body.get("name", "Untitled"), "createdAt": now, "updatedAt": now,
+            "activeVersionId": v_id}
+    with open(os.path.join(wf_dir, "meta.json"), "w") as f:
+        _json.dump(meta, f)
+
     version = {"id": v_id, "workflowId": wf_id, "version": 1, "config": v_data.get("config", {}),
                "graph": v_data.get("graph"), "note": v_data.get("note", ""), "createdAt": now}
     if v_data.get("parentVersionId"):
@@ -2226,15 +2258,36 @@ async def create_version(wf_id: str, body: dict):
                "parentVersionId": body.get("parentVersionId"), "createdAt": now}
     with open(os.path.join(vdir, f"{v_id}.json"), "w") as f:
         _json.dump(version, f)
-    # Update workflow timestamp
+    # Update workflow timestamp; optionally promote this version to active
     meta_path = os.path.join(wf_dir, "meta.json")
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = _json.load(f)
         meta["updatedAt"] = now
+        if body.get("activate"):
+            meta["activeVersionId"] = v_id
         with open(meta_path, "w") as f:
             _json.dump(meta, f)
-    return {"version": version}
+    return {"version": version, "activeVersionId": (meta.get("activeVersionId") if os.path.exists(meta_path) else None)}
+
+
+@router.post("/workflows/{wf_id}/activate/{v_id}")
+async def activate_version(wf_id: str, v_id: str):
+    """Promote a version to the 'active' one (the version that Run/Deploy target by default).
+    Rollback is just activating an older version — versions are immutable, nothing is copied."""
+    wf_dir = _wf_path(wf_id)
+    meta_path = os.path.join(wf_dir, "meta.json")
+    if not os.path.exists(meta_path):
+        raise HTTPException(404, "Workflow not found")
+    if not os.path.exists(os.path.join(wf_dir, "versions", f"{v_id}.json")):
+        raise HTTPException(404, "Version not found")
+    with open(meta_path) as f:
+        meta = _json.load(f)
+    meta["activeVersionId"] = v_id
+    meta["updatedAt"] = int(_time.time() * 1000)
+    with open(meta_path, "w") as f:
+        _json.dump(meta, f)
+    return {"activeVersionId": v_id}
 
 
 @router.post("/workflows/{wf_id}/versions/{v_id}/runs")
@@ -2328,6 +2381,85 @@ async def update_run(run_id: str, body: dict):
                 with open(rpath, "w") as f:
                     _json.dump(run, f)
                 return {"updated": True}
+    raise HTTPException(404, "Run not found")
+
+
+def _iter_run_files():
+    """Yield (path, source) for every run JSON across builder workflows + deployments."""
+    if os.path.isdir(_WORKFLOWS_DIR):
+        for wf_name in os.listdir(_WORKFLOWS_DIR):
+            rdir = os.path.join(_WORKFLOWS_DIR, wf_name, "runs")
+            if os.path.isdir(rdir):
+                for rf in os.listdir(rdir):
+                    if rf.endswith(".json"):
+                        yield os.path.join(rdir, rf), "builder"
+    if os.path.isdir(_DEPLOY_DIR):
+        for dep_name in os.listdir(_DEPLOY_DIR):
+            rdir = os.path.join(_DEPLOY_DIR, dep_name, "runs")
+            if os.path.isdir(rdir):
+                for rf in os.listdir(rdir):
+                    if rf.endswith(".json"):
+                        yield os.path.join(rdir, rf), "api"
+
+
+def _wf_name_map() -> dict:
+    out = {}
+    if os.path.isdir(_WORKFLOWS_DIR):
+        for wf_name in os.listdir(_WORKFLOWS_DIR):
+            mp = os.path.join(_WORKFLOWS_DIR, wf_name, "meta.json")
+            if os.path.exists(mp):
+                try:
+                    out[wf_name] = _json.load(open(mp)).get("name", wf_name)
+                except Exception:
+                    pass
+    return out
+
+
+@router.get("/runs")
+async def list_runs(status: str = "", source: str = "", since: int = 0, q: str = "", limit: int = 200):
+    """Flat, filterable executions feed across builder runs + deployment API calls.
+    Lightweight summaries (no liveEvents); use GET /runs/{id} for the full record."""
+    names = _wf_name_map()
+    out = []
+    for path, src in _iter_run_files():
+        if source and src != source:
+            continue
+        try:
+            r = _json.load(open(path))
+        except Exception:
+            continue
+        if status and r.get("status") != status:
+            continue
+        if since and (r.get("createdAt", 0) < since):
+            continue
+        label = r.get("deploymentName") if src == "api" else names.get(r.get("workflowId"), r.get("workflowId"))
+        ans = r.get("answer") or ""
+        if q and q.lower() not in (str(label or "") + " " + str(ans)).lower():
+            continue
+        out.append({
+            "id": r.get("id"), "source": src, "status": r.get("status"),
+            "label": label, "workflowId": r.get("workflowId"), "versionId": r.get("versionId"),
+            "deploymentId": r.get("deploymentId"),
+            "metrics": r.get("metrics"), "feedback": r.get("feedback"),
+            "answerPreview": (ans[:160] + "…") if len(ans) > 160 else ans,
+            "createdAt": r.get("createdAt"), "completedAt": r.get("completedAt"),
+        })
+    out.sort(key=lambda x: x.get("createdAt") or 0, reverse=True)
+    total = len(out)
+    return {"runs": out[: max(1, limit)], "total": total}
+
+
+@router.get("/runs/{run_id}")
+async def get_run(run_id: str):
+    """Full run record (incl. answer + liveEvents) from either builder or deployment history."""
+    for path, src in _iter_run_files():
+        if os.path.basename(path) == f"{run_id}.json":
+            try:
+                r = _json.load(open(path))
+                r["source"] = src
+                return r
+            except Exception:
+                break
     raise HTTPException(404, "Run not found")
 
 

@@ -24,6 +24,7 @@ interface LibraryPanelProps {
   onForkVersion: (workflow: Workflow, version: WorkflowVersion) => void;
   onDeleteWorkflow: (id: string) => void;
   onDeleteSchedule: (id: string) => void;
+  onActivateVersion?: (workflowId: string, versionId: string) => void;
   compareItems?: CompareItem[];
   onAddToCompare?: (item: CompareItem) => void;
 }
@@ -31,7 +32,7 @@ interface LibraryPanelProps {
 export default function LibraryPanel(props: LibraryPanelProps) {
   const { open, setOpen, workflows, schedules, activeWorkflowId, activeVersionId, activeRunId,
     canSave, onSave, onLoadVersion, onViewRun, onForkVersion, onDeleteWorkflow, onDeleteSchedule,
-    compareItems = [], onAddToCompare } = props;
+    onActivateVersion, compareItems = [], onAddToCompare } = props;
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const selectedWorkflow = selectedWorkflowId ? workflows.find(w => w.id === selectedWorkflowId) : null;
 
@@ -78,10 +79,24 @@ export default function LibraryPanel(props: LibraryPanelProps) {
                       {/* Version header */}
                       <div className="flex items-center gap-2">
                         <span className={`text-[10px] font-semibold ${activeVersionId === ver.id ? "text-violet-300" : "text-slate-200"}`}>v{ver.version}</span>
-                        <span className="text-[9px] text-slate-600">{ver.config.agents?.length || 0} agents · {ver.config.pattern}</span>
-                        <button onClick={() => onLoadVersion(selectedWorkflow, ver)} className="ml-auto px-2 py-0.5 text-[9px] text-slate-400 hover:text-emerald-400 bg-white/[0.02] hover:bg-emerald-500/10 border border-white/[0.04] rounded transition-all">
-                          Open
-                        </button>
+                        {selectedWorkflow.activeVersionId === ver.id && (
+                          <span className="flex items-center gap-1 text-[8px] font-semibold text-emerald-300 bg-emerald-500/12 border border-emerald-500/20 px-1.5 py-0.5 rounded-full" data-tooltip="Live version — Run & Deploy target this">
+                            <span className="h-1 w-1 rounded-full bg-emerald-400" /> Live
+                          </span>
+                        )}
+                        <span className="text-[9px] text-slate-600 truncate">{ver.config.agents?.length || 0} agents · {ver.config.pattern}</span>
+                        <div className="ml-auto flex items-center gap-1">
+                          {onActivateVersion && selectedWorkflow.activeVersionId !== ver.id && (
+                            <button onClick={() => onActivateVersion(selectedWorkflow.id, ver.id)}
+                              className="px-2 py-0.5 text-[9px] text-slate-400 hover:text-emerald-300 bg-white/[0.02] hover:bg-emerald-500/10 border border-white/[0.04] rounded transition-all"
+                              data-tooltip="Make this the live version (rollback)">
+                              {ver.version < (selectedWorkflow.activeVersionId ? (selectedWorkflow.versions.find(v => v.id === selectedWorkflow.activeVersionId)?.version || 0) : 0) ? "Rollback" : "Set live"}
+                            </button>
+                          )}
+                          <button onClick={() => onLoadVersion(selectedWorkflow, ver)} className="px-2 py-0.5 text-[9px] text-slate-400 hover:text-emerald-400 bg-white/[0.02] hover:bg-emerald-500/10 border border-white/[0.04] rounded transition-all">
+                            Open
+                          </button>
+                        </div>
                       </div>
                       {ver.note && <p className="text-[8px] text-slate-600 italic">{ver.note}</p>}
 

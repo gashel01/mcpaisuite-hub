@@ -36,6 +36,7 @@ export interface Workflow {
   name: string;
   versions: WorkflowVersion[];
   runs: WorkflowRun[];
+  activeVersionId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -62,7 +63,8 @@ interface WorkflowStore {
   getLatestVersion: (workflowId: string) => WorkflowVersion | undefined;
 
   createWorkflow: (name: string, version: Omit<WorkflowVersion, "id" | "workflowId" | "version" | "createdAt">, headers?: Record<string, string>) => Promise<Workflow | null>;
-  addVersion: (workflowId: string, version: Omit<WorkflowVersion, "id" | "workflowId" | "version" | "createdAt">, headers?: Record<string, string>) => Promise<WorkflowVersion | null>;
+  addVersion: (workflowId: string, version: Omit<WorkflowVersion, "id" | "workflowId" | "version" | "createdAt"> & { activate?: boolean }, headers?: Record<string, string>) => Promise<WorkflowVersion | null>;
+  activateVersion: (workflowId: string, versionId: string, headers?: Record<string, string>) => Promise<void>;
   addRun: (workflowId: string, versionId: string, run: Partial<WorkflowRun>, headers?: Record<string, string>) => Promise<WorkflowRun | null>;
   updateRun: (workflowId: string, runId: string, update: Partial<WorkflowRun>, headers?: Record<string, string>) => Promise<void>;
   deleteWorkflow: (id: string, headers?: Record<string, string>) => Promise<void>;
@@ -119,13 +121,23 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       if (data.version) {
         set(s => ({
           workflows: s.workflows.map(w => w.id === workflowId
-            ? { ...w, versions: [...w.versions, data.version], updatedAt: Date.now() }
+            ? { ...w, versions: [...w.versions, data.version], updatedAt: Date.now(),
+                ...(data.activeVersionId ? { activeVersionId: data.activeVersionId } : {}) }
             : w),
         }));
         return data.version;
       }
       return null;
     } catch { return null; }
+  },
+
+  activateVersion: async (workflowId, versionId, headers) => {
+    try {
+      await fetch(`${BASE_URL}/workflows/${workflowId}/activate/${versionId}`, { method: "POST", headers });
+      set(s => ({
+        workflows: s.workflows.map(w => w.id === workflowId ? { ...w, activeVersionId: versionId } : w),
+      }));
+    } catch {}
   },
 
   addRun: async (workflowId, versionId, run, headers) => {

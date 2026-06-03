@@ -158,6 +158,7 @@ function AgentsPageInner() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryTab, setLibraryTab] = useState<"workflows" | "runs" | "scheduled">("workflows");
   const [savingName, setSavingName] = useState("");
+  const [saveNotes, setSaveNotes] = useState("");
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [schedules, setSchedules] = useState<{id: string; schedule: any; config: any; createdAt: number; active: boolean}[]>([]);
 
@@ -1084,15 +1085,23 @@ function AgentsPageInner() {
     const versionData = {
       config: { ...session.config },
       graph: graphSnapshot,
+      note: saveNotes.trim() || undefined,
     };
 
     // Check if session is linked to an existing workflow → add version
     const existingWfId = (session as any).workflowId;
     if (existingWfId && wfStore.getWorkflow(existingWfId)) {
-      await wfStore.addVersion(existingWfId, {
+      // An explicit Save is a deliberate release → promote it to the live version
+      const newVer = await wfStore.addVersion(existingWfId, {
         parentVersionId: (session as any).versionId,
         ...versionData,
+        activate: true,
       }, th);
+      if (newVer) {
+        useAgentSessionStore.setState(s => ({
+          sessions: s.sessions.map(sess => sess.id === activeId ? { ...sess, versionId: newVer.id } : sess),
+        }));
+      }
     } else {
       // Create new workflow + retroactively save current run if done
       const wf = await wfStore.createWorkflow(name.trim(), versionData, th);
@@ -1123,6 +1132,7 @@ function AgentsPageInner() {
 
     setShowSaveDialog(false);
     setSavingName("");
+    setSaveNotes("");
   };
 
   // Re-run from history
@@ -1283,6 +1293,7 @@ function AgentsPageInner() {
         if (isMobile) setLibraryOpen(false);
       }}
       onDeleteWorkflow={(id) => wfStore.deleteWorkflow(id, th)}
+      onActivateVersion={(wid, vid) => wfStore.activateVersion(wid, vid, th)}
       onDeleteSchedule={(id) => {
         fetch(`${BASE_URL}/agents/taskforce/schedules/${id}`, { method: "DELETE", headers: th }).catch(() => {});
         wfStore.loadSchedules(th);
@@ -1467,7 +1478,11 @@ function AgentsPageInner() {
               <span className="text-sm font-semibold text-slate-200">Save Workflow</span>
             </div>
             <input value={savingName} onChange={e => setSavingName(e.target.value)} onKeyDown={e => e.key === "Enter" && savingName.trim() && saveWorkflow(savingName)}
-              placeholder="Workflow name..." className="w-full !py-2.5 !px-3 !text-sm mb-3" autoFocus />
+              placeholder="Workflow name..." className="w-full !py-2.5 !px-3 !text-sm mb-2" autoFocus />
+            <textarea value={saveNotes} onChange={e => setSaveNotes(e.target.value)} rows={2}
+              placeholder="Release notes (optional) — what changed in this version…"
+              className="w-full !text-[12px] !bg-[#08080f] !border-white/[0.06] mb-1" />
+            {session?.workflowId && <p className="text-[9px] text-slate-600 mb-3">Saving creates a new version and makes it the live one.</p>}
             <div className="flex gap-2">
               <button onClick={() => saveWorkflow(savingName)} disabled={!savingName.trim()}
                 className="flex-1 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-all">Save</button>
