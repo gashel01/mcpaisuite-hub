@@ -1861,8 +1861,8 @@ HOW TO REPLY — two parts, in this exact order:
 1) Talk to the user like a real architect pairing with them: what you understood, what you're choosing and WHY (incl. the trigger if it's not manual), and honestly flag anything genuinely missing (e.g. an alerting channel that isn't connected). Warm, specific, concise — 2 to 5 short sentences. Streamed live, so write naturally. Do NOT claim you lack scheduling — you have the trigger node.
 2) Then a line containing EXACTLY {MARKER}
 3) Then ONLY a JSON object (no markdown, no prose after it) — the FULL desired workflow after this request:
-{{"pattern":"sequential|parallel|supervisor|debate|swarm","trigger":{{"type":"manual|cron|interval|scheduled|watch|webhook","cron":"0 * * * *","interval_seconds":3600,"webhook_path":"/hook","watch_command":"","watch_condition":""}},"agents":[{{"type":"code|research|file|memory|plan|rag|ltp|custom","role":"short role name","instructions":"specific actionable instructions","max_turns":3,"tools":["optional exact tool names"]}}],"human_gates":[],"workspace":{{"enabled":false,"name":"","mode":"persistent"}},"estimated_cost":"$0.XX","estimated_duration":"XXs","missing":["genuinely-unavailable capabilities only"]}}
-(Only include the trigger sub-fields relevant to the chosen type; omit the others.)
+{{"pattern":"sequential|parallel|supervisor|debate|swarm","trigger":{{"type":"manual|cron|interval|scheduled|watch|webhook","cron":"0 * * * *","interval_seconds":3600,"webhook_path":"/hook","watch_command":"","watch_condition":""}},"agents":[{{"type":"code|research|file|memory|plan|rag|ltp|custom","role":"short role name","instructions":"specific actionable instructions","max_turns":3,"tools":["optional exact tool names"]}}],"human_gates":[],"workspace":{{"enabled":false,"name":"","mode":"persistent"}},"suggestions":["2-4 word next-step the user might want, e.g. 'Add a reviewer'","'Run it hourly'","'Add error handling'"],"estimated_cost":"$0.XX","estimated_duration":"XXs","missing":["genuinely-unavailable capabilities only"]}}
+(Only include the trigger sub-fields relevant to the chosen type; omit the others. "suggestions": 2-3 punchy refinements that would genuinely improve THIS workflow — phrased as commands the user could click.)
 
 RULES:
 - Only use capabilities actually available above. The TRIGGER is always available — never list it under "missing".
@@ -1959,6 +1959,7 @@ RULES:
                        "agents": team.get("agents", []) or [],
                        "human_gates": team.get("human_gates") or [],
                        "workspace": team.get("workspace") or {"enabled": False},
+                       "suggestions": team.get("suggestions") or [],
                        "estimated_cost": team.get("estimated_cost", ""),
                        "estimated_duration": team.get("estimated_duration", ""),
                        "missing": team.get("missing") or []})

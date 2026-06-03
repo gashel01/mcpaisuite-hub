@@ -131,6 +131,7 @@ function AgentsPageInner() {
   const [building, setBuilding] = useState(false);
   const [buildChat, setBuildChat] = useState<{ role: "user" | "architect"; text: string }[]>([]);
   const [buildInput, setBuildInput] = useState("");
+  const [buildSuggestions, setBuildSuggestions] = useState<string[]>([]);
 
   // Workflow library panel
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -319,6 +320,7 @@ function AgentsPageInner() {
     if (!msg || !activeId || building) return;
     const aid = activeId;
     setBuilding(true);
+    setBuildSuggestions([]);
     // Snapshot the conversation history (before adding this turn) for the backend.
     const history = buildChat.map(m => ({ role: m.role === "architect" ? "assistant" : "user", content: m.text }));
     setBuildChat(c => [...c, { role: "user", text: msg }, { role: "architect", text: "" }]);
@@ -389,6 +391,7 @@ function AgentsPageInner() {
               : { workspaceEnabled: false };
             const humanGates = Array.isArray(ev.human_gates) ? ev.human_gates.filter((x: any) => typeof x === "number") : [];
             store.updateConfig(aid, { pattern: ev.pattern || "sequential", agents: next, ...trigCfg, ...wsCfg, humanGates });
+            setBuildSuggestions(Array.isArray(ev.suggestions) ? ev.suggestions.filter((s: any) => typeof s === "string").slice(0, 4) : []);
             if (ev.missing && ev.missing.length) {
               setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: m.text + `\n\n⚠ Needs connecting: ${ev.missing.join(", ")}` } : m));
             }
@@ -1376,6 +1379,20 @@ function AgentsPageInner() {
                       )
                     ))}
                   </div>
+                  {/* Quick-refine suggestion chips (architect-proposed, one click) */}
+                  {!building && buildSuggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {buildSuggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          onClick={() => handleArchitect(s)}
+                          className="text-[10px] px-2 py-1 rounded-full bg-violet-500/8 border border-violet-500/20 text-violet-300 hover:bg-violet-500/15 hover:border-violet-500/40 transition-all animate-fade-in"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {/* Refine input */}
                   <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-white/[0.05]">
                     <input
