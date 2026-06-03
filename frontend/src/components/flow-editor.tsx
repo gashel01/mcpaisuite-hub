@@ -9,7 +9,7 @@ import {
   type Node, type Edge, type Connection, type NodeTypes, type NodeProps, type EdgeTypes, type EdgeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, Layout, User, Settings, Sparkles, X, ChevronDown, AlertCircle, Download, Upload, Undo2, Redo2, Copy, Clipboard, Zap } from "lucide-react";
+import { Plus, Trash2, Layout, User, Settings, Sparkles, X, ChevronDown, AlertCircle, Download, Upload, Undo2, Redo2, Copy, Clipboard, Zap, Search, Check } from "lucide-react";
 import type { TeamAgent } from "@/stores/agent-sessions";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -505,6 +505,8 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
   // Load available tools from backend
   const [availableTools, setAvailableTools] = useState<{name: string; description: string; category: string}[]>([]);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [toolSearch, setToolSearch] = useState("");
+  const [toolCat, setToolCat] = useState<"all" | "built-in" | "mcp" | "langchain">("all");
   useEffect(() => {
     const BASE = getApiUrl();
     fetch(`${BASE}/tools`).then(r => r.json()).then(data => {
@@ -1175,36 +1177,78 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
                         Tools ({(d as any).tools?.[0] === "__none__" ? "none" : ((d as any).tools || []).length || (d.agentType === "custom" ? "all" : "default")})
                         <span className="text-[8px] text-slate-600 ml-auto">{(d as any).tools?.[0] === "__none__" ? "no tools" : d.agentType === "custom" && (d as any).tools?.length ? "only selected" : d.agentType === "custom" ? "all tools" : "base + selected"}</span>
                       </button>
-                      {toolsOpen && (
-                        <div className="max-h-[150px] overflow-y-auto rounded-lg border border-white/[0.06] bg-white/[0.01] p-1.5 space-y-0.5">
-                          <button onClick={() => updateNodeData(selectedNode.id, { tools: ["__none__"] })}
-                            className={`w-full flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all ${(d as any).tools?.[0] === "__none__" ? "bg-red-500/10 border border-red-500/20" : "hover:bg-white/[0.03]"}`}>
-                            <div className={`h-2 w-2 rounded-sm border ${(d as any).tools?.[0] === "__none__" ? "bg-red-500 border-red-500" : "border-white/[0.15]"}`} />
-                            <span className="text-[9px] font-medium text-red-400">No tools</span>
-                            <span className="text-[8px] text-slate-600 ml-auto">Text only</span>
-                          </button>
-                          <div className="border-t border-white/[0.04] my-1" />
-                          {availableTools.map(t => {
-                            const selected = ((d as any).tools || []).includes(t.name);
-                            return (
-                              <button key={t.name} onClick={() => {
-                                const current: string[] = (d as any).tools || [];
-                                const next = selected ? current.filter((n: string) => n !== t.name) : [...current, t.name];
-                                updateNodeData(selectedNode.id, { tools: next });
-                              }}
-                                className={`w-full flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all ${selected ? "bg-violet-500/10 border border-violet-500/20" : "hover:bg-white/[0.03]"}`}
-                              >
-                                <div className={`h-2 w-2 rounded-sm border ${selected ? "bg-violet-500 border-violet-500" : "border-white/[0.15]"}`} />
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-[9px] font-medium text-slate-300 truncate">{t.name}</div>
-                                  <div className="text-[8px] text-slate-600 truncate">{t.description}</div>
-                                </div>
-                                <span className="text-[7px] text-slate-700 shrink-0">{t.category}</span>
+                      {toolsOpen && (() => {
+                        const sel: string[] = ((d as any).tools || []).filter((n: string) => n !== "__none__");
+                        const noneSel = (d as any).tools?.[0] === "__none__";
+                        const catColor = (c: string) => c === "mcp" ? "text-sky-300 bg-sky-500/12" : c === "langchain" ? "text-amber-300 bg-amber-500/12" : "text-violet-300 bg-violet-500/12";
+                        const catCount = (c: string) => c === "all" ? availableTools.length : availableTools.filter(t => t.category === c).length;
+                        const q = toolSearch.trim().toLowerCase();
+                        const filtered = availableTools.filter(t =>
+                          (toolCat === "all" || t.category === toolCat) &&
+                          (!q || t.name.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q)));
+                        const toggle = (name: string) => {
+                          const current: string[] = ((d as any).tools || []).filter((n: string) => n !== "__none__");
+                          const next = current.includes(name) ? current.filter(n => n !== name) : [...current, name];
+                          updateNodeData(selectedNode.id, { tools: next });
+                        };
+                        const cats: ("all" | "built-in" | "mcp" | "langchain")[] = ["all", "built-in", "mcp", "langchain"];
+                        return (
+                        <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-1.5 space-y-1.5">
+                          {/* Search */}
+                          <div className="relative">
+                            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-2.5 w-2.5 text-slate-600" />
+                            <input value={toolSearch} onChange={e => setToolSearch(e.target.value)} placeholder="Search tools…" className="w-full !pl-6 !py-1 !text-[10px] !bg-[#08080f] !border-white/[0.06]" />
+                          </div>
+                          {/* Category chips */}
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {cats.map(c => catCount(c) > 0 || c === "all" ? (
+                              <button key={c} onClick={() => setToolCat(c)}
+                                className={`px-1.5 py-0.5 text-[8px] font-medium rounded-full capitalize transition-all ${toolCat === c ? "bg-violet-500/20 text-violet-200" : "text-slate-500 hover:text-slate-300 bg-white/[0.03]"}`}>
+                                {c === "all" ? "All" : c} {catCount(c)}
                               </button>
-                            );
-                          })}
+                            ) : null)}
+                          </div>
+                          {/* Selection actions */}
+                          <div className="flex items-center gap-2 px-0.5">
+                            <span className="text-[8px] text-slate-500">{noneSel ? "none (text only)" : `${sel.length} selected`}</span>
+                            <div className="ml-auto flex items-center gap-1.5">
+                              {filtered.length > 0 && <button onClick={() => { const names = filtered.map(t => t.name); updateNodeData(selectedNode.id, { tools: Array.from(new Set([...sel, ...names])) }); }} className="text-[8px] text-violet-400 hover:text-violet-300">Select shown</button>}
+                              {sel.length > 0 && <button onClick={() => updateNodeData(selectedNode.id, { tools: [] })} className="text-[8px] text-slate-500 hover:text-slate-300">Clear</button>}
+                            </div>
+                          </div>
+                          {/* No-tools toggle */}
+                          <button onClick={() => updateNodeData(selectedNode.id, { tools: noneSel ? [] : ["__none__"] })}
+                            className={`w-full flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all ${noneSel ? "bg-red-500/10 border border-red-500/20" : "hover:bg-white/[0.03] border border-transparent"}`}>
+                            <div className={`h-2.5 w-2.5 rounded-sm border flex items-center justify-center ${noneSel ? "bg-red-500 border-red-500" : "border-white/[0.15]"}`} />
+                            <span className="text-[9px] font-medium text-red-400">No tools</span>
+                            <span className="text-[8px] text-slate-600 ml-auto">Text only — no actions</span>
+                          </button>
+                          {/* Tool list */}
+                          <div className="max-h-[230px] overflow-y-auto space-y-0.5 pr-0.5">
+                            {filtered.length === 0 ? (
+                              <p className="text-[9px] text-slate-600 px-2 py-2 text-center">No tools match.</p>
+                            ) : filtered.map(t => {
+                              const selected = sel.includes(t.name);
+                              return (
+                                <button key={t.name} onClick={() => toggle(t.name)}
+                                  className={`w-full flex items-start gap-1.5 px-2 py-1.5 rounded text-left transition-all ${selected ? "bg-violet-500/10 border border-violet-500/20" : "hover:bg-white/[0.03] border border-transparent"}`}>
+                                  <div className={`h-2.5 w-2.5 mt-0.5 rounded-sm border shrink-0 flex items-center justify-center ${selected ? "bg-violet-500 border-violet-500" : "border-white/[0.15]"}`}>
+                                    {selected && <Check className="h-2 w-2 text-white" />}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9.5px] font-medium text-slate-200 truncate">{t.name}</span>
+                                      <span className={`text-[7px] px-1 py-0.5 rounded shrink-0 ${catColor(t.category)}`}>{t.category === "built-in" ? "native" : t.category}</span>
+                                    </div>
+                                    {t.description && <div className="text-[8px] text-slate-500 leading-snug line-clamp-2 mt-0.5">{t.description}</div>}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   )}
                 </>
