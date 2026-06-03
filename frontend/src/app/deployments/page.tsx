@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   Rocket, RefreshCw, Globe, Trash, Copy, CheckCheck, X, Terminal,
   KeyRound, Plus, History, ArrowUpRight, Loader2, Zap, Play, CheckCircle2, XCircle, Bot,
+  Power, PlayCircle,
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { renderMarkdown } from "@/components/markdown";
@@ -105,6 +106,24 @@ export default function DeploymentsPage() {
     load();
   }, [BASE, th, load]);
 
+  const [statusBusy, setStatusBusy] = useState(false);
+  const toggleStatus = useCallback(async (dep: Deployment) => {
+    const next = dep.status === "paused" ? "live" : "paused";
+    setStatusBusy(true);
+    try {
+      const r = await fetch(`${BASE}/deployments/${dep.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...th },
+        body: JSON.stringify({ status: next }),
+      });
+      if (r.ok) {
+        setSelected(s => s ? { ...s, status: next } : s);
+        setDeployments(list => list.map(d => d.id === dep.id ? { ...d, status: next } : d));
+      }
+    } catch { /* ignore */ }
+    finally { setStatusBusy(false); }
+  }, [BASE, th]);
+
   const rotateToken = useCallback(async (id: string) => {
     setRotating(true);
     try {
@@ -168,8 +187,9 @@ export default function DeploymentsPage() {
               <button key={dep.id} onClick={() => openDetail(dep)}
                 className="text-left rounded-xl border border-white/[0.06] bg-white/[0.015] hover:bg-white/[0.03] hover:border-sky-500/20 p-3.5 transition-all group">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dep.status === "paused" ? "bg-amber-400" : "bg-emerald-400"}`} />
                   <span className="text-[13px] font-semibold text-slate-200 truncate flex-1">{dep.name}</span>
+                  {dep.status === "paused" && <span className="text-[8px] font-semibold text-amber-300 bg-amber-500/12 border border-amber-500/20 px-1.5 py-0.5 rounded-full">Offline</span>}
                   <span className="text-[9px] text-slate-500 bg-white/[0.04] px-1.5 py-0.5 rounded">v{dep.version || 1}</span>
                 </div>
                 {dep.release_notes && <p className="text-[10.5px] text-slate-500 line-clamp-2 mb-2">{dep.release_notes}</p>}
@@ -197,6 +217,9 @@ export default function DeploymentsPage() {
               <div className="flex items-center gap-2 min-w-0">
                 <Rocket className="h-4 w-4 text-sky-400 shrink-0" />
                 <h3 className="text-sm font-semibold text-slate-200 truncate">{selected.name}</h3>
+                <span className={`flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 border ${selected.status === "paused" ? "text-amber-300 bg-amber-500/12 border-amber-500/20" : "text-emerald-300 bg-emerald-500/12 border-emerald-500/20"}`}>
+                  <span className={`h-1 w-1 rounded-full ${selected.status === "paused" ? "bg-amber-400" : "bg-emerald-400"}`} /> {selected.status === "paused" ? "Offline" : "Live"}
+                </span>
                 <span className="text-[9px] text-slate-500 bg-white/[0.04] px-1.5 py-0.5 rounded shrink-0">v{selected.version || 1}</span>
               </div>
               <button onClick={() => setSelected(null)}><X className="h-4 w-4 text-slate-500 hover:text-slate-300" /></button>
@@ -328,10 +351,15 @@ export default function DeploymentsPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between px-5 py-3 border-t border-white/[0.06] shrink-0">
-              <span className="text-[10px] text-slate-600">Created {fmtDate(selected.created_at)}</span>
+            <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-white/[0.06] shrink-0">
+              <button onClick={() => toggleStatus(selected)} disabled={statusBusy}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg transition-all disabled:opacity-40 ${selected.status === "paused" ? "text-emerald-300 hover:bg-emerald-500/10 border border-emerald-500/20" : "text-amber-300 hover:bg-amber-500/10 border border-amber-500/20"}`}
+                data-tooltip={selected.status === "paused" ? "Bring the endpoint back online" : "Take the endpoint offline — calls return 503, history kept"}>
+                {statusBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : selected.status === "paused" ? <PlayCircle className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
+                {selected.status === "paused" ? "Bring online" : "Take offline"}
+              </button>
               <button onClick={() => remove(selected.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-all">
-                <Trash className="h-3.5 w-3.5" /> Delete deployment
+                <Trash className="h-3.5 w-3.5" /> Delete
               </button>
             </div>
           </div>

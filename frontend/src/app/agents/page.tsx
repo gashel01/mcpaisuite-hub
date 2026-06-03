@@ -1482,7 +1482,7 @@ function AgentsPageInner() {
             <textarea value={saveNotes} onChange={e => setSaveNotes(e.target.value)} rows={2}
               placeholder="Release notes (optional) — what changed in this version…"
               className="w-full !text-[12px] !bg-[#08080f] !border-white/[0.06] mb-1" />
-            {session?.workflowId && <p className="text-[9px] text-slate-600 mb-3">Saving creates a new version and makes it the live one.</p>}
+            {session?.workflowId && <p className="text-[9px] text-slate-600 mb-3">Saving creates a new version and makes it the active one.</p>}
             <div className="flex gap-2">
               <button onClick={() => saveWorkflow(savingName)} disabled={!savingName.trim()}
                 className="flex-1 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-all">Save</button>

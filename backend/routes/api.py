@@ -1609,6 +1609,23 @@ async def rotate_deployment_token(did: str, x_tenant_id: str = Header(default=""
     return {"token": new_token}
 
 
+@router.post("/deployments/{did}/status")
+async def set_deployment_status(did: str, body: dict, x_tenant_id: str = Header(default="")):
+    """Owner-only: take a deployment offline ('paused') or back online ('live').
+    While paused, public API calls are rejected but the record + history are kept."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    if x_tenant_id != dep.get("tenant", ""):
+        raise HTTPException(403, "not the owner of this deployment")
+    new_status = body.get("status")
+    if new_status not in ("live", "paused"):
+        raise HTTPException(400, "status must be 'live' or 'paused'")
+    dep["status"] = new_status
+    _save_deploy(dep)
+    return {"status": new_status}
+
+
 @router.delete("/deployments/{did}")
 async def delete_deployment(did: str):
     p = _deploy_path(did)
@@ -1694,6 +1711,8 @@ async def run_deployment(did: str, body: dict, authorization: str = Header(defau
     token = authorization.replace("Bearer", "").strip()
     if not token or token != dep.get("token"):
         raise HTTPException(401, "invalid or missing bearer token")
+    if dep.get("status") == "paused":
+        raise HTTPException(503, "deployment is paused (taken offline by the owner)")
     return await _execute_deployment(dep, body.get("inputs") or {},
                                      body.get("blocking", True), body.get("timeout", 280), "api")
 

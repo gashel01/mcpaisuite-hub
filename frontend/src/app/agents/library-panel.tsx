@@ -80,17 +80,17 @@ export default function LibraryPanel(props: LibraryPanelProps) {
                       <div className="flex items-center gap-2">
                         <span className={`text-[10px] font-semibold ${activeVersionId === ver.id ? "text-violet-300" : "text-slate-200"}`}>v{ver.version}</span>
                         {selectedWorkflow.activeVersionId === ver.id && (
-                          <span className="flex items-center gap-1 text-[8px] font-semibold text-emerald-300 bg-emerald-500/12 border border-emerald-500/20 px-1.5 py-0.5 rounded-full" data-tooltip="Live version — Run & Deploy target this">
-                            <span className="h-1 w-1 rounded-full bg-emerald-400" /> Live
+                          <span className="flex items-center gap-1 text-[8px] font-semibold text-violet-300 bg-violet-500/12 border border-violet-500/20 px-1.5 py-0.5 rounded-full" data-tooltip="Current version — Run & Deploy use this by default (not a live deployment)">
+                            <span className="h-1 w-1 rounded-full bg-violet-400" /> Active
                           </span>
                         )}
                         <span className="text-[9px] text-slate-600 truncate">{ver.config.agents?.length || 0} agents · {ver.config.pattern}</span>
                         <div className="ml-auto flex items-center gap-1">
                           {onActivateVersion && selectedWorkflow.activeVersionId !== ver.id && (
                             <button onClick={() => onActivateVersion(selectedWorkflow.id, ver.id)}
-                              className="px-2 py-0.5 text-[9px] text-slate-400 hover:text-emerald-300 bg-white/[0.02] hover:bg-emerald-500/10 border border-white/[0.04] rounded transition-all"
-                              data-tooltip="Make this the live version (rollback)">
-                              {ver.version < (selectedWorkflow.activeVersionId ? (selectedWorkflow.versions.find(v => v.id === selectedWorkflow.activeVersionId)?.version || 0) : 0) ? "Rollback" : "Set live"}
+                              className="px-2 py-0.5 text-[9px] text-slate-400 hover:text-violet-300 bg-white/[0.02] hover:bg-violet-500/10 border border-white/[0.04] rounded transition-all"
+                              data-tooltip="Make this the current version (rollback)">
+                              {ver.version < (selectedWorkflow.activeVersionId ? (selectedWorkflow.versions.find(v => v.id === selectedWorkflow.activeVersionId)?.version || 0) : 0) ? "Rollback" : "Set active"}
                             </button>
                           )}
                           <button onClick={() => onLoadVersion(selectedWorkflow, ver)} className="px-2 py-0.5 text-[9px] text-slate-400 hover:text-emerald-400 bg-white/[0.02] hover:bg-emerald-500/10 border border-white/[0.04] rounded transition-all">
