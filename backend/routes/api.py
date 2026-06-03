@@ -1607,19 +1607,11 @@ async def delete_deployment(did: str):
     raise HTTPException(404, "deployment not found")
 
 
-@router.post("/deployments/{did}/run")
-async def run_deployment(did: str, body: dict, authorization: str = Header(default="")):
-    """Public callable API for a deployed workflow.
-    Auth: `Authorization: Bearer <token>`. Body: {"inputs": {...}, "blocking": true}.
-    {placeholders} in the workflow are filled from `inputs`; returns the run result."""
-    dep = _load_deploy(did)
-    if not dep:
-        raise HTTPException(404, "deployment not found")
-    token = authorization.replace("Bearer", "").strip()
-    if not token or token != dep.get("token"):
-        raise HTTPException(401, "invalid or missing bearer token")
-
-    inputs = body.get("inputs") or {}
+async def _execute_deployment(dep: dict, inputs: dict, blocking: bool, timeout: int, source: str) -> dict:
+    """Shared run path for a deployment: substitute {placeholders}, execute via the
+    taskforce runner, and log the call into the deployment's run history. `source` is
+    "api" for public bearer-token calls or "test" for owner test-runs from the UI."""
+    did = dep["id"]
     import re as _re
 
     def subst(t):
@@ -1637,8 +1629,8 @@ async def run_deployment(did: str, body: dict, authorization: str = Header(defau
             if d.get("instructions"):
                 d["instructions"] = subst(d["instructions"])
                 n["data"] = d
-    cfg["blocking"] = body.get("blocking", True)
-    cfg["timeout"] = body.get("timeout", 280)
+    cfg["blocking"] = blocking
+    cfg["timeout"] = timeout
 
     dep["runs"] = dep.get("runs", 0) + 1
     _save_deploy(dep)
@@ -1655,7 +1647,7 @@ async def run_deployment(did: str, body: dict, authorization: str = Header(defau
         err = str(exc)
         result = {"success": False, "final_output": "", "error": err}
     finally:
-        # Log this API call into the deployment's run history (for the executions console)
+        # Log the call into the deployment's run history (for the executions console)
         try:
             rdir = os.path.join(_DEPLOY_DIR, did, "runs")
             os.makedirs(rdir, exist_ok=True)
@@ -1663,7 +1655,7 @@ async def run_deployment(did: str, body: dict, authorization: str = Header(defau
             rid = f"drun-{now}"
             _json.dump({
                 "id": rid, "deploymentId": did, "deploymentName": dep.get("name"),
-                "source": "api", "status": status, "inputs": inputs, "error": err,
+                "source": source, "status": status, "inputs": inputs, "error": err,
                 "answer": result.get("final_output"),
                 "metrics": {"tokens": result.get("total_tokens", 0), "cost": result.get("total_cost", 0),
                             "turns": result.get("total_turns", 0), "duration": result.get("duration_ms", int((_time.time() - started) * 1000))},
@@ -1672,6 +1664,34 @@ async def run_deployment(did: str, body: dict, authorization: str = Header(defau
         except Exception:
             pass
     return result
+
+
+@router.post("/deployments/{did}/run")
+async def run_deployment(did: str, body: dict, authorization: str = Header(default="")):
+    """Public callable API for a deployed workflow.
+    Auth: `Authorization: Bearer <token>`. Body: {"inputs": {...}, "blocking": true}.
+    {placeholders} in the workflow are filled from `inputs`; returns the run result."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    token = authorization.replace("Bearer", "").strip()
+    if not token or token != dep.get("token"):
+        raise HTTPException(401, "invalid or missing bearer token")
+    return await _execute_deployment(dep, body.get("inputs") or {},
+                                     body.get("blocking", True), body.get("timeout", 280), "api")
+
+
+@router.post("/deployments/{did}/test")
+async def test_deployment(did: str, body: dict, x_tenant_id: str = Header(default="")):
+    """Owner test-run from the UI — authenticated by tenant ownership instead of the
+    public bearer token, so the owner can try a deployment without re-pasting its token."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    if x_tenant_id != dep.get("tenant", ""):
+        raise HTTPException(403, "not the owner of this deployment")
+    return await _execute_deployment(dep, body.get("inputs") or {},
+                                     body.get("blocking", True), body.get("timeout", 280), "test")
 
 
 @router.get("/agents/taskforce/schedules")
@@ -2455,18 +2475,21 @@ async def list_runs(status: str = "", source: str = "", since: int = 0, q: str =
     Lightweight summaries (no liveEvents); use GET /runs/{id} for the full record."""
     names = _wf_name_map()
     out = []
-    for path, src in _iter_run_files():
-        if source and src != source:
-            continue
+    for path, dir_src in _iter_run_files():
         try:
             r = _json.load(open(path))
         except Exception:
+            continue
+        is_deploy = dir_src == "api"  # came from a deployment's runs dir
+        # Prefer the run's own source field ("api" vs "test") over the dir classification
+        src = r.get("source") or ("api" if is_deploy else "builder")
+        if source and src != source:
             continue
         if status and r.get("status") != status:
             continue
         if since and (r.get("createdAt", 0) < since):
             continue
-        label = r.get("deploymentName") if src == "api" else names.get(r.get("workflowId"), r.get("workflowId"))
+        label = r.get("deploymentName") if is_deploy else names.get(r.get("workflowId"), r.get("workflowId"))
         ans = r.get("answer") or ""
         if q and q.lower() not in (str(label or "") + " " + str(ans)).lower():
             continue

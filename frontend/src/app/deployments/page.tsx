@@ -5,9 +5,10 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   Rocket, RefreshCw, Globe, Trash, Copy, CheckCheck, X, Terminal,
-  KeyRound, Plus, History, ArrowUpRight, Loader2, Zap,
+  KeyRound, Plus, History, ArrowUpRight, Loader2, Zap, Play, CheckCircle2, XCircle,
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
+import { renderMarkdown } from "@/components/markdown";
 
 interface Deployment {
   id: string;
@@ -38,6 +39,9 @@ export default function DeploymentsPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Deployment | null>(null);
   const [copied, setCopied] = useState("");
+  const [testInputs, setTestInputs] = useState<Record<string, string>>({});
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; output: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,11 +57,38 @@ export default function DeploymentsPage() {
 
   const openDetail = useCallback(async (dep: Deployment) => {
     setSelected(dep);
+    setTestInputs({});
+    setTestResult(null);
+    setTesting(false);
     try {
       const r = await fetch(`${BASE}/deployments/${dep.id}`, { headers: th });
       setSelected(await r.json());
     } catch { /* keep summary */ }
   }, [BASE, th]);
+
+  const runTest = useCallback(async (dep: Deployment) => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await fetch(`${BASE}/deployments/${dep.id}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...th },
+        body: JSON.stringify({ inputs: testInputs }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setTestResult({ success: false, output: d.detail || `Error ${r.status}` });
+      } else {
+        setTestResult({ success: d.success !== false, output: d.final_output || d.error || "(no output)" });
+        // reflect the new call count
+        setSelected(s => s ? { ...s, runs: (s.runs ?? 0) + 1, run_count: (s.run_count ?? 0) + 1 } : s);
+      }
+    } catch (e: any) {
+      setTestResult({ success: false, output: String(e?.message || e) });
+    } finally {
+      setTesting(false);
+    }
+  }, [BASE, th, testInputs]);
 
   const remove = useCallback(async (id: string) => {
     try { await fetch(`${BASE}/deployments/${id}`, { method: "DELETE", headers: th }); } catch {}
@@ -189,6 +220,45 @@ export default function DeploymentsPage() {
                   <button onClick={() => copy(curlFor(selected), "curl")} className="absolute top-2 right-2 text-slate-500 hover:text-slate-200">{copied === "curl" ? <CheckCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}</button>
                   <pre className="text-[10.5px] text-slate-300 whitespace-pre-wrap break-all font-mono leading-relaxed">{curlFor(selected)}</pre>
                 </div>
+              </div>
+
+              {/* Test run (owner — no bearer token needed) */}
+              <div className="rounded-lg border border-sky-500/15 bg-sky-500/[0.03] px-3 py-3">
+                <div className="flex items-center gap-1.5 mb-2"><Play className="h-3 w-3 text-sky-400" /><span className="text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Test run</span><span className="text-[9px] text-slate-500">— as owner, no token needed</span></div>
+                {selected.inputs && selected.inputs.length > 0 && (
+                  <div className="space-y-1.5 mb-2.5">
+                    {selected.inputs.map(k => (
+                      <div key={k}>
+                        <label className="text-[9px] text-violet-300 font-medium block mb-0.5">{k}</label>
+                        <input
+                          value={testInputs[k] || ""}
+                          onChange={e => setTestInputs(p => ({ ...p, [k]: e.target.value }))}
+                          placeholder={`Value for {${k}}…`}
+                          className="w-full !py-1.5 !px-2.5 !text-[12px] !bg-[#08080f] !border-white/[0.06]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() => runTest(selected)}
+                  disabled={testing || (selected.inputs || []).some(k => !(testInputs[k]?.trim()))}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 text-[12px] font-medium text-white bg-sky-600 hover:bg-sky-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-lg transition-all"
+                >
+                  {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} {testing ? "Running…" : "Run test"}
+                </button>
+
+                {testResult && (
+                  <div className="mt-2.5 animate-fade-in">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      {testResult.success ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <XCircle className="h-3 w-3 text-red-400" />}
+                      <span className={`text-[10px] font-semibold ${testResult.success ? "text-emerald-300" : "text-red-300"}`}>{testResult.success ? "Success" : "Failed"}</span>
+                    </div>
+                    <div className="rounded-lg border border-white/[0.06] bg-[#08080f] px-3 py-2.5 max-h-56 overflow-y-auto text-[12px] text-slate-300 leading-relaxed">
+                      {testResult.success ? renderMarkdown(testResult.output) : <span className="text-red-300">{testResult.output}</span>}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Calls + executions link */}
