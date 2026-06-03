@@ -310,8 +310,14 @@ function buildInitialFlow(
         y = yStep * 3; // Workers well below supervisor for clean back-edge routing
       }
     } else if (pattern === "debate" && n >= 2) {
-      x = centerX - 150 + i * 300;
-      y = yStep;
+      if (n >= 3 && i === n - 1) {
+        x = centerX; y = yStep * 2.6; // judge: centered, below the debaters
+      } else {
+        const dCount = n >= 3 ? n - 1 : n;
+        const sp = Math.min(320, 700 / Math.max(dCount, 1));
+        x = centerX - (dCount * sp) / 2 + i * sp + sp / 2;
+        y = yStep;
+      }
     } else if (pattern === "swarm") {
       // Circular layout for swarm — agents arranged in a ring
       const radius = Math.max(160, n * 50);
@@ -416,19 +422,29 @@ function buildInitialFlow(
     if (wsNode) edges.push(autoEdge(wsNode.id, eid));
 
   } else if (pattern === "debate" && n >= 2) {
-    // Trigger → both agents
-    edges.push(autoEdge(sid, agentNodes[0].id));
-    edges.push(autoEdge(sid, agentNodes[1].id));
-    // Agent 0 → Agent 1 (forward), Agent 1 → Agent 0 (feedback)
-    edges.push(autoEdge(agentNodes[0].id, agentNodes[1].id));
-    edges.push(autoEdge(agentNodes[1].id, agentNodes[0].id, "feedback"));
-    // Both → END
-    edges.push(autoEdge(agentNodes[0].id, lastTarget));
-    edges.push(autoEdge(agentNodes[1].id, lastTarget));
-    if (wsNode) edges.push(autoEdge(wsNode.id, eid));
-    for (let i = 2; i < n; i++) {
-      edges.push(autoEdge(agentNodes[i - 1].id, agentNodes[i].id));
+    if (n === 2) {
+      // Two debaters argue each other, both → END.
+      edges.push(autoEdge(sid, agentNodes[0].id));
+      edges.push(autoEdge(sid, agentNodes[1].id));
+      edges.push(autoEdge(agentNodes[0].id, agentNodes[1].id));
+      edges.push(autoEdge(agentNodes[1].id, agentNodes[0].id, "feedback"));
+      edges.push(autoEdge(agentNodes[0].id, lastTarget));
+      edges.push(autoEdge(agentNodes[1].id, lastTarget));
+    } else {
+      // n >= 3: the LAST agent is the JUDGE. The others debate in parallel and feed the
+      // judge, who merges/reconciles and is the only node going to END.
+      const judge = agentNodes[n - 1];
+      const debaters = agentNodes.slice(0, n - 1);
+      for (const d of debaters) {
+        edges.push(autoEdge(sid, d.id));        // trigger → each debater
+        edges.push(autoEdge(d.id, judge.id));   // debater → judge
+      }
+      if (debaters.length >= 2) {
+        edges.push(autoEdge(debaters[1].id, debaters[0].id, "feedback")); // cross-talk
+      }
+      edges.push(autoEdge(judge.id, lastTarget)); // judge → END (the missing wire)
     }
+    if (wsNode) edges.push(autoEdge(wsNode.id, eid));
 
   } else if (pattern === "swarm") {
     for (let i = 0; i < n; i++) {

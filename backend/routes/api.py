@@ -1841,7 +1841,7 @@ CURRENT TEAM (refine THIS; if empty you're starting fresh):
 
 You design a WORKFLOW GRAPH on a canvas. Building blocks you control:
 
-PATTERNS (how agents relate): sequential (pipeline A→B→C), parallel (independent, simultaneous), supervisor (one agent reviews the others), debate (agents argue, a judge decides), swarm (collaborate with feedback loops — powerful but expensive).
+PATTERNS (how agents relate — AGENT ORDER MATTERS): sequential (pipeline A→B→C). parallel (independent, simultaneous, results compared). supervisor (the FIRST agent reviews/coordinates the others — put the supervisor first). debate (the LAST agent is the JUDGE who reads the others' independent findings and merges/decides — put the judge last; the others are the debaters). swarm (collaborate with feedback loops — powerful but expensive).
 
 AGENT TYPES: code (execute_code, write_file), research (web_search, fetch_webpage), file (read/write files), memory (store/query facts), plan, rag (knowledge base), ltp (compile-once deterministic plan — cheap + reliable for fixed multi-step procedures), custom (you name the exact tools).
 
