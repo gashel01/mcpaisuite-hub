@@ -20,6 +20,7 @@ import FlowEditor from "@/components/flow-editor";
 
 // Extracted modules
 import { BASE_URL, AGENT_META, TEMPLATES, PATTERNS, newId, sseRefs, type Pattern, type AgentInfo, type Template } from "./constants";
+import ConnectionPicker from "@/components/connection-picker";
 import TemplateSelector from "./template-selector";
 import AgentEventItem from "./agent-event-item";
 import CompareView, { CompareTray, type CompareItem } from "./compare-view";
@@ -1533,6 +1534,7 @@ function AgentsPageInner() {
           <h1 className="text-sm font-semibold text-slate-100 leading-tight">Agents</h1>
           <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Multi-agent orchestration & workflows</p>
         </div>
+        <ConnectionPicker />
         <button
           onClick={() => store.createSession()}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/20 transition-all touch-target shrink-0"
