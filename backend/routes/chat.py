@@ -262,39 +262,73 @@ async def poll_chat_task(conversation_id: str, task_id: str, x_tenant_id: str = 
 
 @router.get("/chat/{conversation_id}/stream/{task_id}")
 async def stream_task(conversation_id: str, task_id: str, x_tenant_id: str = Header(default="")):
-    """SSE stream of task progress — pushes each new turn as it happens."""
+    """SSE stream of task progress.
+
+    Completed turns are polled and pushed as `turn` events; between polls we drain the
+    kernel event bus so assistant text streams token-by-token as `delta` events (typewriter).
+    A turn/terminal bus event breaks the drain to re-poll immediately, so turns also appear
+    with near-zero lag instead of waiting for the poll interval.
+    """
+    from kernelmcp.events import kernel_event_bus, KernelEventType
+
     k = _require()
+
+    # Resolve the task's namespace so we subscribe to the right bus channel.
+    task0 = None
+    for _ in range(10):
+        task0 = k._tasks.get(task_id)
+        if task0 is not None:
+            break
+        await asyncio.sleep(0.2)
+    namespace = task0.namespace if task0 is not None else ns(x_tenant_id)
+    queue = kernel_event_bus.subscribe(namespace=namespace)
+
+    _DELTA = getattr(KernelEventType, "llm_delta", None)
+    _BREAK = {KernelEventType.turn_completed, KernelEventType.tool_called,
+              KernelEventType.tool_succeeded, KernelEventType.tool_failed,
+              KernelEventType.task_completed, KernelEventType.task_failed,
+              KernelEventType.task_cancelled}
 
     async def event_gen():
         last_turn_count = 0
-        while True:
-            task = await k.get_task(task_id)
-            if not task:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Task not found'})}\n\n"
-                break
+        try:
+            while True:
+                task = await k.get_task(task_id)
+                if not task:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Task not found'})}\n\n"
+                    break
 
-            turns = flatten_turns(task)
-            new_turns = turns[last_turn_count:]
+                turns = flatten_turns(task)
+                for t in turns[last_turn_count:]:
+                    yield f"data: {json.dumps({'type': 'turn', 'turn': t}, default=str)}\n\n"
+                last_turn_count = len(turns)
 
-            # Push new turns
-            for t in new_turns:
-                yield f"data: {json.dumps({'type': 'turn', 'turn': t}, default=str)}\n\n"
-            last_turn_count = len(turns)
+                if task.status == TaskStatus.waiting_for_user:
+                    question = task.metadata.get("elicitation_question", "")
+                    yield f"data: {json.dumps({'type': 'elicitation', 'task_id': task_id, 'question': question})}\n\n"
 
-            # Elicitation — kernel is asking the user a question
-            if task.status == TaskStatus.waiting_for_user:
-                question = task.metadata.get("elicitation_question", "")
-                yield f"data: {json.dumps({'type': 'elicitation', 'task_id': task_id, 'question': question})}\n\n"
+                if task.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled):
+                    answer = extract_answer(task)
+                    yield f"data: {json.dumps({'type': 'done', 'status': task.status.value, 'answer': answer, 'total_tokens': task.total_tokens, 'total_cost': task.total_cost, 'total_turns': task.total_turns, 'turns': turns, 'bootstrap_sources': task.metadata.get('bootstrap_sources', [])}, default=str)}\n\n"
+                    break
 
-            # Check if done
-            if task.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled):
-                answer = extract_answer(task)
-                yield f"data: {json.dumps({'type': 'done', 'status': task.status.value, 'answer': answer, 'total_tokens': task.total_tokens, 'total_cost': task.total_cost, 'total_turns': task.total_turns, 'turns': turns, 'bootstrap_sources': task.metadata.get('bootstrap_sources', [])}, default=str)}\n\n"
-                break
-
-            # Only send progress heartbeat every ~10s (not every poll)
-            # Reduces SSE traffic and frees connection slots
-            await asyncio.sleep(2.0)
+                # Drain the bus for up to ~2s, streaming text deltas live. A turn/tool/terminal
+                # event breaks out early to re-poll (so turns render without poll lag).
+                deadline = _now().timestamp() + 2.0
+                while True:
+                    remaining = deadline - _now().timestamp()
+                    if remaining <= 0:
+                        break
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+                    if _DELTA is not None and event.type == _DELTA:
+                        yield f"data: {json.dumps({'type': 'delta', 'text': event.message})}\n\n"
+                    elif event.type in _BREAK:
+                        break
+        finally:
+            kernel_event_bus.unsubscribe(queue, namespace=namespace)
 
     return StreamingResponse(event_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 

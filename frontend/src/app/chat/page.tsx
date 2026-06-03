@@ -39,6 +39,7 @@ export default function ChatPage() {
   });
   const [taskId, setTaskId] = useState<string | null>(null);
   const [liveTurns, setLiveTurns] = useState<Turn[]>([]);
+  const [streamingText, setStreamingText] = useState(""); // live assistant text (typewriter)
 
   // Scroll
   const [showScrollDown, setShowScrollDown] = useState(false);
@@ -145,7 +146,7 @@ export default function ChatPage() {
     closeStream();
     setLoading(true);
     setTaskId(tid);
-    setLiveTurns([]);
+    setLiveTurns([]); setStreamingText("");
     const turns: Turn[] = [];
     let taskDone = false;
     const es = new EventSource(`${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`);
@@ -154,9 +155,13 @@ export default function ChatPage() {
     es.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        if (msg.type === "delta") {
+          setStreamingText(prev => prev + (msg.text || ""));
+        }
         if (msg.type === "turn") {
           turns.push(msg.turn);
           setLiveTurns([...turns]);
+          setStreamingText(""); // completed turn supersedes the streamed text
         }
         if (msg.type === "elicitation") {
           setElicitation({ taskId: msg.task_id, question: msg.question });
@@ -173,7 +178,8 @@ export default function ChatPage() {
             bootstrapSources: msg.bootstrap_sources || [],
             timestamp: Date.now(),
           }]);
-          setLiveTurns([]);
+          setLiveTurns([]); setStreamingText("");
+          setStreamingText("");
           setTaskId(null);
           refreshSidebar();
         }
@@ -182,7 +188,7 @@ export default function ChatPage() {
           closeStream();
           setLoading(false);
           setMessages(prev => [...prev, { role: "assistant", content: msg.message || "Task failed" }]);
-          setLiveTurns([]);
+          setLiveTurns([]); setStreamingText("");
           setTaskId(null);
           refreshSidebar();
         }
@@ -198,8 +204,8 @@ export default function ChatPage() {
         if (["completed", "failed", "cancelled"].includes(task.status)) {
           setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
         }
-        setLiveTurns([]); setTaskId(null); refreshSidebar();
-      }).catch(() => { setLoading(false); setLiveTurns([]); setTaskId(null); });
+        setLiveTurns([]); setStreamingText(""); setTaskId(null); refreshSidebar();
+      }).catch(() => { setLoading(false); setLiveTurns([]); setStreamingText(""); setTaskId(null); });
     };
   }, [convId, closeStream, th]);
 
@@ -228,7 +234,7 @@ export default function ChatPage() {
         reconnectToTask(runningTaskId);
       } else if (!eventSourceRef.current) {
         setLoading(false);
-        setLiveTurns([]);
+        setLiveTurns([]); setStreamingText("");
         setTaskId(null);
       }
     }).catch(() => {
@@ -254,7 +260,7 @@ export default function ChatPage() {
             bootstrapSources: m.bootstrap_sources, timestamp: m.timestamp,
           })));
           setLoading(false);
-          setLiveTurns([]);
+          setLiveTurns([]); setStreamingText("");
         }
       } catch (_e) {}
     };
@@ -297,7 +303,7 @@ export default function ChatPage() {
 
   const handleFileDrop = (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); const files = Array.from(e.dataTransfer.files); if (files.length > 0) uploadAndAsk(files[0]); };
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => { const files = Array.from(e.target.files || []); if (files.length > 0) uploadAndAsk(files[0]); };
-  const clearChat = async () => { await fetch(`${BASE_URL}/chat/${convId}`, { method: "DELETE", headers: th }); setMessages([]); setLiveTurns([]); };
+  const clearChat = async () => { await fetch(`${BASE_URL}/chat/${convId}`, { method: "DELETE", headers: th }); setMessages([]); setLiveTurns([]); setStreamingText(""); };
 
   const stopTask = async () => {
     if (taskId) try { await fetch(`${BASE_URL}/tasks/${taskId}`, { method: "DELETE", headers: th }); } catch (_e) {}
@@ -309,7 +315,7 @@ export default function ChatPage() {
       turns: liveTurns.length > 0 ? liveTurns : undefined,
       tokens: liveTurns.reduce((s: number, t: any) => s + (t.tokens_used || 0), 0) || undefined,
     } as any]);
-    setLiveTurns([]);
+    setLiveTurns([]); setStreamingText("");
   };
 
   const switchConv = (id: string) => {
@@ -317,7 +323,7 @@ export default function ChatPage() {
     closeStream();
     setLoading(false);
     setLoadingConv(true);
-    setLiveTurns([]);
+    setLiveTurns([]); setStreamingText("");
     setTaskId(null);
     setElicitation(null);
     setMessages([]);
@@ -345,7 +351,7 @@ export default function ChatPage() {
   const send = async () => {
     if (!input.trim() || loading) return;
     const msg = input.trim();
-    setInput(""); setLoading(true); setLiveTurns([]);
+    setInput(""); setLoading(true); setLiveTurns([]); setStreamingText("");
     userScrolledUp.current = false;
     setMessages(prev => [...prev, { role: "user", content: msg, timestamp: Date.now() }]);
 
@@ -379,9 +385,14 @@ export default function ChatPage() {
         try {
           const msg = JSON.parse(event.data);
 
+          if (msg.type === "delta") {
+            setStreamingText(prev => prev + (msg.text || ""));
+          }
+
           if (msg.type === "turn") {
             turns.push(msg.turn);
             setLiveTurns([...turns]);
+            setStreamingText(""); // completed turn supersedes the streamed text
           }
 
           if (msg.type === "elicitation") {
@@ -403,7 +414,8 @@ export default function ChatPage() {
               taskId: tid,
               bootstrapSources: msg.bootstrap_sources || [],
             }]);
-            setLiveTurns([]);
+            setLiveTurns([]); setStreamingText("");
+            setStreamingText("");
             setTaskId(null);
             refreshSidebar(); // Refresh conversations/tasks after task completes
           }
@@ -429,9 +441,9 @@ export default function ChatPage() {
           if (["completed", "failed", "cancelled"].includes(task.status)) {
             setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
           }
-          setLiveTurns([]); setTaskId(null);
+          setLiveTurns([]); setStreamingText(""); setTaskId(null);
           refreshSidebar();
-        }).catch(() => { setLoading(false); setLiveTurns([]); setTaskId(null); });
+        }).catch(() => { setLoading(false); setLiveTurns([]); setStreamingText(""); setTaskId(null); });
       };
 
     } catch (e) {
@@ -601,7 +613,7 @@ export default function ChatPage() {
             })}
 
             {/* Live progress */}
-            {loading && liveTurns.length > 0 && (
+            {loading && (liveTurns.length > 0 || streamingText) && (
               <div className="flex gap-2.5 animate-msg-assistant">
                 <div className="h-7 w-7 rounded-lg bg-violet-600/20 flex items-center justify-center shrink-0 mt-0.5 animate-glow">
                   <Bot className="h-4 w-4 text-violet-400" />
@@ -609,9 +621,15 @@ export default function ChatPage() {
                 <div className="bg-slate-800/40 border border-violet-800/20 rounded-2xl px-4 py-3 w-full md:max-w-[85%] space-y-2">
                   <div className="flex items-center gap-2 text-xs text-violet-400">
                     <Loader2 className="h-3 w-3 animate-spin" /> <span className="animate-thinking">Working...</span>
-                    <span className="text-slate-600">{liveTurns.length} steps</span>
+                    {liveTurns.length > 0 && <span className="text-slate-600">{liveTurns.length} steps</span>}
                   </div>
-                  <div className="space-y-2">{liveTurns.map((t, j) => <TurnItem key={j} turn={t} />)}</div>
+                  {liveTurns.length > 0 && <div className="space-y-2">{liveTurns.map((t, j) => <TurnItem key={j} turn={t} />)}</div>}
+                  {streamingText && (
+                    <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap break-words">
+                      {streamingText}
+                      <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-violet-400 align-middle animate-pulse" />
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -677,7 +695,7 @@ export default function ChatPage() {
             )}
 
             {/* Thinking */}
-            {loading && liveTurns.length === 0 && hostPending.length === 0 && !elicitation && (
+            {loading && liveTurns.length === 0 && !streamingText && hostPending.length === 0 && !elicitation && (
               <div className="flex gap-2.5 animate-msg-assistant">
                 <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-violet-600/20 to-violet-800/10 border border-violet-500/15 flex items-center justify-center shrink-0 mt-0.5 animate-glow">
                   <Bot className="h-4 w-4 text-violet-400" />
