@@ -1630,6 +1630,79 @@ async def set_deployment_status(did: str, body: dict, x_tenant_id: str = Header(
     return {"status": new_status}
 
 
+@router.get("/deployments/{did}/metrics")
+async def deployment_metrics(did: str, x_tenant_id: str = Header(default="")):
+    """Owner-only per-deployment metrics, aggregated from its run history:
+    success rate, token/cost totals + averages, latency percentiles, a daily
+    call timeline, and a source (api vs test) breakdown."""
+    import datetime as _dt
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    if x_tenant_id != dep.get("tenant", ""):
+        raise HTTPException(403, "not the owner of this deployment")
+
+    rdir = os.path.join(_DEPLOY_DIR, did, "runs")
+    runs = []
+    if os.path.isdir(rdir):
+        for f in os.listdir(rdir):
+            if f.endswith(".json"):
+                try:
+                    runs.append(_json.load(open(os.path.join(rdir, f), encoding="utf-8")))
+                except Exception:
+                    pass
+
+    total = len(runs)
+    completed = sum(1 for r in runs if r.get("status") == "completed")
+    failed = sum(1 for r in runs if r.get("status") == "failed")
+    by_source = {}
+    for r in runs:
+        s = r.get("source", "api")
+        by_source[s] = by_source.get(s, 0) + 1
+
+    def _m(r, k):
+        return (r.get("metrics") or {}).get(k, 0) or 0
+    tot_tokens = sum(_m(r, "tokens") for r in runs)
+    tot_cost = sum(_m(r, "cost") for r in runs)
+    durations = sorted(_m(r, "duration") for r in runs if _m(r, "duration"))
+
+    def _pct(p):
+        if not durations:
+            return 0
+        i = min(len(durations) - 1, int(round((p / 100) * (len(durations) - 1))))
+        return durations[i]
+
+    # Daily timeline over the last 14 days
+    today = _dt.datetime.utcnow().date()
+    days = [(today - _dt.timedelta(days=i)) for i in range(13, -1, -1)]
+    buckets = {d.isoformat(): {"date": d.isoformat(), "calls": 0, "failures": 0} for d in days}
+    for r in runs:
+        ts = r.get("createdAt")
+        if not ts:
+            continue
+        d = _dt.datetime.utcfromtimestamp(ts / 1000).date().isoformat()
+        if d in buckets:
+            buckets[d]["calls"] += 1
+            if r.get("status") == "failed":
+                buckets[d]["failures"] += 1
+
+    return {
+        "deploymentId": did,
+        "totalCalls": total,
+        "byStatus": {"completed": completed, "failed": failed},
+        "successRate": (completed / total) if total else None,
+        "bySource": by_source,
+        "totals": {"tokens": tot_tokens, "cost": round(tot_cost, 6)},
+        "avg": {
+            "tokens": round(tot_tokens / total) if total else 0,
+            "cost": round(tot_cost / total, 6) if total else 0,
+            "durationMs": round(sum(durations) / len(durations)) if durations else 0,
+        },
+        "latency": {"p50": _pct(50), "p95": _pct(95), "max": durations[-1] if durations else 0},
+        "timeline": [buckets[d.isoformat()] for d in days],
+    }
+
+
 @router.delete("/deployments/{did}")
 async def delete_deployment(did: str):
     p = _deploy_path(did)

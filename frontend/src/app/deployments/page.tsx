@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Rocket, RefreshCw, Globe, Trash, Copy, CheckCheck, X, Terminal,
   KeyRound, Plus, History, ArrowUpRight, Loader2, Zap, Play, CheckCircle2, XCircle, Bot,
-  Power, PlayCircle,
+  Power, PlayCircle, BarChart3,
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { renderMarkdown } from "@/components/markdown";
@@ -36,6 +36,16 @@ function fmtDate(s?: number) {
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+function MetricTile({ label, value, accent }: { label: string; value: string; accent?: "emerald" | "amber" }) {
+  const color = accent === "emerald" ? "text-emerald-300" : accent === "amber" ? "text-amber-300" : "text-slate-200";
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-center">
+      <div className="text-[8.5px] text-slate-500 uppercase tracking-wide">{label}</div>
+      <div className={`text-[13px] font-semibold tabular-nums mt-0.5 ${color}`}>{value}</div>
+    </div>
+  );
+}
+
 export default function DeploymentsPage() {
   const BASE = getApiUrl();
   const apiOrigin = BASE.replace(/\/$/, "");
@@ -51,6 +61,14 @@ export default function DeploymentsPage() {
   const [testResult, setTestResult] = useState<{ success: boolean; output: string } | null>(null);
   const [rotating, setRotating] = useState(false);
   const [rotatedToken, setRotatedToken] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<any | null>(null);
+
+  const loadMetrics = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`${BASE}/deployments/${id}/metrics`, { headers: th });
+      setMetrics(r.ok ? await r.json() : null);
+    } catch { setMetrics(null); }
+  }, [BASE, th]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,11 +88,13 @@ export default function DeploymentsPage() {
     setTestResult(null);
     setTesting(false);
     setRotatedToken(null);
+    setMetrics(null);
+    loadMetrics(dep.id);
     try {
       const r = await fetch(`${BASE}/deployments/${dep.id}`, { headers: th });
       setSelected(await r.json());
     } catch { /* keep summary */ }
-  }, [BASE, th]);
+  }, [BASE, th, loadMetrics]);
 
   const runTest = useCallback(async (dep: Deployment) => {
     setTesting(true);
@@ -90,15 +110,16 @@ export default function DeploymentsPage() {
         setTestResult({ success: false, output: d.detail || `Error ${r.status}` });
       } else {
         setTestResult({ success: d.success !== false, output: d.final_output || d.error || "(no output)" });
-        // reflect the new call count
+        // reflect the new call count + refresh metrics
         setSelected(s => s ? { ...s, runs: (s.runs ?? 0) + 1, run_count: (s.run_count ?? 0) + 1 } : s);
+        loadMetrics(dep.id);
       }
     } catch (e: any) {
       setTestResult({ success: false, output: String(e?.message || e) });
     } finally {
       setTesting(false);
     }
-  }, [BASE, th, testInputs]);
+  }, [BASE, th, testInputs, loadMetrics]);
 
   const remove = useCallback(async (id: string) => {
     try { await fetch(`${BASE}/deployments/${id}`, { method: "DELETE", headers: th }); } catch {}
@@ -229,6 +250,60 @@ export default function DeploymentsPage() {
               {selected.release_notes && (
                 <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-[11px] text-slate-400">{selected.release_notes}</div>
               )}
+
+              {/* Metrics */}
+              <div>
+                <div className="flex items-center gap-1.5 mb-1.5"><BarChart3 className="h-3 w-3 text-emerald-400" /><span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Metrics</span></div>
+                {!metrics ? (
+                  <div className="flex items-center gap-2 text-[11px] text-slate-600 px-1 py-2"><Loader2 className="h-3 w-3 animate-spin" /> Loading…</div>
+                ) : metrics.totalCalls === 0 ? (
+                  <p className="text-[11px] text-slate-600 px-1 py-2">No calls yet — run a test or call the endpoint to see metrics.</p>
+                ) : (
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-3 gap-2">
+                      <MetricTile label="Calls" value={String(metrics.totalCalls)} />
+                      <MetricTile label="Success" value={metrics.successRate != null ? `${Math.round(metrics.successRate * 100)}%` : "—"}
+                        accent={metrics.byStatus?.failed ? "amber" : "emerald"} />
+                      <MetricTile label="Avg latency" value={metrics.avg?.durationMs ? `${(metrics.avg.durationMs / 1000).toFixed(1)}s` : "—"} />
+                      <MetricTile label="Tokens" value={(metrics.totals?.tokens || 0).toLocaleString()} />
+                      <MetricTile label="Cost" value={`$${(metrics.totals?.cost || 0).toFixed(4)}`} />
+                      <MetricTile label="p95 latency" value={metrics.latency?.p95 ? `${(metrics.latency.p95 / 1000).toFixed(1)}s` : "—"} />
+                    </div>
+
+                    {/* 14-day call timeline */}
+                    {(() => {
+                      const tl = metrics.timeline || [];
+                      const maxC = Math.max(1, ...tl.map((d: any) => d.calls));
+                      return (
+                        <div className="rounded-lg border border-white/[0.06] bg-[#08080f] px-3 py-2.5">
+                          <div className="text-[9px] text-slate-600 uppercase tracking-wide mb-1.5">Calls · last 14 days</div>
+                          <div className="flex items-end gap-1 h-12">
+                            {tl.map((d: any) => {
+                              const ok = d.calls - d.failures;
+                              return (
+                                <div key={d.date} className="flex-1 flex flex-col justify-end h-full group/bar relative" data-tooltip={`${d.date}: ${d.calls} call(s)${d.failures ? `, ${d.failures} failed` : ""}`}>
+                                  {d.failures > 0 && <div className="w-full bg-red-500/70 rounded-t-sm" style={{ height: `${(d.failures / maxC) * 100}%` }} />}
+                                  {ok > 0 && <div className={`w-full bg-emerald-500/60 ${d.failures > 0 ? "" : "rounded-t-sm"}`} style={{ height: `${(ok / maxC) * 100}%` }} />}
+                                  {d.calls === 0 && <div className="w-full bg-white/[0.04] rounded-t-sm" style={{ height: "2px" }} />}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Source breakdown */}
+                    {metrics.bySource && Object.keys(metrics.bySource).length > 0 && (
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <span className="text-slate-600">Source:</span>
+                        {metrics.bySource.api ? <span className="inline-flex items-center gap-1 text-sky-300 bg-sky-500/10 border border-sky-500/15 px-1.5 py-0.5 rounded">API {metrics.bySource.api}</span> : null}
+                        {metrics.bySource.test ? <span className="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 border border-amber-500/15 px-1.5 py-0.5 rounded">Test {metrics.bySource.test}</span> : null}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Endpoint */}
               <div>
