@@ -75,11 +75,12 @@ llm_config: dict = load_json(LLM_CONFIG_PATH, {"provider": "ollama", "model": "q
 settings: dict = load_json(SETTINGS_PATH, dict(DEFAULT_SETTINGS))
 
 
-def litellm_kwargs() -> dict:
-    provider = llm_config["provider"]
-    model = llm_config["model"] or PROVIDER_DEFAULT_MODELS.get(provider, "gpt-4o-mini")
-    api_key = llm_config["api_key"]
-    base_url = resolve_url(llm_config["base_url"])
+def litellm_kwargs(cfg: dict | None = None) -> dict:
+    cfg = cfg if cfg is not None else llm_config
+    provider = cfg.get("provider", "openai")
+    model = cfg.get("model") or PROVIDER_DEFAULT_MODELS.get(provider, "gpt-4o-mini")
+    api_key = cfg.get("api_key", "")
+    base_url = resolve_url(cfg.get("base_url", ""))
     kwargs: dict = {}
     if provider == "ollama":
         ollama_base = base_url or ("http://host.docker.internal:11434" if is_docker() else "http://localhost:11434")

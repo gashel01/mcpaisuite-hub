@@ -243,6 +243,156 @@ async def set_llm_config(cfg: LLMConfigIn):
     return {"provider": cfg.provider, "model": cfg.model, "base_url": cfg.base_url, "has_api_key": bool(cfg.api_key)}
 
 
+# ── LLM Connections: saved {provider, key, model} combos, selectable per chat/agent ──
+import secrets as _secrets2
+
+_CONN_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "llm_connections")
+_PROVIDERS = ("openai", "anthropic", "ollama", "groq", "cerebras", "gemini", "openai_compatible")
+
+
+def _conn_path(cid: str) -> str:
+    return os.path.join(_CONN_DIR, f"{cid}.json")
+
+
+def _load_conn(cid: str):
+    p = _conn_path(cid)
+    return json.load(open(p, encoding="utf-8")) if os.path.isfile(p) else None
+
+
+def _save_conn(c: dict) -> None:
+    os.makedirs(_CONN_DIR, exist_ok=True)
+    with open(_conn_path(c["id"]), "w", encoding="utf-8") as f:
+        json.dump(c, f)
+
+
+def _all_conns() -> list:
+    out = []
+    if os.path.isdir(_CONN_DIR):
+        for f in os.listdir(_CONN_DIR):
+            if f.endswith(".json"):
+                try:
+                    out.append(json.load(open(os.path.join(_CONN_DIR, f), encoding="utf-8")))
+                except Exception:
+                    pass
+    out.sort(key=lambda c: c.get("created_at", 0))
+    return out
+
+
+def _public_conn(c: dict) -> dict:
+    return {"id": c["id"], "name": c.get("name"), "provider": c.get("provider"),
+            "model": c.get("model"), "base_url": c.get("base_url", ""),
+            "has_api_key": bool(c.get("api_key")), "is_default": bool(c.get("is_default")),
+            "created_at": c.get("created_at")}
+
+
+def resolve_connection(cid: str) -> dict | None:
+    """Resolve a saved connection into litellm kwargs (model/api_key/api_base)."""
+    c = _load_conn(cid)
+    if not c:
+        return None
+    return litellm_kwargs({"provider": c.get("provider"), "model": c.get("model"),
+                           "api_key": c.get("api_key", ""), "base_url": c.get("base_url", "")})
+
+
+def _apply_llm_to_kernel(kwargs: dict) -> None:
+    if kernel is None:
+        return
+    model = kwargs.get("model")
+    kernel._engine._llm._model = model
+    kernel._engine._llm._api_key = kwargs.get("api_key")
+    kernel._engine._llm._base_url = kwargs.get("api_base")
+    kernel._engine._supervisor._cloud = model
+    kernel._engine._supervisor._fast = model
+    kernel._engine._supervisor._local = model
+    kernel._engine._fallback = None
+    if kernel._agent_registry:
+        kernel._agent_registry._llm._model = model
+        kernel._agent_registry._llm._api_key = kwargs.get("api_key")
+        kernel._agent_registry._llm._base_url = kwargs.get("api_base")
+
+
+@router.get("/llm/connections")
+async def list_llm_connections():
+    return {"connections": [_public_conn(c) for c in _all_conns()]}
+
+
+@router.post("/llm/connections")
+async def create_llm_connection(body: dict):
+    provider = body.get("provider")
+    if provider not in _PROVIDERS:
+        raise HTTPException(400, f"Unknown provider: {provider}")
+    cid = "conn_" + _secrets2.token_hex(4)
+    existing = _all_conns()
+    conn = {
+        "id": cid, "name": (body.get("name") or "").strip() or f"{provider}:{body.get('model', '')}",
+        "provider": provider, "model": body.get("model", ""),
+        "api_key": body.get("api_key", ""), "base_url": body.get("base_url", ""),
+        "is_default": bool(body.get("make_default")) or len(existing) == 0,
+        "created_at": _time.time(),
+    }
+    if conn["is_default"]:
+        for c in existing:
+            if c.get("is_default"):
+                c["is_default"] = False
+                _save_conn(c)
+    _save_conn(conn)
+    if conn["is_default"]:
+        _apply_llm_to_kernel(litellm_kwargs({k: conn[k] for k in ("provider", "model", "api_key", "base_url")}))
+    return _public_conn(conn)
+
+
+@router.put("/llm/connections/{cid}")
+async def update_llm_connection(cid: str, body: dict):
+    c = _load_conn(cid)
+    if not c:
+        raise HTTPException(404, "connection not found")
+    if "name" in body:
+        c["name"] = body["name"]
+    if "provider" in body and body["provider"] in _PROVIDERS:
+        c["provider"] = body["provider"]
+    if "model" in body:
+        c["model"] = body["model"]
+    if "base_url" in body:
+        c["base_url"] = body["base_url"]
+    if body.get("api_key"):  # only overwrite key if a new one is provided
+        c["api_key"] = body["api_key"]
+    _save_conn(c)
+    if c.get("is_default"):
+        _apply_llm_to_kernel(litellm_kwargs({k: c[k] for k in ("provider", "model", "api_key", "base_url")}))
+    return _public_conn(c)
+
+
+@router.post("/llm/connections/{cid}/default")
+async def set_default_connection(cid: str):
+    c = _load_conn(cid)
+    if not c:
+        raise HTTPException(404, "connection not found")
+    for other in _all_conns():
+        if other.get("is_default") and other["id"] != cid:
+            other["is_default"] = False
+            _save_conn(other)
+    c["is_default"] = True
+    _save_conn(c)
+    _apply_llm_to_kernel(litellm_kwargs({k: c[k] for k in ("provider", "model", "api_key", "base_url")}))
+    return _public_conn(c)
+
+
+@router.delete("/llm/connections/{cid}")
+async def delete_llm_connection(cid: str):
+    c = _load_conn(cid)
+    if not c:
+        raise HTTPException(404, "connection not found")
+    os.remove(_conn_path(cid))
+    # If we removed the default, promote the oldest remaining one
+    if c.get("is_default"):
+        rest = _all_conns()
+        if rest:
+            rest[0]["is_default"] = True
+            _save_conn(rest[0])
+            _apply_llm_to_kernel(litellm_kwargs({k: rest[0][k] for k in ("provider", "model", "api_key", "base_url")}))
+    return {"deleted": cid}
+
+
 # ── Test Connection ──────────────────────────────────────────────────────────
 
 class TestConnectionRequest(BaseModel):
