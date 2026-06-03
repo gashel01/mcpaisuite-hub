@@ -5,14 +5,14 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   History, RefreshCw, Search, CheckCircle2, XCircle, Loader2, PauseCircle,
-  X, Rocket, Bot, Zap, DollarSign, ArrowUpRight, Activity, Play,
+  X, Rocket, Bot, Zap, DollarSign, ArrowUpRight, Activity, Play, Link2, Clock,
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { renderMarkdown } from "@/components/markdown";
 
 interface RunSummary {
   id: string;
-  source: "builder" | "api" | "test";
+  source: "builder" | "api" | "test" | "webhook" | "schedule";
   status: string;
   label: string;
   workflowId?: string;
@@ -129,6 +129,8 @@ export default function ExecutionsPage() {
           <option value="builder">Builder</option>
           <option value="api">Deployment API</option>
           <option value="test">Owner test</option>
+          <option value="webhook">Webhook</option>
+          <option value="schedule">Schedule</option>
         </select>
         <select value={status} onChange={e => setStatus(e.target.value)} className="!py-1.5 !text-[12px] !px-2.5">
           <option value="">All statuses</option>
@@ -176,6 +178,10 @@ export default function ExecutionsPage() {
                       <span className="inline-flex items-center gap-1 text-[10px] text-sky-300 bg-sky-500/10 border border-sky-500/15 px-1.5 py-0.5 rounded"><Rocket className="h-2.5 w-2.5" /> API</span>
                     ) : r.source === "test" ? (
                       <span className="inline-flex items-center gap-1 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/15 px-1.5 py-0.5 rounded"><Play className="h-2.5 w-2.5" /> Test</span>
+                    ) : r.source === "webhook" ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-sky-300 bg-sky-500/10 border border-sky-500/15 px-1.5 py-0.5 rounded"><Link2 className="h-2.5 w-2.5" /> Webhook</span>
+                    ) : r.source === "schedule" ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-violet-300 bg-violet-500/10 border border-violet-500/15 px-1.5 py-0.5 rounded"><Clock className="h-2.5 w-2.5" /> Schedule</span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] text-violet-300 bg-violet-500/10 border border-violet-500/15 px-1.5 py-0.5 rounded"><Bot className="h-2.5 w-2.5" /> Builder</span>
                     )}

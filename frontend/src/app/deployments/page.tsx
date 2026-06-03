@@ -6,8 +6,25 @@ import Link from "next/link";
 import {
   Rocket, RefreshCw, Globe, Trash, Copy, CheckCheck, X, Terminal,
   KeyRound, Plus, History, ArrowUpRight, Loader2, Zap, Play, CheckCircle2, XCircle, Bot,
-  Power, PlayCircle, BarChart3,
+  Power, PlayCircle, BarChart3, Clock, Repeat, Link2,
 } from "lucide-react";
+
+const INTERVAL_PRESETS = [
+  { label: "5m", s: 300 }, { label: "15m", s: 900 }, { label: "30m", s: 1800 },
+  { label: "1h", s: 3600 }, { label: "6h", s: 21600 }, { label: "1d", s: 86400 },
+];
+const CRON_PRESETS = [
+  { label: "Hourly", v: "0 * * * *" }, { label: "Daily 9am", v: "0 9 * * *" },
+  { label: "Every 15m", v: "*/15 * * * *" }, { label: "Mon 8am", v: "0 8 * * 1" },
+];
+function trigSummary(t: any): string {
+  if (t.type === "interval") {
+    const p = INTERVAL_PRESETS.find(x => x.s === t.seconds);
+    return `Every ${p ? p.label : `${t.seconds}s`}`;
+  }
+  if (t.type === "cron") return `Cron · ${t.cron}`;
+  return "Webhook";
+}
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { renderMarkdown } from "@/components/markdown";
 
@@ -62,6 +79,13 @@ export default function DeploymentsPage() {
   const [rotating, setRotating] = useState(false);
   const [rotatedToken, setRotatedToken] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<any | null>(null);
+  const [triggers, setTriggers] = useState<any[]>([]);
+  const [trigType, setTrigType] = useState<"interval" | "cron" | "webhook">("interval");
+  const [trigInterval, setTrigInterval] = useState(3600);
+  const [trigCron, setTrigCron] = useState("0 9 * * *");
+  const [trigInputs, setTrigInputs] = useState<Record<string, string>>({});
+  const [addingTrigger, setAddingTrigger] = useState(false);
+  const [trigError, setTrigError] = useState("");
 
   const loadMetrics = useCallback(async (id: string) => {
     try {
@@ -69,6 +93,35 @@ export default function DeploymentsPage() {
       setMetrics(r.ok ? await r.json() : null);
     } catch { setMetrics(null); }
   }, [BASE, th]);
+
+  const loadTriggers = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`${BASE}/deployments/${id}/triggers`, { headers: th });
+      const d = await r.json();
+      setTriggers(d.triggers || []);
+    } catch { setTriggers([]); }
+  }, [BASE, th]);
+
+  const addTrigger = useCallback(async (dep: Deployment) => {
+    setAddingTrigger(true);
+    setTrigError("");
+    const body: any = { type: trigType, inputs: trigInputs };
+    if (trigType === "interval") body.seconds = trigInterval;
+    if (trigType === "cron") body.cron = trigCron.trim();
+    try {
+      const r = await fetch(`${BASE}/deployments/${dep.id}/triggers`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify(body),
+      });
+      if (r.ok) { setTrigInputs({}); loadTriggers(dep.id); }
+      else { const e = await r.json().catch(() => ({})); setTrigError(e.detail || `Error ${r.status}`); }
+    } catch (e: any) { setTrigError(String(e?.message || e)); }
+    finally { setAddingTrigger(false); }
+  }, [BASE, th, trigType, trigInterval, trigCron, trigInputs, loadTriggers]);
+
+  const deleteTrigger = useCallback(async (depId: string, tid: string) => {
+    try { await fetch(`${BASE}/deployments/triggers/${tid}`, { method: "DELETE", headers: th }); } catch {}
+    loadTriggers(depId);
+  }, [BASE, th, loadTriggers]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,12 +142,16 @@ export default function DeploymentsPage() {
     setTesting(false);
     setRotatedToken(null);
     setMetrics(null);
+    setTriggers([]);
+    setTrigError("");
+    setTrigInputs({});
     loadMetrics(dep.id);
+    loadTriggers(dep.id);
     try {
       const r = await fetch(`${BASE}/deployments/${dep.id}`, { headers: th });
       setSelected(await r.json());
     } catch { /* keep summary */ }
-  }, [BASE, th, loadMetrics]);
+  }, [BASE, th, loadMetrics, loadTriggers]);
 
   const runTest = useCallback(async (dep: Deployment) => {
     setTesting(true);
@@ -295,10 +352,15 @@ export default function DeploymentsPage() {
 
                     {/* Source breakdown */}
                     {metrics.bySource && Object.keys(metrics.bySource).length > 0 && (
-                      <div className="flex items-center gap-2 text-[10px]">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                         <span className="text-slate-600">Source:</span>
-                        {metrics.bySource.api ? <span className="inline-flex items-center gap-1 text-sky-300 bg-sky-500/10 border border-sky-500/15 px-1.5 py-0.5 rounded">API {metrics.bySource.api}</span> : null}
-                        {metrics.bySource.test ? <span className="inline-flex items-center gap-1 text-amber-300 bg-amber-500/10 border border-amber-500/15 px-1.5 py-0.5 rounded">Test {metrics.bySource.test}</span> : null}
+                        {Object.entries(metrics.bySource).map(([src, n]) => {
+                          const c = src === "api" ? "text-sky-300 bg-sky-500/10 border-sky-500/15"
+                            : src === "test" ? "text-amber-300 bg-amber-500/10 border-amber-500/15"
+                            : src === "webhook" ? "text-sky-300 bg-sky-500/10 border-sky-500/15"
+                            : "text-violet-300 bg-violet-500/10 border-violet-500/15";
+                          return <span key={src} className={`inline-flex items-center gap-1 capitalize px-1.5 py-0.5 rounded border ${c}`}>{src} {String(n)}</span>;
+                        })}
                       </div>
                     )}
                   </div>
@@ -415,6 +477,84 @@ export default function DeploymentsPage() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Triggers — managed cron / interval / webhook */}
+              <div className="rounded-lg border border-violet-500/15 bg-violet-500/[0.03] px-3 py-3">
+                <div className="flex items-center gap-1.5 mb-2"><Repeat className="h-3 w-3 text-violet-400" /><span className="text-[10px] font-semibold text-slate-300 uppercase tracking-wide">Triggers</span><span className="text-[9px] text-slate-500">— run this automatically</span></div>
+
+                {/* Existing triggers */}
+                {triggers.length > 0 && (
+                  <div className="space-y-1.5 mb-2.5">
+                    {triggers.map(t => (
+                      <div key={t.id} className="flex items-center gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-1.5">
+                        {t.type === "webhook" ? <Link2 className="h-3 w-3 text-sky-400 shrink-0" /> : t.type === "cron" ? <Clock className="h-3 w-3 text-violet-400 shrink-0" /> : <Repeat className="h-3 w-3 text-violet-400 shrink-0" />}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] text-slate-200">{trigSummary(t)}</div>
+                          {t.type === "webhook" && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <code className="text-[9px] text-sky-300/80 truncate">{apiOrigin}{t.webhook_url}</code>
+                              <button onClick={() => copy(`${apiOrigin}${t.webhook_url}`, `wh-${t.id}`)} className="text-slate-500 hover:text-slate-200 shrink-0">{copied === `wh-${t.id}` ? <CheckCheck className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}</button>
+                            </div>
+                          )}
+                        </div>
+                        <button onClick={() => deleteTrigger(selected.id, t.id)} className="text-slate-500 hover:text-red-400 shrink-0"><Trash className="h-3 w-3" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add trigger */}
+                <div className="flex items-center gap-1 mb-2 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.05]">
+                  {(["interval", "cron", "webhook"] as const).map(tt => (
+                    <button key={tt} onClick={() => setTrigType(tt)}
+                      className={`flex-1 py-1 rounded-md text-[10px] font-medium capitalize transition-all ${trigType === tt ? "bg-violet-500/20 text-violet-200" : "text-slate-500 hover:text-slate-300"}`}>
+                      {tt}
+                    </button>
+                  ))}
+                </div>
+
+                {trigType === "interval" && (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {INTERVAL_PRESETS.map(p => (
+                      <button key={p.s} onClick={() => setTrigInterval(p.s)}
+                        className={`px-2 py-1 text-[10px] rounded border transition-all ${trigInterval === p.s ? "text-violet-200 bg-violet-500/15 border-violet-500/25" : "text-slate-400 border-white/[0.06] hover:bg-white/[0.04]"}`}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {trigType === "cron" && (
+                  <div className="mb-2 space-y-1.5">
+                    <input value={trigCron} onChange={e => setTrigCron(e.target.value)} placeholder="min hour dom mon dow" className="w-full !py-1.5 !px-2.5 !text-[12px] !bg-[#08080f] !border-white/[0.06] font-mono" />
+                    <div className="flex flex-wrap gap-1">
+                      {CRON_PRESETS.map(p => (
+                        <button key={p.v} onClick={() => setTrigCron(p.v)} className="px-2 py-0.5 text-[9px] text-slate-400 border border-white/[0.06] rounded hover:bg-white/[0.04] transition-all">{p.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {trigType === "webhook" && (
+                  <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">Generates a secret URL — POST to it to run the deployment from any external system. Defaults below are sent unless the caller overrides them.</p>
+                )}
+
+                {/* Default inputs for the trigger */}
+                {selected.inputs && selected.inputs.length > 0 && (
+                  <div className="space-y-1.5 mb-2">
+                    <div className="text-[9px] text-slate-500 uppercase tracking-wide">Default inputs</div>
+                    {selected.inputs.map(k => (
+                      <input key={k} value={trigInputs[k] || ""} onChange={e => setTrigInputs(p => ({ ...p, [k]: e.target.value }))}
+                        placeholder={`{${k}}…`} className="w-full !py-1.5 !px-2.5 !text-[12px] !bg-[#08080f] !border-white/[0.06]" />
+                    ))}
+                  </div>
+                )}
+
+                {trigError && <p className="text-[10px] text-red-400 mb-1.5">{trigError}</p>}
+
+                <button onClick={() => addTrigger(selected)} disabled={addingTrigger}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-violet-200 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/25 rounded-lg transition-all disabled:opacity-40">
+                  {addingTrigger ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />} Add {trigType} trigger
+                </button>
               </div>
 
               {/* Calls + executions link */}

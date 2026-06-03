@@ -5,7 +5,7 @@ import json
 import asyncio
 import time
 
-from fastapi import APIRouter, HTTPException, Query, Header, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, Header, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
 from kernelmcp.events import kernel_event_bus, KernelEvent, KernelEventType
 
@@ -1546,7 +1546,7 @@ async def publish_deployment(body: dict, x_tenant_id: str = Header(default="")):
         }
         _save_deploy(dep)
         yield sse({"type": "done", "id": did, "name": name,
-                   "endpoint": f"/api/deployments/{did}/run", "token": token, "status": "live"})
+                   "endpoint": f"/deployments/{did}/run", "token": token, "status": "live"})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
@@ -1554,6 +1554,7 @@ async def publish_deployment(body: dict, x_tenant_id: str = Header(default="")):
 
 @router.get("/deployments")
 async def list_deployments():
+    _ensure_ticker()
     os.makedirs(_DEPLOY_DIR, exist_ok=True)
     out = []
     for f in os.listdir(_DEPLOY_DIR):
@@ -1561,7 +1562,7 @@ async def list_deployments():
             continue
         try:
             d = json.load(open(os.path.join(_DEPLOY_DIR, f), encoding="utf-8"))
-            out.append({**_public_deploy(d), "endpoint": f"/api/deployments/{d['id']}/run"})
+            out.append({**_public_deploy(d), "endpoint": f"/deployments/{d['id']}/run"})
         except Exception:
             pass
     out.sort(key=lambda d: d.get("created_at", 0), reverse=True)
@@ -1594,7 +1595,7 @@ async def get_deployment(did: str, x_tenant_id: str = Header(default="")):
     rdir = os.path.join(_DEPLOY_DIR, did, "runs")
     run_count = len([f for f in os.listdir(rdir) if f.endswith(".json")]) if os.path.isdir(rdir) else 0
     is_owner = x_tenant_id == dep.get("tenant", "")
-    return {**_public_deploy(dep), "endpoint": f"/api/deployments/{did}/run",
+    return {**_public_deploy(dep), "endpoint": f"/deployments/{did}/run",
             "inputs": _deploy_input_keys(dep.get("config", {})), "run_count": run_count,
             "isOwner": is_owner, **({"config": dep.get("config")} if is_owner else {})}
 
@@ -1701,6 +1702,201 @@ async def deployment_metrics(did: str, x_tenant_id: str = Header(default="")):
         "latency": {"p50": _pct(50), "p95": _pct(95), "max": durations[-1] if durations else 0},
         "timeline": [buckets[d.isoformat()] for d in days],
     }
+
+
+# ── Managed triggers on a deployment: interval / cron schedules + webhooks ───────
+_TRIGGERS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "deployment_triggers")
+
+
+def _trigger_path(tid: str) -> str:
+    return os.path.join(_TRIGGERS_DIR, f"{tid}.json")
+
+
+def _load_trigger(tid: str):
+    p = _trigger_path(tid)
+    return _json.load(open(p, encoding="utf-8")) if os.path.isfile(p) else None
+
+
+def _save_trigger(t: dict) -> None:
+    os.makedirs(_TRIGGERS_DIR, exist_ok=True)
+    with open(_trigger_path(t["id"]), "w", encoding="utf-8") as f:
+        _json.dump(t, f)
+
+
+def _iter_triggers():
+    if not os.path.isdir(_TRIGGERS_DIR):
+        return
+    for f in os.listdir(_TRIGGERS_DIR):
+        if f.endswith(".json"):
+            try:
+                yield _json.load(open(os.path.join(_TRIGGERS_DIR, f), encoding="utf-8"))
+            except Exception:
+                pass
+
+
+def _triggers_for(did: str):
+    return [t for t in _iter_triggers() if t.get("deploymentId") == did]
+
+
+def _public_trigger(t: dict, did: str) -> dict:
+    o = {k: v for k, v in t.items() if k != "secret"}
+    if t.get("type") == "webhook":
+        o["webhook_url"] = f"/deployments/{did}/webhook/{t.get('secret')}"
+    return o
+
+
+def _cron_field_match(field: str, value: int) -> bool:
+    field = field.strip()
+    if field == "*":
+        return True
+    for part in field.split(","):
+        part = part.strip()
+        try:
+            if part.startswith("*/"):
+                step = int(part[2:])
+                if step and value % step == 0:
+                    return True
+            elif "-" in part:
+                a, b = part.split("-")
+                if int(a) <= value <= int(b):
+                    return True
+            elif part.isdigit() and int(part) == value:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _cron_matches(dt, expr: str) -> bool:
+    """Minimal 5-field cron matcher (min hour dom month dow). dow: 0=Sunday..6=Saturday."""
+    fields = expr.split()
+    if len(fields) != 5:
+        return False
+    m, h, dom, mon, dow = fields
+    cron_dow = (dt.weekday() + 1) % 7  # python Mon=0..Sun=6 → cron Sun=0..Sat=6
+    return (_cron_field_match(m, dt.minute) and _cron_field_match(h, dt.hour)
+            and _cron_field_match(dom, dt.day) and _cron_field_match(mon, dt.month)
+            and _cron_field_match(dow, cron_dow))
+
+
+_ticker_started = False
+
+
+def _ensure_ticker():
+    global _ticker_started
+    if _ticker_started:
+        return
+    try:
+        asyncio.ensure_future(_trigger_loop())
+        _ticker_started = True
+    except RuntimeError:
+        pass  # no running loop yet — will start on the next deployment request
+
+
+async def _trigger_loop():
+    while True:
+        try:
+            await _tick_triggers()
+        except Exception:
+            pass
+        await asyncio.sleep(30)
+
+
+async def _tick_triggers():
+    import datetime as _dt
+    now = _time.time()
+    now_utc = _dt.datetime.utcnow()
+    for t in _iter_triggers():
+        if not t.get("active") or t.get("type") == "webhook":
+            continue
+        last = t.get("last_run") or 0
+        due = False
+        if t.get("type") == "interval":
+            due = (now - last) >= t.get("seconds", 0)
+        elif t.get("type") == "cron":
+            due = _cron_matches(now_utc, t.get("cron", "")) and (now - last) >= 50
+        if not due:
+            continue
+        dep = _load_deploy(t["deploymentId"])
+        if not dep or dep.get("status") == "paused":
+            continue
+        t["last_run"] = now
+        _save_trigger(t)
+        asyncio.create_task(_execute_deployment(dep, t.get("inputs") or {}, True, 280, "schedule"))
+
+
+@router.post("/deployments/{did}/triggers")
+async def create_deployment_trigger(did: str, body: dict, x_tenant_id: str = Header(default="")):
+    """Owner-only: attach a managed trigger to a deployment.
+    type='interval' (seconds>=30) · 'cron' (5-field expr) · 'webhook' (returns a secret URL)."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    if x_tenant_id != dep.get("tenant", ""):
+        raise HTTPException(403, "not the owner of this deployment")
+    ttype = body.get("type")
+    if ttype not in ("interval", "cron", "webhook"):
+        raise HTTPException(400, "type must be interval, cron or webhook")
+    tid = "trg_" + _secrets.token_hex(5)
+    trig = {"id": tid, "deploymentId": did, "tenant": x_tenant_id, "type": ttype,
+            "inputs": body.get("inputs") or {}, "active": True,
+            "created_at": _time.time(),
+            "last_run": _time.time() if ttype == "interval" else 0, "last_status": None}
+    if ttype == "interval":
+        secs = int(body.get("seconds") or 0)
+        if secs < 30:
+            raise HTTPException(400, "interval must be at least 30 seconds")
+        trig["seconds"] = secs
+    elif ttype == "cron":
+        expr = (body.get("cron") or "").strip()
+        if len(expr.split()) != 5:
+            raise HTTPException(400, "cron must have 5 fields (min hour dom month dow)")
+        trig["cron"] = expr
+    elif ttype == "webhook":
+        trig["secret"] = _secrets.token_urlsafe(16)
+    _save_trigger(trig)
+    _ensure_ticker()
+    return _public_trigger(trig, did)
+
+
+@router.get("/deployments/{did}/triggers")
+async def list_deployment_triggers(did: str, x_tenant_id: str = Header(default="")):
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    if x_tenant_id != dep.get("tenant", ""):
+        raise HTTPException(403, "not the owner of this deployment")
+    _ensure_ticker()
+    return {"triggers": [_public_trigger(t, did) for t in sorted(_triggers_for(did), key=lambda x: x.get("created_at", 0), reverse=True)]}
+
+
+@router.delete("/deployments/triggers/{tid}")
+async def delete_deployment_trigger(tid: str, x_tenant_id: str = Header(default="")):
+    t = _load_trigger(tid)
+    if not t:
+        raise HTTPException(404, "trigger not found")
+    if x_tenant_id != t.get("tenant", ""):
+        raise HTTPException(403, "not the owner of this trigger")
+    os.remove(_trigger_path(tid))
+    return {"deleted": tid}
+
+
+@router.post("/deployments/{did}/webhook/{secret}")
+async def trigger_deployment_webhook(did: str, secret: str, body: dict = Body(default={})):
+    """Public webhook trigger — the secret in the URL is the auth. Runs the deployment."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    trig = next((t for t in _triggers_for(did)
+                 if t.get("type") == "webhook" and t.get("secret") == secret and t.get("active")), None)
+    if not trig:
+        raise HTTPException(401, "invalid webhook secret")
+    if dep.get("status") == "paused":
+        raise HTTPException(503, "deployment is paused (taken offline by the owner)")
+    inputs = {**(trig.get("inputs") or {}), **((body or {}).get("inputs") or {})}
+    trig["last_run"] = _time.time()
+    _save_trigger(trig)
+    return await _execute_deployment(dep, inputs, (body or {}).get("blocking", True), 280, "webhook")
 
 
 @router.delete("/deployments/{did}")
