@@ -411,7 +411,9 @@ async def startup():
 
     def _wrap_llm(gw, label="engine"):
         _orig = gw.complete
-        async def _audited(system, messages, tools=None):
+        # Must accept + forward on_delta so token streaming reaches the real gateway.
+        # (The engine inspects this wrapper's signature and only streams if on_delta is here.)
+        async def _audited(system, messages, tools=None, on_delta=None):
             msg_count = len(messages) if messages else 0
             audit_collector.emit("llm", "call_start", {
                 "caller": label, "model": gw._model,
@@ -420,7 +422,7 @@ async def startup():
                 "system_len": len(system) if system else 0,
             })
             t0 = time.time()
-            resp = await _orig(system, messages, tools)
+            resp = await _orig(system, messages, tools, on_delta=on_delta)
             tool_calls = [tc.tool_name for tc in resp.tool_calls] if resp.tool_calls else []
             audit_collector.emit("llm", "response", {
                 "caller": label, "model": resp.model,
