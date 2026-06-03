@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import {
   MessageSquare,
   Settings, Bot, Activity, Menu, X, Database, FolderOpen, Users, Plus,
-  ChevronDown, Clock, Shield, FlaskConical, Radio, History, Rocket,
+  ChevronDown, Clock, Shield, FlaskConical, Radio, History, Rocket, Gauge,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
 
@@ -15,6 +15,7 @@ const NAV_MAIN = [
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/deployments", label: "Deployments", icon: Rocket },
   { href: "/executions", label: "Executions", icon: History },
+  { href: "/control", label: "Control Plane", icon: Gauge },
 ] as const;
 
 const NAV_LIBS = [

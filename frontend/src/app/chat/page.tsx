@@ -13,6 +13,7 @@ import ChatMessage from "@/components/chat-message";
 import ChatInput from "@/components/chat-input";
 import ChatHistory from "@/components/chat-history";
 import ConnectionPicker from "@/components/connection-picker";
+import FleetDrawer from "@/components/fleet-drawer";
 import CodePanel from "@/components/code-panel";
 import TaskModal from "@/components/task-modal";
 import { useCodeRunner } from "@/context/code-runner";
@@ -539,6 +540,7 @@ export default function ChatPage() {
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <ConnectionPicker compact />
+            <FleetDrawer />
             <button onClick={() => { setSearchOpen(!searchOpen); if (searchOpen) setSearchQuery(""); }} className={`p-1.5 rounded-lg transition-colors touch-target ${searchOpen ? "text-violet-400" : "text-slate-600 hover:text-violet-400"}`} data-tooltip="Search">
               <Search className="h-3.5 w-3.5" />
             </button>

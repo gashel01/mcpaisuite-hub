@@ -2122,6 +2122,71 @@ async def trigger_deployment_webhook(did: str, secret: str, body: dict = Body(de
     return await _execute_deployment(dep, inputs, (body or {}).get("blocking", True), 280, "webhook")
 
 
+def _trig_label(t: dict) -> str:
+    if t.get("type") == "interval":
+        s = t.get("seconds", 0)
+        return f"Every {s // 3600}h" if s >= 3600 else f"Every {s // 60}m" if s >= 60 else f"Every {s}s"
+    if t.get("type") == "cron":
+        return f"Cron · {t.get('cron')}"
+    return "Webhook"
+
+
+@router.get("/control-plane")
+async def control_plane():
+    """Fleet snapshot for mission control: deployments, triggers, and today's activity."""
+    import datetime as _dt
+    _ensure_ticker()
+    deps = []
+    if os.path.isdir(_DEPLOY_DIR):
+        for f in os.listdir(_DEPLOY_DIR):
+            if not f.endswith(".json"):
+                continue
+            try:
+                d = json.load(open(os.path.join(_DEPLOY_DIR, f), encoding="utf-8"))
+                deps.append({"id": d["id"], "name": d.get("name"), "status": d.get("status", "live"),
+                             "runs": d.get("runs", 0), "triggers": len(_triggers_for(d["id"])),
+                             "version": d.get("version", 1), "workflowId": d.get("workflowId"),
+                             "endpoint": f"/deployments/{d['id']}/run"})
+            except Exception:
+                pass
+    deps.sort(key=lambda x: (x.get("name") or "").lower())
+
+    trigs = []
+    for t in _iter_triggers():
+        dep = _load_deploy(t.get("deploymentId"))
+        trigs.append({"id": t["id"], "type": t.get("type"), "deploymentId": t.get("deploymentId"),
+                      "deploymentName": dep.get("name") if dep else "(deleted)",
+                      "label": _trig_label(t), "active": t.get("active", True),
+                      "last_run": t.get("last_run"),
+                      "webhook_url": f"/deployments/{t['deploymentId']}/webhook/{t.get('secret')}" if t.get("type") == "webhook" else None})
+
+    today0 = _dt.datetime.combine(_dt.datetime.utcnow().date(), _dt.time()).timestamp() * 1000
+    runs_today = cost_today = tokens_today = running = 0
+    for path, _src in _iter_run_files():
+        try:
+            r = json.load(open(path, encoding="utf-8"))
+        except Exception:
+            continue
+        if r.get("status") == "running":
+            running += 1
+        if (r.get("createdAt") or 0) >= today0:
+            runs_today += 1
+            m = r.get("metrics") or {}
+            cost_today += m.get("cost", 0) or 0
+            tokens_today += m.get("tokens", 0) or 0
+
+    return {
+        "deployments": deps,
+        "triggers": sorted(trigs, key=lambda x: x.get("deploymentName") or ""),
+        "stats": {
+            "live": sum(1 for d in deps if d["status"] != "paused"),
+            "paused": sum(1 for d in deps if d["status"] == "paused"),
+            "deployments": len(deps), "triggers": len(trigs), "running": running,
+            "runs_today": runs_today, "cost_today": round(cost_today, 4), "tokens_today": tokens_today,
+        },
+    }
+
+
 @router.delete("/deployments/{did}")
 async def delete_deployment(did: str):
     p = _deploy_path(did)
@@ -2132,6 +2197,12 @@ async def delete_deployment(did: str):
     # Clean the deployment's run-history dir so it stops showing in /executions
     if os.path.isdir(rdir):
         shutil.rmtree(rdir, ignore_errors=True)
+    # Cascade: remove its triggers (separate store) so none are left orphaned
+    for t in _triggers_for(did):
+        try:
+            os.remove(_trigger_path(t["id"]))
+        except Exception:
+            pass
     if found:
         return {"deleted": did}
     raise HTTPException(404, "deployment not found")
