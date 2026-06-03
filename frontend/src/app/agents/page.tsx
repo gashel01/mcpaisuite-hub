@@ -9,6 +9,7 @@ import {
   X, Clock, AlertCircle, MessageSquare, Sparkles,
   PanelLeftOpen, PanelLeftClose, ArrowLeftRight, ArrowRight,
   History, Calendar, Copy, Trash, FolderOpen as FolderIcon, Menu,
+  Rocket, KeyRound, Terminal, CheckCheck,
 } from "lucide-react";
 import Link from "next/link";
 import CopyButton from "@/components/copy-button";
@@ -138,6 +139,16 @@ function AgentsPageInner() {
   // Run parameters: {placeholders} in the goal/instructions become typed inputs before a run.
   const [runParamsOpen, setRunParamsOpen] = useState(false);
   const [runParamValues, setRunParamValues] = useState<Record<string, string>>({});
+
+  // ── Publish → deploy (workflow as a token-authed callable API) ──
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishName, setPublishName] = useState("");
+  const [publishNotes, setPublishNotes] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [publishLog, setPublishLog] = useState<{ phase: string; text: string }[]>([]);
+  const [publishResult, setPublishResult] = useState<{ id: string; name: string; endpoint: string; token: string } | null>(null);
+  const [deployments, setDeployments] = useState<{ id: string; name: string; endpoint: string; runs: number; created_at: number; release_notes?: string }[]>([]);
+  const [copied, setCopied] = useState<string>("");
   // Reset the architect conversation when switching sessions (it's per-workflow).
   useEffect(() => { setBuildChat([]); setBuildSuggestions([]); setBuildMissing([]); setBuildInput(""); }, [activeId]);
   // Auto-scroll the architect thread to the latest as narration streams in.
@@ -1131,6 +1142,98 @@ function AgentsPageInner() {
     store.restoreSession(histSession);
   };
 
+  // ── Publish: package the current workflow for a managed, callable deployment ──
+  // Placeholders are kept intact so they become per-call inputs on the live API.
+  const buildDeployConfig = useCallback(() => {
+    const { nodes: snapNodes, edges: snapEdges } = flowGraphRef.current;
+    const hasGraph = snapNodes.length > 0;
+    const cfg: Record<string, any> = {
+      goal: teamConstitution ? `${goal}\n\nContext & requirements: ${teamConstitution}` : goal,
+      pattern: hasGraph ? "graph" : pattern,
+      constitution: teamConstitution || undefined,
+      agents: agents.map(a => ({
+        type: a.type, role: a.role, max_turns: a.max_turns,
+        ...(a.instructions ? { instructions: a.instructions } : {}),
+        ...(a.tools?.length ? { tools: a.tools } : {}),
+      })),
+    };
+    if (hasGraph) {
+      cfg.graph = {
+        nodes: snapNodes.map((n: any) => ({ id: n.id, type: n.type, data: n.data, position: n.position })),
+        edges: snapEdges.map((e: any) => ({ source: e.source, target: e.target, label: e.label, style: e.style })),
+      };
+    }
+    return cfg;
+  }, [goal, pattern, agents, teamConstitution]);
+
+  const loadDeployments = useCallback(async () => {
+    try {
+      const r = await fetch(`${BASE_URL}/deployments`, { headers: th });
+      const d = await r.json();
+      setDeployments(d.deployments || []);
+    } catch { /* ignore */ }
+  }, [th]);
+
+  const openPublish = useCallback(() => {
+    setPublishResult(null);
+    setPublishLog([]);
+    setPublishName(prev => prev || (goal.slice(0, 48) || "My automation"));
+    setPublishOpen(true);
+    loadDeployments();
+  }, [goal, loadDeployments]);
+
+  const doPublish = useCallback(async () => {
+    if (publishing) return;
+    setPublishing(true);
+    setPublishLog([]);
+    setPublishResult(null);
+    try {
+      const res = await fetch(`${BASE_URL}/deployments/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...th },
+        body: JSON.stringify({ name: publishName.trim() || "My automation", release_notes: publishNotes, config: buildDeployConfig() }),
+      });
+      const reader = res.body?.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() || "";
+        for (const p of parts) {
+          const line = p.split("\n").find(l => l.startsWith("data:"));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(5).trim());
+          if (ev.type === "step") setPublishLog(prev => [...prev, { phase: ev.phase, text: ev.text }]);
+          else if (ev.type === "done") {
+            setPublishResult({ id: ev.id, name: ev.name, endpoint: ev.endpoint, token: ev.token });
+            loadDeployments();
+          }
+        }
+      }
+    } catch (e: any) {
+      setPublishLog(prev => [...prev, { phase: "Error", text: String(e?.message || e) }]);
+    } finally {
+      setPublishing(false);
+    }
+  }, [publishing, publishName, publishNotes, buildDeployConfig, th, loadDeployments]);
+
+  const deleteDeployment = useCallback(async (id: string) => {
+    try { await fetch(`${BASE_URL}/deployments/${id}`, { method: "DELETE", headers: th }); } catch { /* ignore */ }
+    loadDeployments();
+  }, [th, loadDeployments]);
+
+  const copyToClipboard = useCallback((text: string, key: string) => {
+    navigator.clipboard?.writeText(text).then(() => { setCopied(key); setTimeout(() => setCopied(""), 1500); }).catch(() => {});
+  }, []);
+
+  const apiOrigin = typeof window !== "undefined" ? BASE_URL.replace(/\/$/, "") : "";
+  const curlExample = publishResult
+    ? `curl -X POST ${apiOrigin}${publishResult.endpoint} \\\n  -H "Authorization: Bearer ${publishResult.token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"inputs": {}}'`
+    : "";
+
   // ── Render ────────────────────────────────────────────────────────────
 
   const libraryPanelEl = (
@@ -1235,6 +1338,120 @@ function AgentsPageInner() {
               >
                 <Play className="h-3.5 w-3.5" /> Run
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Publish → deploy modal (workflow as a callable API) ───────────── */}
+      {publishOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => !publishing && setPublishOpen(false)}>
+          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50 animate-scale-in max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
+              <div className="flex items-center gap-2">
+                <Rocket className="h-4 w-4 text-sky-400" />
+                <h3 className="text-sm font-semibold text-slate-200">{publishResult ? "Deployment is live" : "Ready to go live"}</h3>
+              </div>
+              <button onClick={() => !publishing && setPublishOpen(false)} disabled={publishing}><X className="h-4 w-4 text-slate-500 hover:text-slate-300 disabled:opacity-30" /></button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4 overflow-y-auto">
+              {/* Success card */}
+              {publishResult ? (
+                <div className="space-y-3 animate-fade-in">
+                  <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-3.5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      <span className="text-[12px] font-semibold text-emerald-300">{publishResult.name} is deployed</span>
+                    </div>
+                    <p className="text-[10.5px] text-slate-400">Your workflow is now a public, token-authed API. Any <code className="text-slate-300">{`{placeholder}`}</code> becomes a per-call input.</p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1"><Globe className="h-3 w-3 text-sky-400" /><span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Endpoint</span></div>
+                    <div className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-[#08080f] px-3 py-2">
+                      <code className="flex-1 text-[11px] text-sky-300 break-all">POST {apiOrigin}{publishResult.endpoint}</code>
+                      <button onClick={() => copyToClipboard(`${apiOrigin}${publishResult.endpoint}`, "ep")} className="text-slate-500 hover:text-slate-200 shrink-0">{copied === "ep" ? <CheckCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1"><KeyRound className="h-3 w-3 text-amber-400" /><span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Bearer token</span><span className="text-[9px] text-amber-400/80">— shown once, copy it now</span></div>
+                    <div className="flex items-center gap-2 rounded-lg border border-amber-500/15 bg-[#08080f] px-3 py-2">
+                      <code className="flex-1 text-[11px] text-amber-300 break-all">{publishResult.token}</code>
+                      <button onClick={() => copyToClipboard(publishResult.token, "tok")} className="text-slate-500 hover:text-slate-200 shrink-0">{copied === "tok" ? <CheckCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1"><Terminal className="h-3 w-3 text-slate-400" /><span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Call it</span></div>
+                    <div className="relative rounded-lg border border-white/[0.06] bg-[#08080f] px-3 py-2.5">
+                      <button onClick={() => copyToClipboard(curlExample, "curl")} className="absolute top-2 right-2 text-slate-500 hover:text-slate-200">{copied === "curl" ? <CheckCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                      <pre className="text-[10.5px] text-slate-300 whitespace-pre-wrap break-all font-mono leading-relaxed">{curlExample}</pre>
+                    </div>
+                  </div>
+                </div>
+              ) : publishing || publishLog.length ? (
+                /* Deploy pipeline log */
+                <div className="space-y-2">
+                  {publishLog.map((s, i) => (
+                    <div key={i} className="flex items-center gap-2.5 animate-fade-in">
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${s.phase === "Error" ? "bg-red-400" : i === publishLog.length - 1 && publishing ? "bg-sky-400 animate-pulse" : "bg-emerald-400"}`} />
+                      <span className={`text-[10px] font-semibold uppercase tracking-wide w-24 shrink-0 ${s.phase === "Error" ? "text-red-400" : "text-slate-400"}`}>{s.phase}</span>
+                      <span className="text-[11px] text-slate-300">{s.text}</span>
+                    </div>
+                  ))}
+                  {publishing && <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-1"><Loader2 className="h-3 w-3 animate-spin" /> Deploying…</div>}
+                </div>
+              ) : (
+                /* Publish form */
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide block mb-1">Automation name</label>
+                    <input value={publishName} onChange={e => setPublishName(e.target.value)} placeholder="My automation" className="w-full !py-2 !px-3 text-sm" autoFocus />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide block mb-1">Release notes <span className="text-slate-600 normal-case">(optional)</span></label>
+                    <textarea value={publishNotes} onChange={e => setPublishNotes(e.target.value)} rows={2} placeholder="What's in this version…" className="w-full !text-[12px] !bg-[#08080f] !border-white/[0.06]" />
+                  </div>
+                  <div className="rounded-lg border border-sky-500/15 bg-sky-500/[0.04] px-3 py-2.5 text-[10.5px] text-slate-400 leading-relaxed">
+                    Packages <span className="text-slate-200 font-medium">{agents.length} agent(s)</span> · pattern <span className="text-slate-200 font-medium">{(flowGraphRef.current?.nodes?.length || 0) > 0 ? "graph" : pattern}</span> into a token-authed API endpoint. Placeholders stay as runtime inputs.
+                  </div>
+                </div>
+              )}
+
+              {/* Live deployments console */}
+              {deployments.length > 0 && (
+                <div className="pt-1 border-t border-white/[0.06]">
+                  <div className="flex items-center gap-1.5 mb-2 mt-3"><Globe className="h-3 w-3 text-slate-500" /><span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Live deployments ({deployments.length})</span></div>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {deployments.map(d => (
+                      <div key={d.id} className="flex items-center gap-2 rounded-lg border border-white/[0.05] bg-white/[0.02] px-3 py-2">
+                        <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] text-slate-200 font-medium truncate">{d.name}</div>
+                          <div className="text-[9.5px] text-slate-500 truncate">{d.runs} run(s) · <code className="text-slate-400">{d.endpoint}</code></div>
+                        </div>
+                        <button onClick={() => copyToClipboard(`${apiOrigin}${d.endpoint}`, `dep-${d.id}`)} className="text-slate-500 hover:text-sky-300 shrink-0" data-tooltip="Copy endpoint">{copied === `dep-${d.id}` ? <CheckCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                        <button onClick={() => deleteDeployment(d.id)} className="text-slate-500 hover:text-red-400 shrink-0" data-tooltip="Delete deployment"><Trash className="h-3.5 w-3.5" /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/[0.06] shrink-0">
+              {publishResult ? (
+                <button onClick={() => { setPublishResult(null); setPublishLog([]); }} className="px-3.5 py-2 text-[12px] text-slate-400 hover:text-slate-200 rounded-lg transition-colors">Publish another</button>
+              ) : (
+                <button onClick={() => setPublishOpen(false)} disabled={publishing} className="px-3.5 py-2 text-[12px] text-slate-400 hover:text-slate-200 rounded-lg transition-colors disabled:opacity-30">Close</button>
+              )}
+              {!publishResult && (
+                <button onClick={doPublish} disabled={publishing || !publishName.trim()} className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-medium text-white bg-sky-600 hover:bg-sky-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-lg transition-all">
+                  {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />} {publishing ? "Deploying…" : "Deploy"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1617,6 +1834,13 @@ function AgentsPageInner() {
                       className={`${isReadOnly ? "flex-1" : ""} flex items-center justify-center gap-2 px-4 py-3 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-violet-300 border border-white/[0.06] hover:border-violet-500/20 text-sm font-medium rounded-lg transition-all shrink-0`}>
                       <Copy className="h-4 w-4" /> Fork & Edit
                     </button>
+                    {!isReadOnly && agents.length > 0 && (
+                      <button onClick={openPublish}
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-sky-300 border border-white/[0.06] hover:border-sky-500/25 text-sm font-medium rounded-lg transition-all shrink-0"
+                        data-tooltip="Publish as a callable API endpoint (bearer-token auth)">
+                        <Rocket className="h-4 w-4" /> Publish
+                      </button>
+                    )}
                     {!session?.workflowId ? (
                       <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }}
                         className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600/80 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-all shrink-0">
@@ -1653,6 +1877,13 @@ function AgentsPageInner() {
                       <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }}
                         className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600/80 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-all shrink-0">
                         <Save className="h-4 w-4" /> Save
+                      </button>
+                    )}
+                    {agents.length > 0 && !isReadOnly && (
+                      <button onClick={openPublish} disabled={!canRun}
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-sky-300 border border-white/[0.06] hover:border-sky-500/25 disabled:opacity-30 text-sm font-medium rounded-lg transition-all shrink-0"
+                        data-tooltip="Publish as a callable API endpoint (bearer-token auth)">
+                        <Rocket className="h-4 w-4" /> Publish
                       </button>
                     )}
                   </>

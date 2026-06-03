@@ -1481,6 +1481,137 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
         raise HTTPException(500, str(exc))
 
 
+# ── Deployments: publish a workflow as a token-authed callable API endpoint ──────
+import secrets as _secrets
+import time as _time
+
+_DEPLOY_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "deployments")
+
+
+def _deploy_path(did: str) -> str:
+    return os.path.join(_DEPLOY_DIR, f"{did}.json")
+
+
+def _load_deploy(did: str):
+    p = _deploy_path(did)
+    return json.load(open(p, encoding="utf-8")) if os.path.isfile(p) else None
+
+
+def _save_deploy(d: dict) -> None:
+    os.makedirs(_DEPLOY_DIR, exist_ok=True)
+    with open(_deploy_path(d["id"]), "w", encoding="utf-8") as f:
+        json.dump(d, f)
+
+
+def _public_deploy(d: dict) -> dict:
+    return {k: v for k, v in d.items() if k not in ("token", "config")}
+
+
+@router.post("/deployments/publish")
+async def publish_deployment(body: dict, x_tenant_id: str = Header(default="")):
+    """Publish a workflow as a callable API endpoint. Streams the deploy pipeline (SSE),
+    then emits the live deployment with its endpoint + bearer token."""
+    _require()
+    name = (body.get("name") or "Untitled automation").strip()
+    notes = body.get("release_notes", "")
+    config = body.get("config") or {}
+    if not config.get("agents") and not config.get("graph"):
+        raise HTTPException(400, "config (agents or graph) is required")
+    tenant = x_tenant_id
+    did = "dep_" + _secrets.token_hex(5)
+    token = "kmcp_" + _secrets.token_urlsafe(24)
+
+    async def gen():
+        def sse(ev: dict) -> str:
+            return f"data: {json.dumps(ev)}\n\n"
+        steps = [
+            ("Queued", "Deploy enqueued"),
+            ("Validating", f"Validating workflow — {len(config.get('agents', []))} agent(s), pattern '{config.get('pattern', 'sequential')}'"),
+            ("Building", "Packaging workflow definition + tool bindings"),
+            ("Provisioning", "Allocating an isolated runner namespace"),
+            ("Securing", "Issuing bearer token + API route"),
+            ("Deploying", "Exposing the endpoint"),
+        ]
+        for phase, msg in steps:
+            yield sse({"type": "step", "phase": phase, "text": msg})
+            await asyncio.sleep(0.5)
+        dep = {
+            "id": did, "name": name, "release_notes": notes, "config": config,
+            "token": token, "tenant": tenant, "created_at": _time.time(),
+            "runs": 0, "version": 1, "status": "live",
+        }
+        _save_deploy(dep)
+        yield sse({"type": "done", "id": did, "name": name,
+                   "endpoint": f"/api/deployments/{did}/run", "token": token, "status": "live"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+
+
+@router.get("/deployments")
+async def list_deployments():
+    os.makedirs(_DEPLOY_DIR, exist_ok=True)
+    out = []
+    for f in os.listdir(_DEPLOY_DIR):
+        if not f.endswith(".json"):
+            continue
+        try:
+            d = json.load(open(os.path.join(_DEPLOY_DIR, f), encoding="utf-8"))
+            out.append({**_public_deploy(d), "endpoint": f"/api/deployments/{d['id']}/run"})
+        except Exception:
+            pass
+    out.sort(key=lambda d: d.get("created_at", 0), reverse=True)
+    return {"deployments": out}
+
+
+@router.delete("/deployments/{did}")
+async def delete_deployment(did: str):
+    p = _deploy_path(did)
+    if os.path.isfile(p):
+        os.remove(p)
+        return {"deleted": did}
+    raise HTTPException(404, "deployment not found")
+
+
+@router.post("/deployments/{did}/run")
+async def run_deployment(did: str, body: dict, authorization: str = Header(default="")):
+    """Public callable API for a deployed workflow.
+    Auth: `Authorization: Bearer <token>`. Body: {"inputs": {...}, "blocking": true}.
+    {placeholders} in the workflow are filled from `inputs`; returns the run result."""
+    dep = _load_deploy(did)
+    if not dep:
+        raise HTTPException(404, "deployment not found")
+    token = authorization.replace("Bearer", "").strip()
+    if not token or token != dep.get("token"):
+        raise HTTPException(401, "invalid or missing bearer token")
+
+    inputs = body.get("inputs") or {}
+    import re as _re
+
+    def subst(t):
+        return _re.sub(r"\{([a-zA-Z0-9_]+)\}", lambda m: str(inputs.get(m.group(1), m.group(0))), str(t or ""))
+
+    cfg = json.loads(json.dumps(dep["config"]))  # deep copy
+    cfg["goal"] = subst(cfg.get("goal", ""))
+    cfg["agents"] = [
+        {**a, **({"instructions": subst(a["instructions"])} if a.get("instructions") else {})}
+        for a in cfg.get("agents", [])
+    ]
+    if (cfg.get("graph") or {}).get("nodes"):
+        for n in cfg["graph"]["nodes"]:
+            d = n.get("data") or {}
+            if d.get("instructions"):
+                d["instructions"] = subst(d["instructions"])
+                n["data"] = d
+    cfg["blocking"] = body.get("blocking", True)
+    cfg["timeout"] = body.get("timeout", 280)
+
+    dep["runs"] = dep.get("runs", 0) + 1
+    _save_deploy(dep)
+
+    return await create_taskforce(cfg, x_tenant_id=dep.get("tenant", ""))
+
+
 @router.get("/agents/taskforce/schedules")
 async def list_taskforce_schedules():
     schedules = []
