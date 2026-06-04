@@ -7,7 +7,9 @@ import {
   Gauge, Rocket, RefreshCw, Plus, Loader2, Activity, DollarSign,
   Repeat, Power, History, ArrowUpRight,
 } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
+import { useBreakpoint } from "@/hooks/useBreakpoint";
 import DeploymentDetail, { type Deployment } from "@/components/deployment-detail";
 import ExecutionsFeed from "@/components/executions-feed";
 
@@ -16,9 +18,9 @@ interface Stats { live: number; paused: number; deployments: number; triggers: n
 
 function Tile({ icon, label, value, pulse }: { icon: React.ReactNode; label: string; value: string; pulse?: boolean }) {
   return (
-    <div className="flex-1 min-w-[120px] rounded-xl border border-white/[0.06] bg-white/[0.02] px-3.5 py-2.5">
-      <div className="flex items-center gap-1.5 mb-0.5">{icon}<span className="text-[9px] text-slate-500 uppercase tracking-wide">{label}</span>{pulse && <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse ml-auto" />}</div>
-      <div className="text-[17px] font-bold text-slate-100 tabular-nums">{value}</div>
+    <div className="flex-1 min-w-[92px] sm:min-w-[120px] rounded-xl border border-white/[0.06] bg-white/[0.02] px-2.5 sm:px-3.5 py-2 sm:py-2.5">
+      <div className="flex items-center gap-1.5 mb-0.5">{icon}<span className="text-[8.5px] sm:text-[9px] text-slate-500 uppercase tracking-wide truncate">{label}</span>{pulse && <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse ml-auto" />}</div>
+      <div className="text-[15px] sm:text-[17px] font-bold text-slate-100 tabular-nums">{value}</div>
     </div>
   );
 }
@@ -27,6 +29,7 @@ export default function FleetPage() {
   const BASE = getApiUrl();
   const { tenant } = useTenant();
   const th = tenantHeaders(tenant);
+  const { isMobile } = useBreakpoint();
 
   const [deployments, setDeployments] = useState<CPDeployment[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -34,6 +37,8 @@ export default function FleetPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<"deployment" | "activity">("activity");
   const [activityFilter, setActivityFilter] = useState("");
+  // Mobile uses push-navigation: the list and the panel are separate screens.
+  const [mobileScreen, setMobileScreen] = useState<"list" | "panel">("list");
 
   const load = useCallback(async () => {
     try {
@@ -59,8 +64,11 @@ export default function FleetPage() {
     ? { id: selected.id, name: selected.name, status: selected.status, endpoint: selected.endpoint, runs: selected.runs, version: selected.version, created_at: 0 }
     : null;
 
-  const pickDeployment = (id: string) => { setSelectedId(id); setView("deployment"); };
-  const showActivity = (filter = "") => { setActivityFilter(filter); setView("activity"); setSelectedId(null); };
+  const pickDeployment = (id: string) => { setSelectedId(id); setView("deployment"); setMobileScreen("panel"); };
+  const showActivity = (filter = "") => { setActivityFilter(filter); setView("activity"); setSelectedId(null); setMobileScreen("panel"); };
+
+  const showList = !isMobile || mobileScreen === "list";
+  const showPanel = !isMobile || mobileScreen === "panel";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -81,8 +89,8 @@ export default function FleetPage() {
         </Link>
       </div>
 
-      {/* Stats overview (was the Control Plane) */}
-      <div className="flex flex-wrap gap-2 px-4 py-2.5 border-b border-white/[0.04] shrink-0">
+      {/* Stats overview (was the Control Plane) — hidden on the mobile detail screen */}
+      <div className={`${isMobile && mobileScreen === "panel" ? "hidden" : "flex"} flex-wrap gap-2 px-4 py-2.5 border-b border-white/[0.04] shrink-0`}>
         <Tile icon={<Rocket className="h-3 w-3 text-emerald-400" />} label="Live" value={String(stats?.live ?? 0)} />
         <Tile icon={<Power className="h-3 w-3 text-amber-400" />} label="Paused" value={String(stats?.paused ?? 0)} />
         <Tile icon={<Loader2 className="h-3 w-3 text-sky-400" />} label="Running" value={String(stats?.running ?? 0)} pulse={(stats?.running ?? 0) > 0} />
@@ -91,10 +99,10 @@ export default function FleetPage() {
         <Tile icon={<DollarSign className="h-3 w-3 text-emerald-400" />} label="Cost today" value={`$${(stats?.cost_today ?? 0).toFixed(3)}`} />
       </div>
 
-      {/* Master-detail */}
+      {/* Master-detail (desktop) / push-navigation (mobile) */}
       <div className="flex-1 min-h-0 flex">
         {/* Left rail — deployments registry + activity */}
-        <div className="w-64 shrink-0 border-r border-white/[0.06] flex flex-col min-h-0">
+        <div className={`${showList ? "flex" : "hidden"} ${isMobile ? "w-full" : "w-64 shrink-0 border-r border-white/[0.06]"} flex-col min-h-0`}>
           <button onClick={() => showActivity("")}
             className={`flex items-center gap-2 px-4 py-2.5 text-[12px] font-medium border-b border-white/[0.05] transition-colors ${view === "activity" ? "bg-violet-500/10 text-violet-200" : "text-slate-400 hover:bg-white/[0.03]"}`}>
             <History className="h-3.5 w-3.5" /> All activity
@@ -132,18 +140,25 @@ export default function FleetPage() {
         </div>
 
         {/* Right panel — detail or activity */}
-        <div className="flex-1 min-w-0 min-h-0">
+        <div className={`${showPanel ? "flex" : "hidden"} flex-1 min-w-0 min-h-0 flex-col`}>
+          {isMobile && (
+            <button onClick={() => setMobileScreen("list")} className="flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium text-slate-300 border-b border-white/[0.06] hover:bg-white/[0.03] transition-colors shrink-0">
+              <ChevronLeft className="h-3.5 w-3.5" /> Fleet
+            </button>
+          )}
+          <div className="flex-1 min-h-0">
           {view === "deployment" && selectedDep ? (
             <DeploymentDetail
               key={selectedDep.id}
               dep={selectedDep}
               onChanged={(patch) => setDeployments(list => list.map(d => d.id === patch.id ? { ...d, status: (patch as any).status ?? d.status } : d))}
-              onDeleted={(id) => { setDeployments(list => list.filter(d => d.id !== id)); setSelectedId(null); setView("activity"); load(); }}
+              onDeleted={(id) => { setDeployments(list => list.filter(d => d.id !== id)); setSelectedId(null); setView("activity"); setMobileScreen("list"); load(); }}
               onViewRuns={(name) => showActivity(name)}
             />
           ) : (
             <ExecutionsFeed initialQuery={activityFilter} />
           )}
+          </div>
         </div>
       </div>
     </div>

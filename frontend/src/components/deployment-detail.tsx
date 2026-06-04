@@ -213,7 +213,7 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 px-4 pt-2 border-b border-white/[0.06] shrink-0">
+      <div className="flex items-center gap-1 px-4 pt-2 border-b border-white/[0.06] shrink-0 overflow-x-auto">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id as any)}
             className={`relative px-3 py-2 text-[12px] font-medium transition-colors ${tab === t.id ? "text-violet-200" : "text-slate-500 hover:text-slate-300"}`}>
@@ -236,7 +236,7 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
               {!metrics ? (
                 <div className="flex items-center gap-2 text-[11px] text-slate-600 py-2"><Loader2 className="h-3 w-3 animate-spin" /> Loading metrics…</div>
               ) : metrics.totalCalls === 0 ? (
-                <div className="grid grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <StatCard label="Calls" value="0" />
                   <StatCard label="Success" value="—" />
                   <StatCard label="Avg latency" value="—" />
@@ -244,7 +244,7 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="grid grid-cols-4 gap-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     <StatCard label="Calls" value={metrics.totalCalls.toLocaleString()} />
                     <StatCard label="Success" value={metrics.successRate != null ? `${Math.round(metrics.successRate * 100)}%` : "—"} accent={metrics.byStatus?.failed ? "amber" : "emerald"} />
                     <StatCard label="Avg latency" value={metrics.avg?.durationMs ? `${(metrics.avg.durationMs / 1000).toFixed(1)}s` : "—"} />
