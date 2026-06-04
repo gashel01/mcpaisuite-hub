@@ -313,6 +313,9 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
     set({
       taskId,
       status: isDone ? "completed" : "streaming",
+      // viewState drives the page's "Live" indicator — keep it in sync with the loaded
+      // task's real state so opening/polling a finished trace doesn't stay stuck "Streaming".
+      viewState: isDone ? "completed" : "running",
       events,
       nodes,
       edges,
