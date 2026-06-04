@@ -555,6 +555,7 @@ export default function SettingsPage() {
   const [savedCfg, setSavedCfg] = useState<FullConfig>(DEFAULTS);
   const [tab, setTab] = useState<TabId>("llm");
   const [navOpen, setNavOpen] = useState(false);
+  const [llmAdvancedOpen, setLlmAdvancedOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ service: string; ok: boolean; detail: string } | null>(null);
@@ -932,12 +933,20 @@ export default function SettingsPage() {
                   <ConnectionsManager />
                 </div>
 
-                <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={() => setLlmAdvancedOpen(o => !o)}
+                  className="flex items-center gap-2 w-full pt-1 group"
+                >
                   <div className="h-px bg-white/[0.06] flex-1" />
-                  <span className="text-[9px] font-semibold text-slate-600 uppercase tracking-wide">Active provider (advanced)</span>
+                  <span className="flex items-center gap-1 text-[9px] font-semibold text-slate-600 group-hover:text-slate-400 uppercase tracking-wide transition-colors">
+                    <ChevronRight className={`h-3 w-3 transition-transform ${llmAdvancedOpen ? "rotate-90" : ""}`} />
+                    Active provider — advanced (Ollama context, test, echo/sampling)
+                  </span>
                   <div className="h-px bg-white/[0.06] flex-1" />
-                </div>
+                </button>
 
+                {llmAdvancedOpen && (
+                <div className="space-y-4 animate-fade-in">
                 <Field label="Provider">
                   <SelectInput value={cfg.provider} onChange={v => update("provider", v)} options={[
                     { value: "echo", label: "None (echo mode)" },
@@ -996,6 +1005,8 @@ export default function SettingsPage() {
                 )}
                 {cfg.provider !== "echo" && cfg.provider !== "sampling" && (
                   <TestBtn service="llm" testing={testing} result={testResult} onClick={() => testConnection("llm")} />
+                )}
+                </div>
                 )}
               </>
             )}
