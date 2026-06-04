@@ -33,7 +33,10 @@ interface AuditStore {
   setConnected: (c: boolean) => void;
 }
 
-const TASK_CHANGE_TYPES = ["task_started", "task_completed", "task_failed", "task_complete", "task.started", "task.completed", "task.failed"];
+// Substring-matched against the event type. Must include taskforce/crew — builder &
+// deployment runs are taskforce tasks (events "taskforce.*", legacy "crew.*"), and
+// without these the observability auto-refresh never fired for a workflow run.
+const TASK_CHANGE_TYPES = ["task_started", "task_completed", "task_failed", "task_complete", "task.started", "task.completed", "task.failed", "taskforce", "crew."];
 
 export const useAuditStore = create<AuditStore>((set) => ({
   events: [],
