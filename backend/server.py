@@ -14,7 +14,7 @@ from kernelmcp.events import kernel_event_bus, KernelEvent, KernelEventType
 from config import llm_config, litellm_kwargs, resolve_url, load_json, is_docker, \
     DEFAULT_NAMESPACE, DATA_DIR, EGRESS_CONFIG_PATH, settings
 from stores import conversations, audit_collector
-from routes import chat as chat_routes, rag as rag_routes, api as api_routes, stream as stream_routes, metrics as metrics_routes, alerts as alerts_routes, traces as traces_routes, constitution as constitution_routes, regression as regression_routes, eval as eval_routes, marketplace as marketplace_routes
+from routes import chat as chat_routes, rag as rag_routes, api as api_routes, stream as stream_routes, metrics as metrics_routes, alerts as alerts_routes, traces as traces_routes, constitution as constitution_routes, regression as regression_routes, eval as eval_routes, marketplace as marketplace_routes, hub as hub_routes
 
 # ── App ──────────────────────────────────────────────────────────────────────
 
@@ -32,6 +32,7 @@ kernel = None
 app.include_router(chat_routes.router)
 app.include_router(rag_routes.router)
 app.include_router(api_routes.router)
+app.include_router(hub_routes.router)
 app.include_router(stream_routes.router)
 app.include_router(metrics_routes.router)
 app.include_router(alerts_routes.router)
@@ -291,6 +292,7 @@ async def startup():
     rag_routes.kernel = kernel
     api_routes.kernel = kernel
     stream_routes.kernel = kernel
+    hub_routes.kernel = kernel
 
     # Wire scheduler
     if pipelines.get("scheduler"):

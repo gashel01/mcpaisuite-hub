@@ -12,6 +12,8 @@ import { useTenant, tenantHeaders } from "@/context/tenant";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import DeploymentDetail, { type Deployment } from "@/components/deployment-detail";
 import ExecutionsFeed from "@/components/executions-feed";
+import ConnectedKernels from "@/components/connected-kernels";
+import { Server } from "lucide-react";
 
 interface CPDeployment { id: string; name: string; status: string; runs: number; triggers: number; version: number; workflowId?: string; endpoint: string; }
 interface Stats { live: number; paused: number; deployments: number; triggers: number; running: number; runs_today: number; cost_today: number; tokens_today: number; }
@@ -35,7 +37,7 @@ export default function FleetPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"deployment" | "activity">("activity");
+  const [view, setView] = useState<"deployment" | "activity" | "kernels">("activity");
   const [activityFilter, setActivityFilter] = useState("");
   // Mobile uses push-navigation: the list and the panel are separate screens.
   const [mobileScreen, setMobileScreen] = useState<"list" | "panel">("list");
@@ -66,6 +68,7 @@ export default function FleetPage() {
 
   const pickDeployment = (id: string) => { setSelectedId(id); setView("deployment"); setMobileScreen("panel"); };
   const showActivity = (filter = "") => { setActivityFilter(filter); setView("activity"); setSelectedId(null); setMobileScreen("panel"); };
+  const showKernels = () => { setView("kernels"); setSelectedId(null); setMobileScreen("panel"); };
 
   const showList = !isMobile || mobileScreen === "list";
   const showPanel = !isMobile || mobileScreen === "panel";
@@ -106,6 +109,11 @@ export default function FleetPage() {
           <button onClick={() => showActivity("")}
             className={`flex items-center gap-2 px-4 py-2.5 text-[12px] font-medium border-b border-white/[0.05] transition-colors ${view === "activity" ? "bg-violet-500/10 text-violet-200" : "text-slate-400 hover:bg-white/[0.03]"}`}>
             <History className="h-3.5 w-3.5" /> All activity
+            <ArrowUpRight className="h-3 w-3 ml-auto opacity-50" />
+          </button>
+          <button onClick={showKernels}
+            className={`flex items-center gap-2 px-4 py-2.5 text-[12px] font-medium border-b border-white/[0.05] transition-colors ${view === "kernels" ? "bg-violet-500/10 text-violet-200" : "text-slate-400 hover:bg-white/[0.03]"}`}>
+            <Server className="h-3.5 w-3.5" /> Connected kernels
             <ArrowUpRight className="h-3 w-3 ml-auto opacity-50" />
           </button>
           <div className="px-4 py-2 flex items-center justify-between shrink-0">
@@ -155,6 +163,8 @@ export default function FleetPage() {
               onDeleted={(id) => { setDeployments(list => list.filter(d => d.id !== id)); setSelectedId(null); setView("activity"); setMobileScreen("list"); load(); }}
               onViewRuns={(name) => showActivity(name)}
             />
+          ) : view === "kernels" ? (
+            <ConnectedKernels />
           ) : (
             <ExecutionsFeed initialQuery={activityFilter} />
           )}
