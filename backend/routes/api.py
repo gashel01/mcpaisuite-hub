@@ -1599,18 +1599,42 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
         agent_specs = body.get("agents", [])
         blocking = body.get("blocking", False)  # Allow sync mode for backward compat
 
+        def _agent_llm(d: dict):
+            """Resolve a per-agent/per-node connectionId into litellm-ready
+            (model, api_key, base_url). Returns (None, None, None) when no
+            connection is set — the agent then uses the shared global gateway."""
+            cid = d.get("connectionId") or d.get("connection_id")
+            if not cid:
+                return None, None, None
+            kw = resolve_connection(cid)
+            if not kw:
+                return None, None, None
+            return kw.get("model"), kw.get("api_key"), kw.get("api_base")
+
         agents = []
         for spec in agent_specs:
+            m, ak, bu = _agent_llm(spec)
             agents.append(AgentConfig(
                 type=spec.get("type", "code"),
                 role=spec.get("role", ""),
                 tools=spec.get("tools", []),
                 max_turns=spec.get("max_turns", 5),
                 constitution=spec.get("constitution") or spec.get("instructions") or "",
+                model=m, api_key=ak, base_url=bu,
             ))
 
         base_namespace = ns(x_tenant_id)
         graph = body.get("graph")  # Optional graph topology for pattern="graph"
+        # Pre-resolve per-node connections into the graph node data so the GraphExecutor's
+        # fallback AgentConfig (for nodes not matched by role) also gets the right model.
+        if graph and graph.get("nodes"):
+            for n in graph["nodes"]:
+                if n.get("type") == "agent":
+                    nd = n.get("data") or {}
+                    m, ak, bu = _agent_llm(nd)
+                    if m:
+                        nd["_model"], nd["_api_key"], nd["_base_url"] = m, ak, bu
+                        n["data"] = nd
         workspace_cfg = body.get("workspace")  # Optional workspace isolation
 
         # Create a Task object so SSE streaming and pause/resume work

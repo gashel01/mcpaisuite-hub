@@ -9,7 +9,7 @@ import {
   type Node, type Edge, type Connection, type NodeTypes, type NodeProps, type EdgeTypes, type EdgeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, Layout, User, Settings, Sparkles, X, ChevronDown, AlertCircle, Download, Upload, Undo2, Redo2, Copy, Clipboard, Zap, Search, Check } from "lucide-react";
+import { Plus, Trash2, Layout, User, Settings, Sparkles, X, ChevronDown, AlertCircle, Download, Upload, Undo2, Redo2, Copy, Clipboard, Zap, Search, Check, Cpu } from "lucide-react";
 import type { TeamAgent } from "@/stores/agent-sessions";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -97,6 +97,11 @@ function AgentNode({ data, selected }: NodeProps<Node<AgentNodeData>>) {
           <div className="text-[9px] text-slate-500">{data.agentType} · {data.maxTurns} turns</div>
         </div>
       </div>
+      {(data as any).connectionName && (
+        <div className="flex items-center gap-1 mt-1 text-[8px] text-violet-300/90 bg-violet-500/10 border border-violet-500/15 rounded px-1.5 py-0.5 w-fit max-w-full">
+          <Cpu className="h-2 w-2 shrink-0" /><span className="truncate">{(data as any).connectionName}</span>
+        </div>
+      )}
       {hasError && <div className="text-[8px] text-red-400 mt-1">{(data as any).errorReason || "error"}</div>}
       <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-violet-500 !border-2 !border-violet-400" />
     </div>
@@ -516,6 +521,13 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
       (data.langchain?.tools || []).forEach((t: any) => tools.push({ name: t.name, description: t.description, category: "langchain" }));
       setAvailableTools(tools);
     }).catch(() => {});
+  }, []);
+
+  // Load saved LLM connections so each node can pick its own model (else uses global default)
+  const [connections, setConnections] = useState<{id: string; name: string; provider: string; model: string}[]>([]);
+  useEffect(() => {
+    const BASE = getApiUrl();
+    fetch(`${BASE}/llm/connections`).then(r => r.json()).then(d => setConnections(d.connections || [])).catch(() => {});
   }, []);
 
   // Load saved workflows (templates) for reuse as nodes
@@ -1156,6 +1168,14 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
                     <select value={d.agentType || "code"} onChange={e => updateNodeData(selectedNode.id, { agentType: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px] capitalize">
                       {["code","research","file","memory","plan","rag","ltp","custom"].map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1 flex items-center gap-1"><Cpu className="h-2.5 w-2.5 text-violet-400" /> Model</label>
+                    <select value={(d as any).connectionId || ""} onChange={e => { const c = connections.find(x => x.id === e.target.value); updateNodeData(selectedNode.id, { connectionId: e.target.value, connectionName: c ? c.name : "" }); }} className="w-full !py-1.5 !px-2 !text-[11px]">
+                      <option value="">Default (global model)</option>
+                      {connections.map(c => <option key={c.id} value={c.id}>{c.name} · {c.model}</option>)}
+                    </select>
+                    {connections.length === 0 && <p className="text-[8px] text-slate-600 mt-1">No saved connections — add some in Settings → LLM to run nodes on different models.</p>}
                   </div>
                   <div>
                     <label className="text-[9px] text-slate-500 block mb-1">Role</label>
