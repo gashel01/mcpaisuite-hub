@@ -2170,13 +2170,16 @@ async def control_plane():
                       "webhook_url": f"/deployments/{t['deploymentId']}/webhook/{t.get('secret')}" if t.get("type") == "webhook" else None})
 
     today0 = _dt.datetime.combine(_dt.datetime.utcnow().date(), _dt.time()).timestamp() * 1000
+    now_ms = _time.time() * 1000
     runs_today = cost_today = tokens_today = running = 0
     for path, _src in _iter_run_files():
         try:
             r = json.load(open(path, encoding="utf-8"))
         except Exception:
             continue
-        if r.get("status") == "running":
+        # In-flight runs count, but ignore records left "running" by a crash/restart
+        # (no completedAt is ever written for them) — 15 min past the timeout ceiling.
+        if r.get("status") == "running" and (now_ms - (r.get("createdAt") or 0)) < 15 * 60 * 1000:
             running += 1
         if (r.get("createdAt") or 0) >= today0:
             runs_today += 1
@@ -2246,6 +2249,32 @@ async def _execute_deployment(dep: dict, inputs: dict, blocking: bool, timeout: 
     _save_deploy(dep)
 
     started = _time.time()
+    rdir = os.path.join(_DEPLOY_DIR, did, "runs")
+    created = int(started * 1000)
+    rid = f"drun-{created}"
+
+    def _log(run_status: str, res: dict | None = None, run_err=None) -> None:
+        """Write/overwrite this run's record. Called once with 'running' at start
+        (so in-flight calls show in the control-plane) and once with the final
+        status — same rid means the file is overwritten, never double-counted."""
+        try:
+            os.makedirs(rdir, exist_ok=True)
+            res = res or {}
+            _json.dump({
+                "id": rid, "deploymentId": did, "deploymentName": dep.get("name"),
+                "source": source, "status": run_status, "inputs": inputs, "error": run_err,
+                "taskId": res.get("task_id"),
+                "answer": res.get("final_output"),
+                "metrics": {"tokens": res.get("total_tokens", 0), "cost": res.get("total_cost", 0),
+                            "turns": res.get("total_turns", 0),
+                            "duration": res.get("duration_ms", int((_time.time() - started) * 1000))},
+                "createdAt": created,
+                "completedAt": None if run_status == "running" else int(_time.time() * 1000),
+            }, open(os.path.join(rdir, f"{rid}.json"), "w"))
+        except Exception:
+            pass
+
+    _log("running")
     result, status, err = {}, "completed", None
     try:
         result = await create_taskforce(cfg, x_tenant_id=dep.get("tenant", "")) or {}
@@ -2257,23 +2286,7 @@ async def _execute_deployment(dep: dict, inputs: dict, blocking: bool, timeout: 
         err = str(exc)
         result = {"success": False, "final_output": "", "error": err}
     finally:
-        # Log the call into the deployment's run history (for the executions console)
-        try:
-            rdir = os.path.join(_DEPLOY_DIR, did, "runs")
-            os.makedirs(rdir, exist_ok=True)
-            now = int(_time.time() * 1000)
-            rid = f"drun-{now}"
-            _json.dump({
-                "id": rid, "deploymentId": did, "deploymentName": dep.get("name"),
-                "source": source, "status": status, "inputs": inputs, "error": err,
-                "taskId": result.get("task_id"),
-                "answer": result.get("final_output"),
-                "metrics": {"tokens": result.get("total_tokens", 0), "cost": result.get("total_cost", 0),
-                            "turns": result.get("total_turns", 0), "duration": result.get("duration_ms", int((_time.time() - started) * 1000))},
-                "createdAt": now, "completedAt": now,
-            }, open(os.path.join(rdir, f"{rid}.json"), "w"))
-        except Exception:
-            pass
+        _log(status, result, err)
     return result
 
 
