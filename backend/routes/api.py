@@ -2223,6 +2223,41 @@ async def control_plane():
     }
 
 
+# Schema for the agent-facing tool (registered into the kernel registry by server.py)
+LIST_DEPLOYMENTS_TOOL = {
+    "name": "list_deployments",
+    "description": "List the workflows currently deployed as callable APIs — the 'fleet'. "
+                   "Returns each deployment's name, status (live/paused), trigger count and total runs, "
+                   "plus how many are live. Use this to answer ANY question about what agents or workflows "
+                   "are deployed, live, running, or in the fleet — do NOT guess from the workspace or memory.",
+    "inputSchema": {"type": "object", "properties": {}},
+}
+
+
+def deployments_summary() -> dict:
+    """Agent-facing summary of deployed workflows (same source as /control-plane: all
+    deployments on disk, no tenant filter — matches what the Fleet panel shows)."""
+    deps = []
+    if os.path.isdir(_DEPLOY_DIR):
+        for f in os.listdir(_DEPLOY_DIR):
+            if not f.endswith(".json"):
+                continue
+            try:
+                d = json.load(open(os.path.join(_DEPLOY_DIR, f), encoding="utf-8"))
+            except Exception:
+                continue
+            deps.append({"name": d.get("name"), "status": d.get("status", "live"),
+                         "triggers": len(_triggers_for(d["id"])), "runs": d.get("runs", 0)})
+    deps.sort(key=lambda x: (x.get("name") or "").lower())
+    live = sum(1 for d in deps if d["status"] != "paused")
+    if not deps:
+        text = "No workflows are currently deployed — the fleet is empty."
+    else:
+        lines = "\n".join(f"- {d['name']} — {d['status']} ({d['triggers']} trigger(s), {d['runs']} total runs)" for d in deps)
+        text = f"{len(deps)} deployed workflow(s), {live} live:\n{lines}"
+    return {"success": True, "output": text, "deployments": deps, "live_count": live, "total": len(deps)}
+
+
 @router.delete("/deployments/{did}")
 async def delete_deployment(did: str):
     p = _deploy_path(did)
