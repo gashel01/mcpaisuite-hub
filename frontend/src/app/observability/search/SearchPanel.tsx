@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getApiUrl } from '@/lib/api-url';
+import { stripTaskforcePrefix } from '@/lib/taskforce';
 import {
   Search, X, Clock, AlertCircle, Coins, Hash, Zap,
 } from 'lucide-react';
@@ -210,7 +211,7 @@ export function SearchPanel({ onSelectTrace, namespace }: SearchPanelProps) {
             >
               <div className="flex items-start gap-1.5">
                 <span className={`mt-1 h-1.5 w-1.5 rounded-full shrink-0 ${r.status === 'failed' ? 'bg-rose-400' : 'bg-emerald-400'}`} />
-                <span className="text-[10px] text-slate-300 leading-tight line-clamp-2">{r.goal}</span>
+                <span className="text-[10px] text-slate-300 leading-tight line-clamp-2">{stripTaskforcePrefix(r.goal)}</span>
               </div>
               <div className="flex items-center gap-2 mt-1 ml-3 text-[8px] text-slate-500">
                 <span>${(r.total_cost || 0).toFixed(3)}</span>

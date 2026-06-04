@@ -173,14 +173,16 @@ export default function ConnectedKernels() {
                           <p className="flex items-center gap-1.5 text-[10px] text-slate-600"><Lock className="h-3 w-3" /> Control disabled — connect with <code className="text-slate-500">allow_control=True</code> to send commands.</p>
                         ) : (
                           <>
+                            <p className="text-[9px] text-slate-600 uppercase tracking-wide mb-1.5">Health &amp; ops checks</p>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <button onClick={() => sendCmd(inst.instance_id, "ping")} disabled={cmdBusy} className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg border border-white/[0.07] bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] disabled:opacity-40"><Zap className="h-3 w-3" /> Ping</button>
                               <button onClick={() => sendCmd(inst.instance_id, "stats")} disabled={cmdBusy} className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg border border-white/[0.07] bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] disabled:opacity-40"><Activity className="h-3 w-3" /> Stats</button>
                               <div className="flex items-center gap-1 flex-1 min-w-[160px]">
-                                <input value={runGoal} onChange={e => setRunGoal(e.target.value)} placeholder="goal to run remotely…" className="flex-1 !py-1 !px-2 !text-[10.5px] !bg-[#08080f] !border-white/[0.06]" />
-                                <button onClick={() => { if (runGoal.trim()) { sendCmd(inst.instance_id, "run", { goal: runGoal.trim() }); setRunGoal(""); } }} disabled={cmdBusy || !runGoal.trim()} className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600">{cmdBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Run</button>
+                                <input value={runGoal} onChange={e => setRunGoal(e.target.value)} placeholder="goal for a smoke test…" className="flex-1 !py-1 !px-2 !text-[10.5px] !bg-[#08080f] !border-white/[0.06]" />
+                                <button onClick={() => { if (runGoal.trim()) { sendCmd(inst.instance_id, "run", { goal: runGoal.trim() }); setRunGoal(""); } }} disabled={cmdBusy || !runGoal.trim()} title="Fires a one-off goal to verify the kernel actually executes (LLM key, engine, tools). Not how you drive production runs — use the embedding app or a Deployment for that." className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600">{cmdBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Test run</button>
                               </div>
                             </div>
+                            <p className="text-[9px] text-slate-600 mt-1.5">A smoke test — proves the kernel is truly operational. Production runs are driven by the embedding app or a Deployment.</p>
                             {(commands[inst.instance_id] || []).length > 0 && (
                               <div className="mt-2 space-y-1">
                                 {(commands[inst.instance_id] || []).slice(0, 6).map((c: any) => (

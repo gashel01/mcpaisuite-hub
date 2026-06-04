@@ -464,7 +464,7 @@ export default function ChatPage() {
       if (m.role === "assistant") return `<div class="msg"><div class="bubble bot">${m.content.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")}</div></div>`;
       return "";
     }).join("");
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>KernelMCP Export</title><style>body{font-family:system-ui;background:#0f0f17;color:#e4e4ef;max-width:800px;margin:0 auto;padding:40px}.msg{margin:16px 0}.bubble{padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.6;white-space:pre-wrap}.user{background:#1e293b;max-width:80%}.bot{background:#1e1e2e;border:1px solid #2a2a3a}strong{color:#f1f5f9}@media print{body{background:#fff;color:#111}.user{background:#f1f5f9}.bot{background:#fafafa;border-color:#e2e8f0}}</style></head><body><h1 style="color:#a78bfa">KernelMCP Chat Export</h1>${msgsHtml}</body></html>`);
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>MCP AI Suite Hub Export</title><style>body{font-family:system-ui;background:#0f0f17;color:#e4e4ef;max-width:800px;margin:0 auto;padding:40px}.msg{margin:16px 0}.bubble{padding:12px 16px;border-radius:12px;font-size:14px;line-height:1.6;white-space:pre-wrap}.user{background:#1e293b;max-width:80%}.bot{background:#1e1e2e;border:1px solid #2a2a3a}strong{color:#f1f5f9}@media print{body{background:#fff;color:#111}.user{background:#f1f5f9}.bot{background:#fafafa;border-color:#e2e8f0}}</style></head><body><h1 style="color:#a78bfa">MCP AI Suite Hub Chat Export</h1>${msgsHtml}</body></html>`);
     w.document.close();
     setTimeout(() => w.print(), 500);
   };

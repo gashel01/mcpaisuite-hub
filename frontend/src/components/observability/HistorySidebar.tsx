@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { PanelLeftOpen, PanelLeftClose, History, Search } from "lucide-react";
+import { PanelLeftOpen, PanelLeftClose, History, Search, Server, Home } from "lucide-react";
 import TaskHistoryList, { type TaskSummary } from "./TaskHistoryList";
 import { SearchPanel } from "../../app/observability/search";
+
+interface Kernel { instance_id: string; name: string; project: string; live: boolean }
 
 interface Props {
   open: boolean;
@@ -14,10 +16,46 @@ interface Props {
   loading: boolean;
   namespace: string;
   embedded?: boolean;
+  scope?: string;
+  setScope?: (s: string) => void;
+  kernels?: Kernel[];
+  // Pagination for the history list (local scope only).
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
 }
 
-export default function HistorySidebar({ open, setOpen, tasks, selectedTask, onSelect, loading, namespace, embedded }: Props) {
+// Source switcher — local Hub vs a connected remote kernel. Only one source shows
+// at a time, so the local list stays clean by default; you opt into a kernel.
+function ScopeBar({ scope, setScope, kernels }: { scope: string; setScope: (s: string) => void; kernels: Kernel[] }) {
+  if (!kernels.length) return null;
+  const active = scope !== "local";
+  return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-white/[0.04] shrink-0">
+      {active ? <Server className="h-3 w-3 text-sky-400 shrink-0" /> : <Home className="h-3 w-3 text-slate-500 shrink-0" />}
+      <select
+        value={scope}
+        onChange={(e) => setScope(e.target.value)}
+        className={`flex-1 min-w-0 bg-white/[0.03] border rounded-md px-1.5 py-1 text-[10.5px] outline-none cursor-pointer ${
+          active ? "border-sky-500/30 text-sky-200" : "border-white/[0.06] text-slate-300"
+        }`}
+        title="Task source"
+      >
+        <option value="local">Local Hub</option>
+        {kernels.map(k => (
+          <option key={k.instance_id} value={k.instance_id}>
+            {k.live ? "● " : "○ "}{k.name} · {k.project}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+export default function HistorySidebar({ open, setOpen, tasks, selectedTask, onSelect, loading, namespace, embedded, scope = "local", setScope, kernels = [], total, page, pageSize, onPageChange }: Props) {
   const [tab, setTab] = useState<"history" | "search">("history");
+  const showScope = !!setScope && kernels.length > 0;
 
   // Embedded mode (mobile overlay) — no collapse/expand chrome
   if (embedded) {
@@ -48,7 +86,10 @@ export default function HistorySidebar({ open, setOpen, tasks, selectedTask, onS
         </div>
         <div className="flex-1 min-h-0 overflow-hidden">
           {tab === "history" ? (
-            <TaskHistoryList tasks={tasks} selectedTask={selectedTask} onSelect={onSelect} loading={loading} />
+            <div className="flex flex-col h-full min-h-0">
+              {showScope && <ScopeBar scope={scope} setScope={setScope!} kernels={kernels} />}
+              <div className="flex-1 min-h-0"><TaskHistoryList tasks={tasks} selectedTask={selectedTask} onSelect={onSelect} loading={loading} total={total} page={page} pageSize={pageSize} onPageChange={onPageChange} /></div>
+            </div>
           ) : (
             <SearchPanel namespace={namespace} onSelectTrace={onSelect} />
           )}
@@ -112,12 +153,21 @@ export default function HistorySidebar({ open, setOpen, tasks, selectedTask, onS
         {/* Content */}
         <div className="flex-1 min-h-0 overflow-hidden">
           {tab === "history" ? (
-            <TaskHistoryList
-              tasks={tasks}
-              selectedTask={selectedTask}
-              onSelect={onSelect}
-              loading={loading}
-            />
+            <div className="flex flex-col h-full min-h-0">
+              {showScope && <ScopeBar scope={scope} setScope={setScope!} kernels={kernels} />}
+              <div className="flex-1 min-h-0">
+                <TaskHistoryList
+                  tasks={tasks}
+                  selectedTask={selectedTask}
+                  onSelect={onSelect}
+                  loading={loading}
+                  total={total}
+                  page={page}
+                  pageSize={pageSize}
+                  onPageChange={onPageChange}
+                />
+              </div>
+            </div>
           ) : (
             <SearchPanel
               namespace={namespace}

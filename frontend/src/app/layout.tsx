@@ -10,8 +10,8 @@ import AuditStreamInit from "@/components/audit-stream-init";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "kernelmcp",
-  description: "Kernel MCP orchestration dashboard",
+  title: "MCP AI Suite Hub",
+  description: "MCP AI Suite Hub — agent orchestration & observability",
 };
 
 export default function RootLayout({

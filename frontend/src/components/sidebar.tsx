@@ -113,7 +113,7 @@ export default function Sidebar() {
             <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-violet-600/30 to-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
               <div className="h-2 w-2 rounded-full bg-violet-400 shadow-sm shadow-violet-400/50" />
             </div>
-            <span className="text-[13px] font-bold tracking-tight text-slate-100">kernelmcp</span>
+            <span className="text-[13px] font-bold tracking-tight text-slate-100 truncate">MCP AI Suite Hub</span>
           </div>
           <button onClick={() => setOpen(false)} className="text-slate-600 hover:text-slate-300 md:hidden transition-colors" aria-label="Close menu">
             <X className="h-4 w-4" />
@@ -222,7 +222,7 @@ export default function Sidebar() {
               <div className={`h-1.5 w-1.5 rounded-full ${remoteUrl ? "bg-teal-400" : "bg-emerald-400"}`} />
               <span className="text-[10px] text-slate-500 font-medium">v1.0</span>
             </div>
-            <span className="text-[10px] text-slate-600">MCP AI Suite</span>
+            <span className="text-[10px] text-slate-600">Part of the MCP AI Suite</span>
           </div>
         </div>
       </aside>

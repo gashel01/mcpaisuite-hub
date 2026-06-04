@@ -1,5 +1,6 @@
 "use client";
 import { getApiUrl } from "@/lib/api-url";
+import { stripTaskforcePrefix } from "@/lib/taskforce";
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -52,6 +53,8 @@ interface Stats {
   tasks_failed: number; total_turns: number; avg_turns_per_task: number;
   connected_servers: number; model?: string;
 }
+
+const TASK_PAGE_SIZE = 100;
 
 // ── Main Export ─────────────────────────────────────────────────────────────
 
@@ -133,6 +136,17 @@ function ObservabilityInner() {
   const [selectedHistoryTask, setSelectedHistoryTask] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // ── Scope: local Hub tasks, or a connected remote kernel's ingested runs ──
+  // Keeps the history list to ONE source at a time so local stays clean by default.
+  const [scope, setScope] = useState<string>("local"); // "local" | <instance_id>
+  const [kernels, setKernels] = useState<{ instance_id: string; name: string; project: string; live: boolean }[]>([]);
+
+  // ── Recent Tasks pagination (local scope) ──────────────────────────────
+  const [taskPage, setTaskPage] = useState(0); // 0-based, newest first
+  const [taskTotal, setTaskTotal] = useState(0);
+  // Reset to the newest page whenever the source changes.
+  useEffect(() => { setTaskPage(0); }, [scope]);
+
   // Polling fallback ref
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -152,7 +166,8 @@ function ObservabilityInner() {
       ]);
       if (analyticsRes?.result) setAnalytics(analyticsRes.result);
       if (statsRes) setStats(statsRes);
-      if (tasksRes?.result?.tasks) {
+      if (scope === "local" && tasksRes?.result?.tasks) {
+        setTaskTotal(tasksRes.result.total ?? tasksRes.result.tasks.length);
         setTasks(tasksRes.result.tasks.map((t: any) => {
           let status = t.status || "completed";
           if (status === "running" && t.created_at) {
@@ -165,12 +180,14 @@ function ObservabilityInner() {
             status,
             startedAt: new Date(t.created_at * 1000).toISOString(),
             durationMs: t.duration_ms,
+            source: t.source,
+            deploymentName: t.deployment_name,
           };
         }));
       }
     } catch { /* ignore */ }
     setAnalyticsLoading(false);
-  }, [th]);
+  }, [th, scope]);
 
   useEffect(() => { loadAnalytics(); }, []); // eslint-disable-line
 
@@ -206,7 +223,7 @@ function ObservabilityInner() {
         if (!taskData) return;
         const turns = traceData?.result?.turns ?? taskData.turns ?? [];
         useExecutionStore.getState().loadTrace(urlTask, turns, taskData.total_tokens, taskData.total_cost, taskData.status);
-        setGoal(taskData.goal || taskData.metadata?.result?.goal || "");
+        setGoal(stripTaskforcePrefix(taskData.goal || taskData.metadata?.result?.goal || ""));
       }).catch(() => {});
     }
   }, [searchParams]); // eslint-disable-line
@@ -254,18 +271,37 @@ function ObservabilityInner() {
   // without stale closures.
   const refreshTasks = useCallback(async () => {
     try {
+      // Remote scope: show one connected kernel's ingested runs (already terminal).
+      if (scope !== "local") {
+        const r = await fetch(`${BASE}/hub/instances/${scope}/runs`, { headers: th });
+        const res = await r.json();
+        setTasks((res.runs || []).map((t: any) => ({
+          id: t.id,
+          goal: t.goal || t.id.slice(0, 12),
+          status: t.status || "completed",
+          startedAt: new Date(t.createdAt || 0).toISOString(),
+          durationMs: undefined,
+        })));
+        return; // no live auto-switch for remote runs — they arrive already finished
+      }
+
       const r = await fetch(`${BASE}/api/tool`, {
         method: "POST", headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({ tool: "list_tasks", args: {} }),
+        body: JSON.stringify({ tool: "list_tasks", args: { limit: TASK_PAGE_SIZE, offset: taskPage * TASK_PAGE_SIZE } }),
       });
       const res = await r.json();
       if (!res?.result?.tasks) return;
+      setTaskTotal(res.result.total ?? res.result.tasks.length);
       const mapped = res.result.tasks.map((t: any) => {
         let status = t.status || "completed";
         if (status === "running" && t.created_at && (Date.now() / 1000 - t.created_at) > 300) status = "failed";
-        return { id: t.task_id, goal: t.query || t.task_id.slice(0, 12), status, startedAt: new Date(t.created_at * 1000).toISOString(), durationMs: t.duration_ms };
+        return { id: t.task_id, goal: t.query || t.task_id.slice(0, 12), status, startedAt: new Date(t.created_at * 1000).toISOString(), durationMs: t.duration_ms, source: t.source, deploymentName: t.deployment_name };
       });
       setTasks(mapped);
+
+      // Auto-switch only makes sense on the newest page — never yank the user off a
+      // page they paged back to.
+      if (taskPage !== 0) return;
 
       // Auto-switch to a running task as soon as it appears — unless we're already
       // streaming one, or the user is deliberately reviewing a picked history task.
@@ -277,19 +313,34 @@ function ObservabilityInner() {
       const running = mapped.find((t: any) => t.status === "running");
       if (running && running.id !== st.taskId) {
         setTaskId(running.id);
-        setGoal(running.goal);
+        setGoal(stripTaskforcePrefix(running.goal));
         setMode("trace");
       }
     } catch { /* ignore */ }
-  }, [th]);
+  }, [th, scope, taskPage]);
 
   // Audit-driven refresh (fast path) + periodic poll (robust: runs appear/update
   // live even when launched from another page and no audit event fired).
   useEffect(() => { if (taskChangeCounter > 0) refreshTasks(); }, [taskChangeCounter]); // eslint-disable-line
   useEffect(() => {
+    refreshTasks(); // immediate reload (covers scope changes)
     const id = setInterval(refreshTasks, 2500);
     return () => clearInterval(id);
   }, [refreshTasks]);
+
+  // Connected kernels feed the scope selector (poll so live/offline stays current).
+  const loadKernels = useCallback(async () => {
+    try {
+      const r = await fetch(`${BASE}/hub/instances`, { headers: th });
+      const d = await r.json();
+      setKernels(d.instances || []);
+    } catch { /* ignore */ }
+  }, [th]);
+  useEffect(() => {
+    loadKernels();
+    const id = setInterval(loadKernels, 10000);
+    return () => clearInterval(id);
+  }, [loadKernels]);
 
   const launchTask = useCallback(async () => {
     if (!goal.trim()) return;
@@ -348,7 +399,7 @@ function ObservabilityInner() {
       const store = useExecutionStore.getState();
       store.loadTrace(id, turns, taskData?.total_tokens, taskData?.total_cost, taskData?.status);
       store.setViewState("reviewing");
-      if (taskData?.goal) setGoal(taskData.goal);
+      if (taskData?.goal) setGoal(stripTaskforcePrefix(taskData.goal));
     } catch {}
     setHistoryLoading(false);
   }, [th, isMobile]);
@@ -480,6 +531,13 @@ function ObservabilityInner() {
               onSelect={selectHistoryTask}
               loading={historyLoading}
               namespace={tenant}
+              scope={scope}
+              setScope={setScope}
+              kernels={kernels}
+              total={scope === "local" ? taskTotal : undefined}
+              page={taskPage}
+              pageSize={TASK_PAGE_SIZE}
+              onPageChange={scope === "local" ? setTaskPage : undefined}
             />
           ) : null}
 
@@ -664,6 +722,13 @@ function ObservabilityInner() {
                   onSelect={(id) => { selectHistoryTask(id); setMobilePanel("none"); }}
                   loading={historyLoading}
                   namespace={tenant}
+                  scope={scope}
+                  setScope={setScope}
+                  kernels={kernels}
+                  total={scope === "local" ? taskTotal : undefined}
+                  page={taskPage}
+                  pageSize={TASK_PAGE_SIZE}
+                  onPageChange={scope === "local" ? setTaskPage : undefined}
                   embedded
                 />
               </div>

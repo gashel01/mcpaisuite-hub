@@ -1,7 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Clock, CheckCircle2, AlertCircle, Loader2, History } from "lucide-react";
+import { Clock, CheckCircle2, AlertCircle, Loader2, History, Workflow, Rocket, ChevronLeft, ChevronRight } from "lucide-react";
+import { parseTaskforce, taskforceLabel } from "@/lib/taskforce";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -11,6 +12,8 @@ export interface TaskSummary {
   status: "completed" | "failed" | "running" | "idle";
   startedAt: string;
   durationMs?: number;
+  source?: string;          // "chat" | "taskforce" | "deployment"
+  deploymentName?: string;  // set when source === "deployment"
 }
 
 interface TaskHistoryListProps {
@@ -18,6 +21,11 @@ interface TaskHistoryListProps {
   selectedTask?: string | null;
   onSelect: (taskId: string) => void;
   loading?: boolean;
+  // Optional pagination (local scope). When provided, a Prev/Next footer shows.
+  total?: number;
+  page?: number;            // 0-based
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,14 +60,19 @@ const STATUS_CONFIG: Record<TaskSummary["status"], { icon: typeof Clock; color: 
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function TaskHistoryList({ tasks, selectedTask, onSelect, loading }: TaskHistoryListProps) {
+export default function TaskHistoryList({ tasks, selectedTask, onSelect, loading, total, page = 0, pageSize = 100, onPageChange }: TaskHistoryListProps) {
+  const paginated = typeof total === "number" && !!onPageChange;
+  const pageCount = paginated ? Math.max(1, Math.ceil((total || 0) / pageSize)) : 1;
+  const rangeStart = paginated ? page * pageSize + 1 : 1;
+  const rangeEnd = paginated ? page * pageSize + tasks.length : tasks.length;
+
   return (
-    <div className="flex flex-col bg-[#0c0c14] rounded-xl border border-white/[0.06] overflow-hidden min-h-0">
+    <div className="flex flex-col h-full bg-[#0c0c14] rounded-xl border border-white/[0.06] overflow-hidden min-h-0">
       {/* Header */}
       <div className="px-3 sm:px-4 py-2.5 border-b border-white/[0.04] shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <History className="h-4 w-4 text-slate-400" />
-          <h3 className="text-[11px] sm:text-xs font-semibold text-slate-200">Recent Tasks ({tasks.length})</h3>
+          <h3 className="text-[11px] sm:text-xs font-semibold text-slate-200">Recent Tasks ({total ?? tasks.length})</h3>
         </div>
         {loading && <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />}
       </div>
@@ -77,6 +90,7 @@ export default function TaskHistoryList({ tasks, selectedTask, onSelect, loading
           const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.idle;
           const Icon = cfg.icon;
           const isSelected = selectedTask === task.id;
+          const { isTaskforce, tag, text } = parseTaskforce(task.goal);
 
           return (
             <motion.button
@@ -94,10 +108,22 @@ export default function TaskHistoryList({ tasks, selectedTask, onSelect, loading
               {/* Status icon */}
               <Icon className={`h-4 w-4 shrink-0 ${cfg.color} ${task.status === "running" ? "animate-spin" : ""}`} />
 
-              {/* Goal text */}
-              <span className="text-[11px] sm:text-xs text-slate-300 font-medium truncate flex-1 min-w-0">
-                {task.goal}
-              </span>
+              {/* Goal text — deployment runs show a rocket, other TaskForce runs a workflow
+                  icon, each with a human-readable tooltip instead of a [TaskForce] prefix */}
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                {task.source === "deployment" ? (
+                  <span title={`Deployment${task.deploymentName ? `: ${task.deploymentName}` : ""}`} aria-label="Deployment run" className="shrink-0 flex items-center">
+                    <Rocket className="h-3.5 w-3.5 text-emerald-400" />
+                  </span>
+                ) : isTaskforce ? (
+                  <span title={taskforceLabel(tag)} aria-label={taskforceLabel(tag)} className="shrink-0 flex items-center">
+                    <Workflow className="h-3.5 w-3.5 text-violet-400" />
+                  </span>
+                ) : null}
+                <span className="text-[11px] sm:text-xs text-slate-300 font-medium truncate min-w-0">
+                  {text}
+                </span>
+              </div>
 
               {/* Meta */}
               <div className="flex items-center gap-2 shrink-0">
@@ -116,6 +142,27 @@ export default function TaskHistoryList({ tasks, selectedTask, onSelect, loading
           );
         })}
       </div>
+
+      {/* Pagination footer (local scope, when there is more than one page) */}
+      {paginated && pageCount > 1 && (
+        <div className="flex items-center justify-between px-3 py-2 border-t border-white/[0.04] shrink-0">
+          <button
+            onClick={() => onPageChange!(Math.max(0, page - 1))}
+            disabled={page <= 0 || loading}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/[0.07] bg-white/[0.02] text-slate-300 hover:bg-white/[0.06] disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft className="h-3 w-3" /> Newer
+          </button>
+          <span className="text-[9px] text-slate-500 font-mono tabular-nums">{rangeStart}–{rangeEnd} of {total} · p{page + 1}/{pageCount}</span>
+          <button
+            onClick={() => onPageChange!(Math.min(pageCount - 1, page + 1))}
+            disabled={page >= pageCount - 1 || loading}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-white/[0.07] bg-white/[0.02] text-slate-300 hover:bg-white/[0.06] disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Older <ChevronRight className="h-3 w-3" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

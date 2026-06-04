@@ -54,7 +54,7 @@ export default function ChatInput({ input, setInput, loading, execMode, setExecM
             value={input}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder="Message KernelMCP..."
+            placeholder="Message MCP AI Suite Hub..."
             rows={1}
             className="flex-1 bg-transparent text-sm text-slate-100 placeholder-slate-500 focus:outline-none resize-none py-1.5 max-h-[200px] leading-relaxed"
             disabled={loading}

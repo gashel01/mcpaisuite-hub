@@ -45,7 +45,7 @@ export default function Onboarding() {
             <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-600/20 to-violet-800/10 border border-violet-500/20 flex items-center justify-center mb-4">
               <div className="h-3 w-3 rounded-full bg-violet-400 shadow-sm shadow-violet-400/50" />
             </div>
-            <h2 className="text-lg font-bold text-slate-100 mb-1">Welcome to kernelmcp</h2>
+            <h2 className="text-lg font-bold text-slate-100 mb-1">Welcome to MCP AI Suite Hub</h2>
             <p className="text-sm text-slate-400 leading-relaxed">
               The orchestration dashboard for the MCP AI Suite. Your agent has access to 97 tools across 7 servers.
             </p>

@@ -87,9 +87,15 @@ async def call_tool(body: ToolCallRequest, x_tenant_id: str = Header(default="")
         return {"result": stats_data}
 
     if tool_name == "list_tasks":
-        # Include tasks from sub-namespaces (e.g. demo__run_xxx)
+        # Local tenant tasks incl. sub-namespaces (e.g. demo__run_xxx for deployment/
+        # TaskForce runs). Remote ingested traces live under hub__* — keep them OUT here
+        # (they have their own scope in Observability); this is the LOCAL list.
         all_tasks = list(k._tasks.values())
-        tasks_list = [t for t in all_tasks if t.namespace == namespace or t.namespace.startswith(f"{namespace}__") or t.namespace.startswith(f"{namespace}")]
+        tasks_list = [
+            t for t in all_tasks
+            if not t.namespace.startswith("hub__")
+            and (t.namespace == namespace or t.namespace.startswith(f"{namespace}__") or t.namespace.startswith(f"{namespace}"))
+        ]
         tasks_list.sort(key=lambda t: t.created_at.timestamp() if t.created_at else 0, reverse=True)
         def _task_label(t):
             # Prefer original_message for chat tasks (goal includes conversation context)
@@ -101,13 +107,31 @@ async def call_tool(body: ToolCallRequest, x_tenant_id: str = Header(default="")
             if "[Current message]" in g:
                 return g.split("[Current message]")[-1].strip()[:200]
             return g[:200]
-        return {"result": {"tasks": [
+        def _source(md):
+            if not isinstance(md, dict):
+                return "taskforce"
+            if md.get("deployment_id"):
+                return "deployment"
+            return "chat" if md.get("conversation_id") else "taskforce"
+        # Pagination: newest-first, page back to the very first task.
+        try:
+            limit = max(1, min(500, int(args.get("limit", 100))))
+        except Exception:
+            limit = 100
+        try:
+            offset = max(0, int(args.get("offset", 0)))
+        except Exception:
+            offset = 0
+        total = len(tasks_list)
+        page = tasks_list[offset:offset + limit]
+        return {"result": {"total": total, "offset": offset, "limit": limit, "tasks": [
             {"task_id": t.id, "query": _task_label(t), "status": t.status.value,
              "created_at": t.created_at.timestamp() if t.created_at else 0,
              "duration_ms": round(t.duration_ms) if hasattr(t, "duration_ms") else None,
-             "source": "chat" if t.metadata.get("conversation_id") else "taskforce",
+             "source": _source(t.metadata),
+             "deployment_name": (t.metadata.get("deployment_name") if isinstance(t.metadata, dict) else None),
              "tokens": t.total_tokens, "cost": round(t.total_cost, 6)}
-            for t in tasks_list[:100]
+            for t in page
         ]}}
 
     if tool_name == "get_trace":
@@ -1796,6 +1820,47 @@ def _public_deploy(d: dict) -> dict:
     return {k: v for k, v in d.items() if k not in ("token", "config")}
 
 
+def backfill_deployment_tags() -> int:
+    """Tag historical deployment-run tasks (created before metadata tagging existed) so
+    they show the deployment badge in Observability's Recent Tasks. Idempotent — skips
+    tasks already tagged. Called once at startup."""
+    if kernel is None or not os.path.isdir(_DEPLOY_DIR):
+        return 0
+    tagged = 0
+    try:
+        for entry in os.listdir(_DEPLOY_DIR):
+            rdir = os.path.join(_DEPLOY_DIR, entry, "runs")
+            if not os.path.isdir(rdir):
+                continue
+            for fn in os.listdir(rdir):
+                if not fn.endswith(".json"):
+                    continue
+                try:
+                    rec = json.load(open(os.path.join(rdir, fn), encoding="utf-8"))
+                except Exception:
+                    continue
+                tid = rec.get("taskId")
+                if not tid:
+                    continue
+                kt = kernel._tasks.get(tid)
+                if kt is None:
+                    continue
+                if not isinstance(kt.metadata, dict):
+                    kt.metadata = {}
+                if kt.metadata.get("deployment_id"):
+                    continue
+                kt.metadata["deployment_id"] = rec.get("deploymentId") or entry
+                kt.metadata["deployment_name"] = rec.get("deploymentName")
+                try:
+                    _persist_task(kt)
+                except Exception:
+                    pass
+                tagged += 1
+    except Exception:
+        pass
+    return tagged
+
+
 @router.post("/deployments/publish")
 async def publish_deployment(body: dict, x_tenant_id: str = Header(default="")):
     """Publish a workflow as a callable API endpoint. Streams the deploy pipeline (SSE),
@@ -2520,6 +2585,20 @@ async def _execute_deployment(dep: dict, inputs: dict, blocking: bool, timeout: 
     result, status, err = {}, "completed", None
     try:
         result = await create_taskforce(cfg, x_tenant_id=dep.get("tenant", "")) or {}
+        # Tag the underlying kernel task so it's identifiable as a deployment run in
+        # Observability's Recent Tasks (rocket badge + deployment name).
+        tid = result.get("task_id")
+        if tid and kernel is not None:
+            kt = kernel._tasks.get(tid)
+            if kt is not None:
+                if not isinstance(kt.metadata, dict):
+                    kt.metadata = {}
+                kt.metadata["deployment_id"] = did
+                kt.metadata["deployment_name"] = dep.get("name")
+                try:
+                    _persist_task(kt)
+                except Exception:
+                    pass
         if result.get("success") is False:
             status = "failed"
             err = result.get("error")

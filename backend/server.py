@@ -242,6 +242,14 @@ async def startup():
         kernel._tasks.update(persisted)
         print(f"[STARTUP] loaded {len(persisted)} persisted tasks", flush=True)
 
+    # Tag historical deployment runs so they carry the deployment badge in Recent Tasks.
+    try:
+        n = api_routes.backfill_deployment_tags()
+        if n:
+            print(f"[STARTUP] tagged {n} historical deployment runs", flush=True)
+    except Exception as exc:
+        print(f"[STARTUP] deployment-tag backfill skipped: {exc}", flush=True)
+
     # Pre-warm embedding models (download + load once at startup, not per-query)
     async def _warmup_embeddings():
         # 1. Warm up RAG (FastEmbed + Qdrant)
