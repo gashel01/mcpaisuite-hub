@@ -61,6 +61,11 @@ export default function ConnectedKernels() {
 
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 
+  const loadRuns = useCallback(async (id: string) => {
+    try { const d = await fetch(`${BASE}/hub/instances/${id}/runs`, { headers: th }).then(r => r.json()); setRuns(p => ({ ...p, [id]: d.runs || [] })); }
+    catch { /* ignore */ }
+  }, [th]);
+
   const loadCommands = useCallback(async (id: string) => {
     try { const d = await fetch(`${BASE}/hub/instances/${id}/commands`, { headers: th }).then(r => r.json()); setCommands(p => ({ ...p, [id]: d.commands || [] })); }
     catch { /* ignore */ }
@@ -70,20 +75,24 @@ export default function ConnectedKernels() {
     setCmdBusy(true);
     try {
       await fetch(`${BASE}/hub/instances/${id}/commands`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ type, args }) });
-      // Poll for the result for a few seconds (the kernel polls + replies)
-      for (let i = 0; i < 8; i++) { await new Promise(r => setTimeout(r, 700)); await loadCommands(id); }
+      await loadCommands(id); // show it as pending; the expanded poll updates status + new runs
     } catch {} finally { setCmdBusy(false); }
   }, [th, loadCommands]);
 
   const toggle = useCallback(async (id: string) => {
     if (expanded === id) { setExpanded(null); return; }
     setExpanded(id);
-    if (!runs[id]) {
-      try { const d = await fetch(`${BASE}/hub/instances/${id}/runs`, { headers: th }).then(r => r.json()); setRuns(p => ({ ...p, [id]: d.runs || [] })); }
-      catch { setRuns(p => ({ ...p, [id]: [] })); }
-    }
+    loadRuns(id);
     loadCommands(id);
-  }, [expanded, runs, th, loadCommands]);
+  }, [expanded, loadRuns, loadCommands]);
+
+  // Keep the expanded instance's runs + command statuses fresh without a hard refresh.
+  useEffect(() => {
+    if (!expanded) return;
+    const id = expanded;
+    const t = setInterval(() => { loadRuns(id); loadCommands(id); }, 3000);
+    return () => clearInterval(t);
+  }, [expanded, loadRuns, loadCommands]);
 
   const mintKey = useCallback(async () => {
     setMinting(true); setFreshKey(null);
@@ -167,7 +176,7 @@ export default function ConnectedKernels() {
                               <button onClick={() => sendCmd(inst.instance_id, "stats")} disabled={cmdBusy} className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg border border-white/[0.07] bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] disabled:opacity-40"><Activity className="h-3 w-3" /> Stats</button>
                               <div className="flex items-center gap-1 flex-1 min-w-[160px]">
                                 <input value={runGoal} onChange={e => setRunGoal(e.target.value)} placeholder="goal to run remotely…" className="flex-1 !py-1 !px-2 !text-[10.5px] !bg-[#08080f] !border-white/[0.06]" />
-                                <button onClick={() => { if (runGoal.trim()) sendCmd(inst.instance_id, "run", { goal: runGoal.trim() }); }} disabled={cmdBusy || !runGoal.trim()} className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600">{cmdBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Run</button>
+                                <button onClick={() => { if (runGoal.trim()) { sendCmd(inst.instance_id, "run", { goal: runGoal.trim() }); setRunGoal(""); } }} disabled={cmdBusy || !runGoal.trim()} className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600">{cmdBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Run</button>
                               </div>
                             </div>
                             {(commands[inst.instance_id] || []).length > 0 && (
