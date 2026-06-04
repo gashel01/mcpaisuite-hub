@@ -13,9 +13,7 @@ import { useTenant } from "@/context/tenant";
 const NAV_MAIN = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/deployments", label: "Deployments", icon: Rocket },
-  { href: "/executions", label: "Executions", icon: History },
-  { href: "/control", label: "Control Plane", icon: Gauge },
+  { href: "/fleet", label: "Fleet", icon: Gauge },
 ] as const;
 
 const NAV_LIBS = [

@@ -92,8 +92,8 @@ export default function FleetDrawer() {
             </div>
 
             <div className="px-5 py-3 border-t border-white/[0.06] shrink-0">
-              <Link href="/control" onClick={() => setOpen(false)} className="flex items-center justify-center gap-1.5 w-full py-2 text-[12px] font-medium text-violet-200 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/25 rounded-lg transition-all">
-                <Gauge className="h-3.5 w-3.5" /> Open control plane <ArrowUpRight className="h-3 w-3" />
+              <Link href="/fleet" onClick={() => setOpen(false)} className="flex items-center justify-center gap-1.5 w-full py-2 text-[12px] font-medium text-violet-200 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/25 rounded-lg transition-all">
+                <Gauge className="h-3.5 w-3.5" /> Open fleet <ArrowUpRight className="h-3 w-3" />
               </Link>
             </div>
           </div>
