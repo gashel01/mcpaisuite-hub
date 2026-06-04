@@ -2949,7 +2949,7 @@ RULES:
 - Only use capabilities actually available above. The TRIGGER is always available — never list it under "missing".
 - When REFINING, return the COMPLETE updated workflow (keep existing agents/trigger unless the request changes them) — never just the delta.
 - Keep it minimal: fewer agents = faster + cheaper.
-- REUSABILITY: when a value will change run-to-run (a company, a topic, a URL, a ticker), put it as a {placeholder} in the instructions/goal — e.g. "Research {company_name}'s latest filings". The app prompts the user for these before each run, so the workflow becomes a reusable template. Use clear snake_case names.
+- REUSABILITY: when a value will change run-to-run (a company, a topic, a URL, a ticker), put it as a {{placeholder}} in the instructions/goal — e.g. "Research {{company_name}}'s latest filings". The app prompts the user for these before each run, so the workflow becomes a reusable template. Use clear snake_case names.
 - AMBIGUITY: if the goal is underspecified (e.g. WHAT to monitor, WHERE to send results, WHICH sources), still build a sensible best-guess workflow so the canvas isn't empty — but LEAD your reply with ONE short, specific clarifying question, and make your "suggestions" the 2-3 most likely ANSWERS to it (clickable), e.g. goal "monitor my service" → ask "Monitor what exactly, and how should it alert you?" with suggestions ["Monitor a website","Monitor an API","Alert me via Slack"].
 - If the request is just a question or chit-chat, answer it in part 1 and still emit {MARKER} + the current workflow unchanged."""
 
