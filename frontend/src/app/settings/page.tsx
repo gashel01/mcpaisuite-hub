@@ -11,6 +11,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 // PageHeader replaced by inline header for better mobile layout
 import { useBreakpoint } from "@/hooks/useBreakpoint";
+import ConnectionsManager from "@/components/connections-manager";
 
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -918,6 +919,25 @@ export default function SettingsPage() {
             {tab === "llm" && (
               <>
                 <SectionHeader icon={Brain} color="text-violet-400" title="LLM Provider" desc="Configure which language model powers the kernel" />
+
+                {/* Saved connections — multi-provider presets, switchable from the chat/agents headers */}
+                <div className="rounded-xl border border-violet-500/15 bg-violet-500/[0.02] p-3.5 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-violet-500/10 border border-violet-500/15 shrink-0"><Cpu className="h-3.5 w-3.5 text-violet-400" /></div>
+                    <div className="min-w-0">
+                      <h3 className="text-[12px] font-semibold text-slate-200">Saved connections</h3>
+                      <p className="text-[10px] text-slate-500 leading-relaxed">Store several provider / model / key combos and switch the active one in a click — here, or from the model picker in the chat &amp; agents headers. Activating a connection sets the provider config below.</p>
+                    </div>
+                  </div>
+                  <ConnectionsManager />
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <div className="h-px bg-white/[0.06] flex-1" />
+                  <span className="text-[9px] font-semibold text-slate-600 uppercase tracking-wide">Active provider (advanced)</span>
+                  <div className="h-px bg-white/[0.06] flex-1" />
+                </div>
+
                 <Field label="Provider">
                   <SelectInput value={cfg.provider} onChange={v => update("provider", v)} options={[
                     { value: "echo", label: "None (echo mode)" },
