@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Check, Trash, Pencil, Loader2, KeyRound, Cpu } from "lucide-react";
+import { Plus, Check, Trash, Pencil, Loader2, KeyRound, Cpu, Plug, CircleCheck, CircleX } from "lucide-react";
 import { getApiUrl } from "@/lib/api-url";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import type { Connection } from "./connection-picker";
@@ -34,6 +34,8 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testRes, setTestRes] = useState<{ ok: boolean; detail: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -58,6 +60,17 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
     if (editingId === id) { setEditingId(null); setForm({ ...emptyForm }); }
     notify();
   }, [th, notify, editingId]);
+
+  const testActive = useCallback(async () => {
+    setTesting(true); setTestRes(null);
+    try {
+      // No overrides → backend tests the currently-active llm_config (the active connection)
+      const r = await fetch(`${BASE}/test-connection`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ service: "llm" }) });
+      const d = await r.json();
+      setTestRes({ ok: !!d.ok, detail: String(d.detail || "") });
+    } catch (e: any) { setTestRes({ ok: false, detail: String(e?.message || e) }); }
+    finally { setTesting(false); }
+  }, [th]);
 
   const startEdit = (c: Connection) => {
     setForm({ id: c.id, name: c.name, provider: c.provider, model: c.model, api_key: "", base_url: c.base_url || "" });
@@ -95,6 +108,23 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
               <button onClick={() => remove(c.id)} className="text-slate-500 hover:text-red-400"><Trash className="h-3 w-3" /></button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Test the active connection (hits the live llm_config) */}
+      {conns.length > 0 && (
+        <div className="flex items-center gap-3">
+          <button onClick={testActive} disabled={testing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-white/[0.03] border border-white/[0.07] text-slate-300 hover:bg-white/[0.06] disabled:opacity-50 transition-all">
+            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plug className="h-3.5 w-3.5" />}
+            {testing ? "Testing…" : "Test active model"}
+          </button>
+          {testRes && (
+            <span className={`flex items-center gap-1 text-[11px] ${testRes.ok ? "text-emerald-400" : "text-red-400"}`}>
+              {testRes.ok ? <CircleCheck className="h-3.5 w-3.5" /> : <CircleX className="h-3.5 w-3.5" />}
+              {testRes.detail.slice(0, 70)}
+            </span>
+          )}
         </div>
       )}
 

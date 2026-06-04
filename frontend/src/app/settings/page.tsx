@@ -114,7 +114,7 @@ type TabId = typeof TABS[number]["id"];
 
 // Map fields to tabs for dirty tracking
 const TAB_FIELDS: Record<TabId, (keyof FullConfig)[]> = {
-  llm: ["provider", "model", "api_key", "base_url", "num_ctx", "keep_alive"],
+  llm: [],
   engine: ["max_turns", "max_tokens", "max_cost", "execution_mode", "routing_enabled"],
   workspace: ["workspace_root", "tenant_isolation", "max_file_size_mb", "checkpoint_enabled"],
   sandbox: ["host_exec_enabled", "auto_approve", "sandbox_timeout", "max_output_chars"],
@@ -555,7 +555,6 @@ export default function SettingsPage() {
   const [savedCfg, setSavedCfg] = useState<FullConfig>(DEFAULTS);
   const [tab, setTab] = useState<TabId>("llm");
   const [navOpen, setNavOpen] = useState(false);
-  const [llmAdvancedOpen, setLlmAdvancedOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ service: string; ok: boolean; detail: string } | null>(null);
@@ -758,8 +757,11 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // The LLM (provider/model/api_key/base_url) is owned by saved connections —
+      // activating one writes llm_config. Stripping these from the settings save
+      // prevents stale cfg values here from clobbering the active connection.
       const payload: Record<string, unknown> = { ...cfg };
-      if (!payload.api_key) payload.api_key = undefined;
+      delete payload.provider; delete payload.model; delete payload.api_key; delete payload.base_url;
       const res = await fetch(`${BASE_URL}/settings`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
@@ -932,82 +934,6 @@ export default function SettingsPage() {
                   </div>
                   <ConnectionsManager />
                 </div>
-
-                <button
-                  onClick={() => setLlmAdvancedOpen(o => !o)}
-                  className="flex items-center gap-2 w-full pt-1 group"
-                >
-                  <div className="h-px bg-white/[0.06] flex-1" />
-                  <span className="flex items-center gap-1 text-[9px] font-semibold text-slate-600 group-hover:text-slate-400 uppercase tracking-wide transition-colors">
-                    <ChevronRight className={`h-3 w-3 transition-transform ${llmAdvancedOpen ? "rotate-90" : ""}`} />
-                    Active provider — advanced (Ollama context, test, echo/sampling)
-                  </span>
-                  <div className="h-px bg-white/[0.06] flex-1" />
-                </button>
-
-                {llmAdvancedOpen && (
-                <div className="space-y-4 animate-fade-in">
-                <Field label="Provider">
-                  <SelectInput value={cfg.provider} onChange={v => update("provider", v)} options={[
-                    { value: "echo", label: "None (echo mode)" },
-                    { value: "ollama", label: "Ollama (local)" },
-                    { value: "openai", label: "OpenAI" },
-                    { value: "anthropic", label: "Anthropic" },
-                    { value: "groq", label: "Groq" },
-                    { value: "cerebras", label: "Cerebras" },
-                    { value: "gemini", label: "Google Gemini" },
-                    { value: "openai_compatible", label: "OpenAI-compatible" },
-                    { value: "sampling", label: "MCP Sampling (client LLM)" },
-                  ]} />
-                </Field>
-                <Field label="Model" hint={{
-                  ollama: "e.g., qwen3.5:9b, mistral, llama3.1",
-                  openai: "e.g., gpt-4o, gpt-4o-mini",
-                  anthropic: "e.g., claude-sonnet-4-20250514, claude-haiku-4-5-20251001",
-                  groq: "e.g., llama-3.3-70b-versatile, llama-3.1-8b-instant",
-                  cerebras: "e.g., llama-3.3-70b, llama-3.1-8b",
-                  gemini: "e.g., gemini-2.0-flash, gemini-2.5-pro, gemini-2.5-flash",
-                  openai_compatible: "e.g., mistral-large-latest",
-                }[cfg.provider] || "Model name"}>
-                  <TextInput value={cfg.model} onChange={v => update("model", v)} placeholder={{
-                    ollama: "qwen3.5:9b", openai: "gpt-4o-mini", anthropic: "claude-sonnet-4-20250514",
-                    groq: "llama-3.3-70b-versatile", cerebras: "llama-3.3-70b", gemini: "gemini-2.0-flash",
-                    openai_compatible: "mistral-large-latest",
-                  }[cfg.provider] || "model-name"} />
-                </Field>
-                {cfg.provider !== "ollama" && cfg.provider !== "echo" && cfg.provider !== "sampling" && (
-                  <Field label="API Key" hint={cfg.api_key ? "" : (hasApiKey ? "API key saved on server (leave empty to keep current)" : "")}>
-                    <TextInput value={cfg.api_key} onChange={v => update("api_key", v)} type="password" placeholder={hasApiKey ? "••••••••  (saved — leave empty to keep)" : "sk-..."} />
-                  </Field>
-                )}
-                {cfg.provider === "openai_compatible" && (
-                  <Field label="Base URL" hint="The /v1/chat/completions endpoint base">
-                    <TextInput value={cfg.base_url} onChange={v => update("base_url", v)} placeholder="https://api.example.com/v1" />
-                  </Field>
-                )}
-                {cfg.provider === "ollama" && (
-                  <>
-                    <Field label="Base URL" hint="Ollama default: http://localhost:11434">
-                      <TextInput value={cfg.base_url} onChange={v => update("base_url", v)} placeholder="http://localhost:11434" />
-                    </Field>
-                    <Field label="Context Window (num_ctx)" hint="Tokens the model can process at once">
-                      <NumberInput value={cfg.num_ctx} onChange={v => update("num_ctx", v)} min={2048} max={131072} step={1024} />
-                    </Field>
-                    <Field label="Keep Alive" hint="How long Ollama keeps the model in memory">
-                      <TextInput value={cfg.keep_alive} onChange={v => update("keep_alive", v)} placeholder="30m" />
-                    </Field>
-                  </>
-                )}
-                {cfg.provider === "sampling" && (
-                  <div className="bg-blue-950/20 border border-blue-800/30 rounded-lg px-4 py-3 text-xs text-blue-300">
-                    Sampling mode uses the connected MCP client&apos;s LLM (e.g., VS Code Copilot, Claude Desktop). No API key or model needed.
-                  </div>
-                )}
-                {cfg.provider !== "echo" && cfg.provider !== "sampling" && (
-                  <TestBtn service="llm" testing={testing} result={testResult} onClick={() => testConnection("llm")} />
-                )}
-                </div>
-                )}
               </>
             )}
 
