@@ -2274,10 +2274,10 @@ FLEET_TOOL_SCHEMAS = [
      "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "status": {"type": "string", "enum": ["live", "paused"]}, "confirm": {"type": "boolean"}}, "required": ["deployment", "status"]}},
     {"name": "run_deployment", "description": "Trigger a one-off run of a deployment (owner test run — consumes tokens/cost). First confirm with the user via ask_user, then call with confirm=true. Without confirm=true it does nothing.",
      "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "inputs": {"type": "object"}, "confirm": {"type": "boolean"}}, "required": ["deployment"]}},
-    {"name": "rotate_deployment_token", "description": "Issue a new bearer token for a deployment and invalidate the old one — this BREAKS existing API clients. Get explicit user approval via ask_user first, then call with confirm=true.",
-     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "confirm": {"type": "boolean"}}, "required": ["deployment"]}},
-    {"name": "delete_deployment", "description": "Permanently delete a deployment and its run history + triggers. DESTRUCTIVE AND IRREVERSIBLE. You must get the user to confirm, then pass confirm_name set to the deployment's EXACT name. Any mismatch refuses the delete.",
-     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "confirm_name": {"type": "string", "description": "Must exactly equal the deployment's name to proceed"}}, "required": ["deployment"]}},
+    {"name": "rotate_deployment_token", "description": "Issue a new bearer token for a deployment and invalidate the old one — this BREAKS existing API clients. This tool prompts the user for confirmation in the UI itself and waits for their answer — do NOT call ask_user yourself first; just call this tool with the deployment, and it handles the human approval.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "confirm": {"type": "boolean", "description": "Fallback only for non-interactive contexts; ignored when the UI confirmation is available"}}, "required": ["deployment"]}},
+    {"name": "delete_deployment", "description": "Permanently delete a deployment and its run history + triggers. DESTRUCTIVE AND IRREVERSIBLE. This tool prompts the user in the UI to type the deployment's exact name to confirm, and waits — do NOT call ask_user yourself first; just call this tool with the deployment name and it handles the human gate.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "confirm_name": {"type": "string", "description": "Fallback only for non-interactive contexts; ignored when the UI confirmation is available"}}, "required": ["deployment"]}},
 ]
 FLEET_TOOL_NAMES = {t["name"] for t in FLEET_TOOL_SCHEMAS}
 
@@ -2303,8 +2303,17 @@ def _resolve_dep(ref: str):
     return None
 
 
-async def run_fleet_tool(name: str, args: dict) -> dict:
-    """Single dispatch for all fleet agent tools. Returns {success, output, ...}."""
+def _affirmative(s: str) -> bool:
+    return (s or "").strip().lower() in ("yes", "y", "oui", "ok", "okay", "go", "sure", "proceed", "confirm", "confirmed", "do it", "approve", "approved")
+
+
+async def run_fleet_tool(name: str, args: dict, ask_fn=None) -> dict:
+    """Single dispatch for all fleet agent tools. Returns {success, output, ...}.
+
+    `ask_fn` (when provided by an interactive chat) is the engine's real UI
+    elicitation: destructive ops call it to pause the task and require a genuine
+    human 'yes' in the UI — the agent cannot self-approve. When it's None
+    (API/scheduled context) destructive ops fall back to the confirm-arg gate."""
     args = args or {}
 
     if name == "list_deployments":
@@ -2372,7 +2381,11 @@ async def run_fleet_tool(name: str, args: dict) -> dict:
         dep = _resolve_dep(args.get("deployment", ""))
         if not dep:
             return {"success": False, "output": f"No deployment found matching '{args.get('deployment')}'."}
-        if not args.get("confirm"):
+        if ask_fn is not None:
+            reply = await ask_fn(f"⚠️ Rotate the bearer token for deployment '{dep.get('name')}'? This immediately invalidates the current token and BREAKS any client using it. Reply 'yes' to proceed.")
+            if not _affirmative(reply):
+                return {"success": False, "output": f"Token rotation cancelled — the user declined ({reply!r})."}
+        elif not args.get("confirm"):
             return {"success": False, "output": f"CONFIRMATION REQUIRED to rotate '{dep.get('name')}' token (this breaks existing clients). Get explicit user approval, then call with confirm=true."}
         new_token = "kmcp_" + _secrets.token_urlsafe(24)
         dep["token"] = new_token
@@ -2383,7 +2396,12 @@ async def run_fleet_tool(name: str, args: dict) -> dict:
         dep = _resolve_dep(args.get("deployment", ""))
         if not dep:
             return {"success": False, "output": f"No deployment found matching '{args.get('deployment')}'."}
-        if (args.get("confirm_name") or "").strip() != (dep.get("name") or "").strip():
+        if ask_fn is not None:
+            # Real UI gate: pause the task and require the human to type the exact name.
+            reply = await ask_fn(f"⚠️ PERMANENTLY delete deployment '{dep.get('name')}' and all its run history + triggers? This cannot be undone. To confirm, reply with its exact name: {dep.get('name')}")
+            if (reply or "").strip() != (dep.get("name") or "").strip():
+                return {"success": False, "output": f"Deletion cancelled — the confirmation did not match the deployment name ({reply!r})."}
+        elif (args.get("confirm_name") or "").strip() != (dep.get("name") or "").strip():
             return {"success": False, "output": f"DELETE REFUSED. To permanently delete this deployment, get the user's approval and pass confirm_name set to its EXACT name: '{dep.get('name')}'."}
         await delete_deployment(dep["id"])
         return {"success": True, "output": f"Permanently deleted deployment '{dep.get('name')}' and its history + triggers."}

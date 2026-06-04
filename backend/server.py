@@ -389,7 +389,12 @@ async def startup():
         # here because deployments are a demo concept, not part of the kernelmcp orchestrator.
         if tool_name in api_routes.FLEET_TOOL_NAMES:
             audit_collector.emit("orchestrator", "tool_dispatch", {"tool": tool_name, "namespace": namespace, "args": arguments or {}})
-            res = await api_routes.run_fleet_tool(tool_name, arguments or {})
+            # During an interactive chat the engine exposes _ask_user_fn (a real UI
+            # elicitation that pauses the task until the human answers). Pass it so
+            # destructive fleet ops gate on a genuine human approval, not the LLM's
+            # own confirm flag. None in non-interactive contexts (API/scheduled runs).
+            ask_fn = getattr(getattr(kernel, "_engine", None), "_ask_user_fn", None)
+            res = await api_routes.run_fleet_tool(tool_name, arguments or {}, ask_fn=ask_fn)
             audit_collector.emit("orchestrator", "tool_result", {"tool": tool_name, "success": res.get("success", True), "duration_ms": 0, "output": str(res.get("output", ""))[:150], "error": "" if res.get("success", True) else str(res.get("output", ""))[:150]})
             return res
         # Summarize args (avoid logging huge code blobs)
