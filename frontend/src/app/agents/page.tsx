@@ -663,6 +663,12 @@ function AgentsPageInner() {
           const taskId = launch.task_id;
           store.setTaskId(sessionId, taskId);
           store.saveToHistory(sessionId);
+          // Persist the task id on the run record right away so its executions row links
+          // to the full trace (View full trace) even if the run is interrupted before it
+          // finalizes — not only on completion.
+          if (currentWorkflowId && currentRunId) {
+            wfStore.updateRun(currentWorkflowId, currentRunId, { taskId }, th);
+          }
 
           const es = new EventSource(`${BASE_URL}/api/stream/${taskId}?tenant=${encodeURIComponent(tenant)}`);
           (es as any)._currentAgentIdx = 0; // Track active agent locally in closure
