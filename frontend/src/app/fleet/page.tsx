@@ -1,7 +1,7 @@
 "use client";
 import { getApiUrl } from "@/lib/api-url";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   Gauge, Rocket, RefreshCw, Plus, Loader2, Activity, DollarSign,
@@ -30,7 +30,8 @@ function Tile({ icon, label, value, pulse }: { icon: React.ReactNode; label: str
 export default function FleetPage() {
   const BASE = getApiUrl();
   const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
+  // Memoize so `load` keeps a stable identity (else the [load] effect re-fires every render).
+  const th = useMemo(() => tenantHeaders(tenant), [tenant]);
   const { isMobile } = useBreakpoint();
 
   const [deployments, setDeployments] = useState<CPDeployment[]>([]);

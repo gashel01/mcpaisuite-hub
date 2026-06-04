@@ -1,7 +1,7 @@
 "use client";
 import { getApiUrl } from "@/lib/api-url";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   Cpu, RefreshCw, Plus, Copy, CheckCheck, Trash, Loader2, Server, KeyRound,
@@ -31,7 +31,9 @@ function ago(ms?: number) {
 export default function ConnectedKernels() {
   const apiOrigin = BASE.replace(/\/$/, "");
   const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
+  // Memoize so the fetch callbacks (and their effects) don't get a new identity every
+  // render — otherwise the load/poll effects re-fire on each render (infinite loop).
+  const th = useMemo(() => tenantHeaders(tenant), [tenant]);
 
   const [instances, setInstances] = useState<Instance[]>([]);
   const [keys, setKeys] = useState<KeyRow[]>([]);
