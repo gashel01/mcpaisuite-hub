@@ -2258,6 +2258,139 @@ def deployments_summary() -> dict:
     return {"success": True, "output": text, "deployments": deps, "live_count": live, "total": len(deps)}
 
 
+# ── Fleet agent tools — monitor + control the deployment fleet from chat ─────────
+# Monitoring tools are free. Control tools require an explicit `confirm=true` and
+# destructive ones a type-to-confirm of the exact name — the action cannot fire
+# without it, so the agent must come back to the user first.
+FLEET_TOOL_SCHEMAS = [
+    LIST_DEPLOYMENTS_TOOL,
+    {"name": "fleet_status", "description": "Aggregate health of the whole fleet: how many deployments are live vs paused, how many runs are in-flight right now, runs today, and total cost today. Use for 'how's the fleet doing?' type questions.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "deployment_metrics", "description": "Performance metrics for ONE deployment from its run history: success rate, total/average tokens & cost, latency p50/p95, and recent failure counts. Identify the deployment by its name or id.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string", "description": "Deployment name or id"}}, "required": ["deployment"]}},
+    {"name": "list_executions", "description": "Recent executions (runs) across the fleet — newest first. Optionally filter by deployment name/id, by status (completed/failed/running), and limit the count. Use for 'show me recent runs', 'what failed lately?'.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "status": {"type": "string", "enum": ["completed", "failed", "running"]}, "limit": {"type": "integer"}}}},
+    {"name": "set_deployment_status", "description": "Take a deployment offline (status='paused') or back online (status='live'). STATEFUL ACTION ON PRODUCTION: first ask the user to confirm with ask_user, then call again with confirm=true. Without confirm=true this tool does nothing.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "status": {"type": "string", "enum": ["live", "paused"]}, "confirm": {"type": "boolean"}}, "required": ["deployment", "status"]}},
+    {"name": "run_deployment", "description": "Trigger a one-off run of a deployment (owner test run — consumes tokens/cost). First confirm with the user via ask_user, then call with confirm=true. Without confirm=true it does nothing.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "inputs": {"type": "object"}, "confirm": {"type": "boolean"}}, "required": ["deployment"]}},
+    {"name": "rotate_deployment_token", "description": "Issue a new bearer token for a deployment and invalidate the old one — this BREAKS existing API clients. Get explicit user approval via ask_user first, then call with confirm=true.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "confirm": {"type": "boolean"}}, "required": ["deployment"]}},
+    {"name": "delete_deployment", "description": "Permanently delete a deployment and its run history + triggers. DESTRUCTIVE AND IRREVERSIBLE. You must get the user to confirm, then pass confirm_name set to the deployment's EXACT name. Any mismatch refuses the delete.",
+     "inputSchema": {"type": "object", "properties": {"deployment": {"type": "string"}, "confirm_name": {"type": "string", "description": "Must exactly equal the deployment's name to proceed"}}, "required": ["deployment"]}},
+]
+FLEET_TOOL_NAMES = {t["name"] for t in FLEET_TOOL_SCHEMAS}
+
+
+def _resolve_dep(ref: str):
+    """Find a deployment by id or (case-insensitive) name."""
+    if not ref:
+        return None
+    direct = _load_deploy(ref)
+    if direct:
+        return direct
+    rl = ref.strip().lower()
+    if os.path.isdir(_DEPLOY_DIR):
+        for f in os.listdir(_DEPLOY_DIR):
+            if not f.endswith(".json"):
+                continue
+            try:
+                d = json.load(open(os.path.join(_DEPLOY_DIR, f), encoding="utf-8"))
+            except Exception:
+                continue
+            if (d.get("name") or "").strip().lower() == rl:
+                return d
+    return None
+
+
+async def run_fleet_tool(name: str, args: dict) -> dict:
+    """Single dispatch for all fleet agent tools. Returns {success, output, ...}."""
+    args = args or {}
+
+    if name == "list_deployments":
+        return deployments_summary()
+
+    if name == "fleet_status":
+        cp = await control_plane()
+        s = cp.get("stats", {})
+        text = (f"Fleet: {s.get('live', 0)} live, {s.get('paused', 0)} paused "
+                f"({s.get('deployments', 0)} total), {s.get('running', 0)} run(s) in-flight now, "
+                f"{s.get('triggers', 0)} trigger(s). Today: {s.get('runs_today', 0)} runs, "
+                f"${s.get('cost_today', 0):.4f} cost.")
+        return {"success": True, "output": text, "stats": s}
+
+    if name == "deployment_metrics":
+        dep = _resolve_dep(args.get("deployment", ""))
+        if not dep:
+            return {"success": False, "output": f"No deployment found matching '{args.get('deployment')}'."}
+        m = await deployment_metrics(dep["id"], dep.get("tenant", ""))
+        sr = m.get("successRate")
+        text = (f"Metrics for '{dep.get('name')}': {m['totalCalls']} calls, "
+                f"success rate {round(sr * 100) if sr is not None else 'n/a'}% "
+                f"({m['byStatus']['completed']} ok / {m['byStatus']['failed']} failed). "
+                f"Tokens {m['totals']['tokens']} (avg {m['avg']['tokens']}), cost ${m['totals']['cost']:.4f}. "
+                f"Latency p50 {m['latency']['p50']}ms / p95 {m['latency']['p95']}ms.")
+        return {"success": True, "output": text, "metrics": m}
+
+    if name == "list_executions":
+        res = await list_runs(status=args.get("status", "") or "", limit=int(args.get("limit", 10) or 10))
+        runs = res.get("runs", [])
+        ref = (args.get("deployment") or "").strip().lower()
+        if ref:
+            runs = [r for r in runs if ref in (str(r.get("label") or "").lower())]
+        if not runs:
+            return {"success": True, "output": "No matching executions found.", "runs": []}
+        lines = "\n".join(f"- {r.get('label')} — {r.get('status')} ({(r.get('metrics') or {}).get('tokens', 0)} tok)"
+                          f"{' · ' + (r.get('answerPreview') or '')[:60] if r.get('answerPreview') else ''}" for r in runs[:10])
+        return {"success": True, "output": f"{len(runs)} recent execution(s):\n{lines}", "runs": runs[:10]}
+
+    if name == "set_deployment_status":
+        dep = _resolve_dep(args.get("deployment", ""))
+        if not dep:
+            return {"success": False, "output": f"No deployment found matching '{args.get('deployment')}'."}
+        new_status = args.get("status")
+        if new_status not in ("live", "paused"):
+            return {"success": False, "output": "status must be 'live' or 'paused'."}
+        if not args.get("confirm"):
+            return {"success": False, "output": f"CONFIRMATION REQUIRED to set '{dep.get('name')}' to {new_status}. Ask the user to confirm, then call again with confirm=true."}
+        dep["status"] = new_status
+        _save_deploy(dep)
+        return {"success": True, "output": f"'{dep.get('name')}' is now {new_status}."}
+
+    if name == "run_deployment":
+        dep = _resolve_dep(args.get("deployment", ""))
+        if not dep:
+            return {"success": False, "output": f"No deployment found matching '{args.get('deployment')}'."}
+        if not args.get("confirm"):
+            return {"success": False, "output": f"CONFIRMATION REQUIRED to run '{dep.get('name')}' (consumes tokens/cost). Ask the user to confirm, then call again with confirm=true."}
+        result = await _execute_deployment(dep, args.get("inputs") or {}, True, 280, "test")
+        ok = result.get("success") is not False
+        out = (result.get("final_output") or result.get("error") or "")[:300]
+        return {"success": ok, "output": f"Ran '{dep.get('name')}' — {'ok' if ok else 'failed'}: {out}"}
+
+    if name == "rotate_deployment_token":
+        dep = _resolve_dep(args.get("deployment", ""))
+        if not dep:
+            return {"success": False, "output": f"No deployment found matching '{args.get('deployment')}'."}
+        if not args.get("confirm"):
+            return {"success": False, "output": f"CONFIRMATION REQUIRED to rotate '{dep.get('name')}' token (this breaks existing clients). Get explicit user approval, then call with confirm=true."}
+        new_token = "kmcp_" + _secrets.token_urlsafe(24)
+        dep["token"] = new_token
+        _save_deploy(dep)
+        return {"success": True, "output": f"Rotated token for '{dep.get('name')}'. New token: {new_token} (the old one is now invalid)."}
+
+    if name == "delete_deployment":
+        dep = _resolve_dep(args.get("deployment", ""))
+        if not dep:
+            return {"success": False, "output": f"No deployment found matching '{args.get('deployment')}'."}
+        if (args.get("confirm_name") or "").strip() != (dep.get("name") or "").strip():
+            return {"success": False, "output": f"DELETE REFUSED. To permanently delete this deployment, get the user's approval and pass confirm_name set to its EXACT name: '{dep.get('name')}'."}
+        await delete_deployment(dep["id"])
+        return {"success": True, "output": f"Permanently deleted deployment '{dep.get('name')}' and its history + triggers."}
+
+    return {"success": False, "output": f"Unknown fleet tool: {name}"}
+
+
 @router.delete("/deployments/{did}")
 async def delete_deployment(did: str):
     p = _deploy_path(did)

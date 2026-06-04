@@ -383,13 +383,14 @@ async def startup():
     # Audit wrappers
     _orig_exec = kernel.orchestrator.execute_tool
     async def _audited_exec(tool_name, arguments, namespace="default"):
-        # Demo-layer tool: let the chat/agents read the real deployment registry (the
-        # "fleet") instead of guessing from workspace/memory. Handled here because
-        # deployments are a demo concept, not part of the kernelmcp orchestrator.
-        if tool_name == "list_deployments":
-            audit_collector.emit("orchestrator", "tool_dispatch", {"tool": tool_name, "namespace": namespace, "args": {}})
-            res = api_routes.deployments_summary()
-            audit_collector.emit("orchestrator", "tool_result", {"tool": tool_name, "success": True, "duration_ms": 0, "output": str(res.get("output", ""))[:150], "error": ""})
+        # Demo-layer fleet tools: let the chat/agents monitor and control the deployment
+        # fleet (read registry, metrics, executions; pause/resume/run/rotate/delete with
+        # built-in confirmation gates) instead of guessing from workspace/memory. Handled
+        # here because deployments are a demo concept, not part of the kernelmcp orchestrator.
+        if tool_name in api_routes.FLEET_TOOL_NAMES:
+            audit_collector.emit("orchestrator", "tool_dispatch", {"tool": tool_name, "namespace": namespace, "args": arguments or {}})
+            res = await api_routes.run_fleet_tool(tool_name, arguments or {})
+            audit_collector.emit("orchestrator", "tool_result", {"tool": tool_name, "success": res.get("success", True), "duration_ms": 0, "output": str(res.get("output", ""))[:150], "error": "" if res.get("success", True) else str(res.get("output", ""))[:150]})
             return res
         # Summarize args (avoid logging huge code blobs)
         args_summary = {}
@@ -417,23 +418,28 @@ async def startup():
         return result
     kernel.orchestrator.execute_tool = _audited_exec
 
-    # Surface the demo's `list_deployments` tool to the agent: (1) add it to the tool
-    # registry so it's discoverable, (2) route deployment-related questions to it so the
-    # agent picks it up instead of hallucinating from workspace/memory. Both are runtime
+    # Surface the demo's fleet tools to the agent: (1) add them to the tool registry so
+    # they're discoverable, (2) route fleet questions/commands to them so the agent picks
+    # them up instead of hallucinating from workspace/memory. Both are runtime
     # wraps/mutations — the kernelmcp lib source is untouched.
     _orig_registry = kernel.orchestrator.get_tool_registry
     def _registry_with_deployments():
         tools = _orig_registry()
-        if not any(t.get("name") == "list_deployments" for t in tools):
-            tools.append(api_routes.LIST_DEPLOYMENTS_TOOL)
+        have = {t.get("name") for t in tools}
+        for sch in api_routes.FLEET_TOOL_SCHEMAS:
+            if sch["name"] not in have:
+                tools.append(sch)
         return tools
     kernel.orchestrator.get_tool_registry = _registry_with_deployments
     try:
         from kernelmcp.core import tool_selection as _tsel
-        _tsel.INTENT_TOOLS["deployments"] = {"list_deployments"}
+        _tsel.INTENT_TOOLS["deployments"] = set(api_routes.FLEET_TOOL_NAMES)
         _tsel.INTENT_KEYWORDS.insert(0, ("deployments", [
             "deployed", "deployment", "fleet", "in production",
             "what's deployed", "whats deployed", "anything deployed", "agents deployed",
+            "take offline", "bring online", "rotate token", "delete deployment",
+            "trigger a run", "run the deployment", "deployment metrics",
+            "success rate", "executions", "recent runs",
         ]))
     except Exception as exc:
         print(f"[STARTUP] deployment tool routing not wired: {exc}", flush=True)
