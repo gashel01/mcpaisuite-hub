@@ -21,10 +21,13 @@ kernel = None  # set by server.py
 _DATA = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _KEYS_PATH = os.path.join(_DATA, "hub_keys.json")
 _INSTANCES_PATH = os.path.join(_DATA, "hub_instances.json")
+_COMMANDS_PATH = os.path.join(_DATA, "hub_commands.json")
 
 # Connected instances live in memory (refreshed by heartbeats) and are mirrored to
 # disk so the list survives a restart.
 _instances: dict = {}
+# Pending/finished commands queued for connected kernels (control plane).
+_commands: list = []
 
 
 def _load(path: str, default):
@@ -43,8 +46,9 @@ def _save(path: str, data) -> None:
         pass
 
 
-# Restore instances on import (so a restart keeps the list)
+# Restore instances + commands on import (so a restart keeps the list)
 _instances = _load(_INSTANCES_PATH, {})
+_commands = _load(_COMMANDS_PATH, [])
 
 
 def _keys() -> list:
@@ -106,6 +110,7 @@ async def hub_register(body: dict, x_hub_key: str = Header(default="")):
         "instance_id": iid, "name": body.get("name") or iid[:8],
         "project": body.get("project") or "default",
         "host": body.get("host"), "pid": body.get("pid"),
+        "allow_control": bool(body.get("allow_control")),
         "last_seen": now,
     })
     _instances[iid] = inst
@@ -165,10 +170,73 @@ def _is_live(inst: dict) -> bool:
 async def hub_instances():
     out = []
     for inst in _instances.values():
-        out.append({**{k: inst.get(k) for k in ("instance_id", "name", "project", "host", "pid", "registered_at", "last_seen", "tasks_ingested")},
+        out.append({**{k: inst.get(k) for k in ("instance_id", "name", "project", "host", "pid", "registered_at", "last_seen", "tasks_ingested", "allow_control")},
                     "live": _is_live(inst)})
     out.sort(key=lambda x: (not x["live"], -(x.get("last_seen") or 0)))
     return {"instances": out, "live": sum(1 for i in out if i["live"]), "total": len(out)}
+
+
+# ── Control plane: queue commands for a connected kernel (opt-in on its side) ──
+
+_ALLOWED_COMMANDS = {"ping", "stats", "set_config", "run", "cancel"}
+
+
+@router.post("/hub/instances/{instance_id}/commands")
+async def hub_enqueue_command(instance_id: str, body: dict):
+    """Dashboard → queue a command for a connected kernel. The kernel polls and runs
+    it (only if it opted into control via connect_hub(allow_control=True))."""
+    inst = _instances.get(instance_id)
+    if not inst:
+        raise HTTPException(404, "instance not found")
+    if not inst.get("allow_control"):
+        raise HTTPException(403, "this kernel did not enable control (connect_hub allow_control=True)")
+    ctype = body.get("type")
+    if ctype not in _ALLOWED_COMMANDS:
+        raise HTTPException(400, f"unknown command type (allowed: {sorted(_ALLOWED_COMMANDS)})")
+    cmd = {"id": "cmd_" + secrets.token_hex(6), "instance_id": instance_id, "type": ctype,
+           "args": body.get("args") or {}, "status": "pending", "created_at": int(time.time() * 1000),
+           "result": None, "error": None}
+    _commands.append(cmd)
+    _save(_COMMANDS_PATH, _commands[-500:])
+    return {"id": cmd["id"], "status": "pending"}
+
+
+@router.get("/hub/commands")
+async def hub_poll_commands(instance_id: str, x_hub_key: str = Header(default="")):
+    """Kernel → poll for its pending commands (marks them dispatched)."""
+    if not _valid_key(x_hub_key):
+        raise HTTPException(401, "invalid hub key")
+    pending = [c for c in _commands if c["instance_id"] == instance_id and c["status"] == "pending"]
+    for c in pending:
+        c["status"] = "dispatched"
+        c["dispatched_at"] = int(time.time() * 1000)
+    if pending:
+        _save(_COMMANDS_PATH, _commands[-500:])
+    return {"commands": [{"id": c["id"], "type": c["type"], "args": c["args"]} for c in pending]}
+
+
+@router.post("/hub/commands/{cmd_id}/result")
+async def hub_command_result(cmd_id: str, body: dict, x_hub_key: str = Header(default="")):
+    """Kernel → report a command's result."""
+    if not _valid_key(x_hub_key):
+        raise HTTPException(401, "invalid hub key")
+    for c in _commands:
+        if c["id"] == cmd_id:
+            c["status"] = body.get("status", "done")
+            c["result"] = body.get("result")
+            c["error"] = body.get("error")
+            c["done_at"] = int(time.time() * 1000)
+            _save(_COMMANDS_PATH, _commands[-500:])
+            return {"ok": True}
+    raise HTTPException(404, "command not found")
+
+
+@router.get("/hub/instances/{instance_id}/commands")
+async def hub_list_commands(instance_id: str, limit: int = 20):
+    """Dashboard → recent commands for an instance + their status/result."""
+    cmds = [c for c in _commands if c["instance_id"] == instance_id]
+    cmds = sorted(cmds, key=lambda c: c.get("created_at", 0), reverse=True)[:max(1, limit)]
+    return {"commands": cmds}
 
 
 @router.get("/hub/instances/{instance_id}/runs")
