@@ -30,6 +30,11 @@ function normalizeType(raw: string, message?: string): string {
     "taskforce.started": "task_started",
     "taskforce.completed": "task_complete",
     "taskforce.failed": "error",
+    // The KernelEventType enum VALUES for taskforce terminal events are "crew.*"
+    // (legacy naming) — the backend SSE sends these literally, so map them too.
+    "crew.started": "task_started",
+    "crew.completed": "task_complete",
+    "crew.failed": "error",
     // Already underscore format (from older backends)
     "task_started": "task_started",
     "task_completed": "task_complete",
@@ -72,7 +77,8 @@ function isTerminalEvent(rawType: string): boolean {
     "task_completed", "task_complete", "task_failed",
     "taskforce.completed", "taskforce.failed",
     "taskforce_completed", "taskforce_failed",
-    "task_failed",
+    // Actual enum values emitted by the backend SSE for taskforce runs
+    "crew.completed", "crew.failed",
   ];
   return terminals.includes(rawType);
 }
