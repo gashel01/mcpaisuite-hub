@@ -3127,9 +3127,21 @@ async def update_workflow(wf_id: str, body: dict):
 @router.delete("/workflows/{wf_id}")
 async def delete_workflow(wf_id: str):
     wf_dir = _wf_path(wf_id)
-    if os.path.isdir(wf_dir):
+    if not os.path.isdir(wf_dir):
+        return {"deleted": True, "id": wf_id}
+    rdir = os.path.join(wf_dir, "runs")
+    has_runs = os.path.isdir(rdir) and any(f.endswith(".json") for f in os.listdir(rdir))
+    if has_runs:
+        # Keep the run history — each run carries a self-contained graph snapshot, so its
+        # executions stay viewable/openable. Drop meta + versions so the workflow no longer
+        # appears as an editable workflow (it vanishes from /workflows; runs persist).
+        meta = os.path.join(wf_dir, "meta.json")
+        if os.path.isfile(meta):
+            os.remove(meta)
+        shutil.rmtree(os.path.join(wf_dir, "versions"), ignore_errors=True)
+    else:
         shutil.rmtree(wf_dir)
-    return {"deleted": True, "id": wf_id}
+    return {"deleted": True, "id": wf_id, "runs_kept": has_runs}
 
 
 @router.post("/workflows/{wf_id}/versions")
@@ -3193,6 +3205,9 @@ async def create_run(wf_id: str, v_id: str, body: dict):
            "status": body.get("status", "running"), "answer": body.get("answer"),
            "metrics": body.get("metrics"), "feedback": body.get("feedback"),
            "liveEvents": body.get("liveEvents", [])[:30],
+           # Self-contained snapshot: keep the graph + name at run time so the run stays
+           # openable in the builder even if the workflow is later deleted or unsaved.
+           "graph": body.get("graph"), "workflowName": body.get("workflowName"),
            "createdAt": now}
     with open(os.path.join(rdir, f"{run_id}.json"), "w") as f:
         _json.dump(run, f)
@@ -3325,7 +3340,9 @@ async def list_runs(status: str = "", source: str = "", since: int = 0, q: str =
             continue
         if since and (r.get("createdAt", 0) < since):
             continue
-        label = r.get("deploymentName") if is_deploy else names.get(r.get("workflowId"), r.get("workflowId"))
+        # For orphaned (deleted-workflow) runs the name map has no entry — fall back to the
+        # name snapshotted in the run record so the feed still reads nicely.
+        label = r.get("deploymentName") if is_deploy else (names.get(r.get("workflowId")) or r.get("workflowName") or r.get("workflowId"))
         ans = r.get("answer") or ""
         if q and q.lower() not in (str(label or "") + " " + str(ans)).lower():
             continue
@@ -3350,6 +3367,10 @@ async def get_run(run_id: str):
             try:
                 r = _json.load(open(path))
                 r["source"] = src
+                # Does the live, editable workflow version still exist? If not, the builder
+                # opens the run's own graph snapshot read-only instead.
+                if src == "builder" and r.get("workflowId") and r.get("versionId"):
+                    r["workflowExists"] = os.path.isfile(os.path.join(_wf_path(r["workflowId"]), "versions", f"{r['versionId']}.json"))
                 return r
             except Exception:
                 break

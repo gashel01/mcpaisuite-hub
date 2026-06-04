@@ -162,6 +162,8 @@ function AgentsPageInner() {
   const [saveNotes, setSaveNotes] = useState("");
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [schedules, setSchedules] = useState<{id: string; schedule: any; config: any; createdAt: number; active: boolean}[]>([]);
+  // Deep-link to a run whose workflow no longer exists and has no snapshot to rebuild from
+  const [deepLinkError, setDeepLinkError] = useState<string | boolean>(false);
 
   // Load data on mount
   useEffect(() => {
@@ -188,35 +190,59 @@ function AgentsPageInner() {
     urlRestored.current = true;
 
     const wf = wfStore.getWorkflow(wfId);
-    if (!wf) return;
-    const ver = verId ? wf.versions.find(v => v.id === verId) : wf.versions[wf.versions.length - 1];
-    if (!ver) return;
+    const ver = wf ? (verId ? wf.versions.find(v => v.id === verId) : wf.versions[wf.versions.length - 1]) : null;
 
-    // Check if a session for this already exists
-    const existing = sessions.find(s => runId ? s.runId === runId : (s.workflowId === wfId && s.versionId === ver.id && !s.runId));
-    if (existing) { store.setActive(existing.id); return; }
-
-    // Create session from URL params
-    const newSess = store.createSession();
-    store.updateConfig(newSess, ver.config);
-
-    if (runId) {
-      const run = wf.runs.find(r => r.id === runId);
-      useAgentSessionStore.setState(s => ({
-        sessions: s.sessions.map(sess => sess.id === newSess ? {
-          ...sess, graph: ver.graph, readOnly: true, status: (run?.status as any) || "completed",
-          answer: run?.answer || null, metrics: run?.metrics || null, liveEvents: run?.liveEvents || [],
-          feedback: run?.feedback || null, workflowId: wfId, versionId: ver.id, runId, workflowName: wf.name,
-          completedAgents: ver.config.agents.map((_: any, i: number) => i),
-        } : sess),
-      }));
-    } else {
-      useAgentSessionStore.setState(s => ({
-        sessions: s.sessions.map(sess => sess.id === newSess ? {
-          ...sess, graph: ver.graph, readOnly: false, workflowId: wfId, versionId: ver.id, workflowName: wf.name,
-        } : sess),
-      }));
+    // ── Live path: the workflow + version still exist (editable) ──
+    if (wf && ver) {
+      const existing = sessions.find(s => runId ? s.runId === runId : (s.workflowId === wfId && s.versionId === ver.id && !s.runId));
+      if (existing) { store.setActive(existing.id); return; }
+      const newSess = store.createSession();
+      store.updateConfig(newSess, ver.config);
+      if (runId) {
+        const run = wf.runs.find(r => r.id === runId);
+        useAgentSessionStore.setState(s => ({
+          sessions: s.sessions.map(sess => sess.id === newSess ? {
+            ...sess, graph: ver.graph, readOnly: true, status: (run?.status as any) || "completed",
+            answer: run?.answer || null, metrics: run?.metrics || null, liveEvents: run?.liveEvents || [],
+            feedback: run?.feedback || null, workflowId: wfId, versionId: ver.id, runId, workflowName: wf.name,
+            completedAgents: ver.config.agents.map((_: any, i: number) => i),
+          } : sess),
+        }));
+      } else {
+        useAgentSessionStore.setState(s => ({
+          sessions: s.sessions.map(sess => sess.id === newSess ? {
+            ...sess, graph: ver.graph, readOnly: false, workflowId: wfId, versionId: ver.id, workflowName: wf.name,
+          } : sess),
+        }));
+      }
+      return;
     }
+
+    // ── Workflow/version gone → reconstruct READ-ONLY from the run's own graph snapshot ──
+    if (!runId) { setDeepLinkError(true); return; }
+    const existing = sessions.find(s => s.runId === runId);
+    if (existing) { store.setActive(existing.id); return; }
+    (async () => {
+      try {
+        const r = await fetch(`${BASE_URL}/runs/${runId}`, { headers: th });
+        const run = await r.json();
+        if (run && run.graph) {
+          const newSess = store.createSession();
+          useAgentSessionStore.setState(s => ({
+            sessions: s.sessions.map(sess => sess.id === newSess ? {
+              ...sess, graph: run.graph, readOnly: true, fromSnapshot: true,
+              status: (run.status as any) || "completed",
+              answer: run.answer || null, metrics: run.metrics || null, liveEvents: run.liveEvents || [],
+              feedback: run.feedback || null, workflowId: wfId, versionId: run.versionId, runId,
+              workflowName: run.workflowName || "Deleted workflow",
+            } : sess),
+          }));
+        } else {
+          // Legacy run with no snapshot — nothing to reconstruct.
+          setDeepLinkError(run?.workflowName || true);
+        }
+      } catch { setDeepLinkError(true); }
+    })();
   }, [searchParams, wfStore.loaded]); // eslint-disable-line
 
   // ── URL sync: update URL when active session changes ──
@@ -531,6 +557,8 @@ function AgentsPageInner() {
     if (currentWorkflowId && currentVersionId) {
       const run = await wfStore.addRun(currentWorkflowId, currentVersionId, {
         status: "running",
+        graph: graphSnapshot || undefined,
+        workflowName: currentWorkflowName || undefined,
       }, th);
       if (run) currentRunId = run.id;
     }
@@ -1118,6 +1146,8 @@ function AgentsPageInner() {
             answer: session.answer,
             metrics: session.metrics,
             liveEvents: session.liveEvents,
+            graph: session.graph || undefined,
+            workflowName: wf.name,
           }, th);
           if (run) runId = run.id;
         }
@@ -1320,6 +1350,23 @@ function AgentsPageInner() {
 
   return (
     <div className="obs-page flex flex-col -mx-4 -mb-4 -mt-16 md:-m-5 h-[calc(100%+5rem)] md:h-[calc(100%+2.5rem)] overflow-hidden">
+
+      {/* Reconstructed from a run snapshot (original workflow deleted/unsaved) */}
+      {session?.fromSnapshot && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/[0.08] border-b border-amber-500/20 text-[11px] text-amber-200 shrink-0">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span>Reconstructed from this run's snapshot — the original workflow {session.workflowName && session.workflowName !== "Deleted workflow" ? <>(<span className="font-medium">{session.workflowName}</span>)</> : ""} no longer exists. Read-only; <button onClick={() => activeId && store.duplicateSession(activeId)} className="underline hover:text-amber-100">fork it</button> to edit.</span>
+        </div>
+      )}
+
+      {/* Deep-link to a run whose workflow is gone and has no snapshot to rebuild from */}
+      {deepLinkError && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-red-500/[0.07] border-b border-red-500/20 text-[11px] text-red-200 shrink-0">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span>That workflow is no longer available{typeof deepLinkError === "string" ? <> (<span className="font-medium">{deepLinkError}</span>)</> : ""} — it was deleted and this run predates graph snapshots, so it can't be reopened.</span>
+          <button onClick={() => setDeepLinkError(false)} className="ml-auto text-red-300 hover:text-red-100"><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
 
       {/* Run parameters (modal) — fill {placeholders} + preview before running */}
       {runParamsOpen && (

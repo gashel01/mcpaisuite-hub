@@ -66,6 +66,7 @@ export interface AgentSession {
   versionId?: string;
   runId?: string;
   workflowName?: string;
+  fromSnapshot?: boolean; // reconstructed from a run's graph snapshot (workflow was deleted)
   createdAt: number;
 }
 

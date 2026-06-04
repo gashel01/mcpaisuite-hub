@@ -30,6 +30,10 @@ export interface WorkflowRun {
   taskId?: string;
   createdAt: number;
   completedAt?: number;
+  // Self-contained snapshot — lets a run reopen in the builder even if its workflow is gone
+  graph?: { nodes: any[]; edges: any[] } | null;
+  workflowName?: string;
+  workflowExists?: boolean; // set by GET /runs/{id}: is the live editable version still there?
 }
 
 export interface Workflow {

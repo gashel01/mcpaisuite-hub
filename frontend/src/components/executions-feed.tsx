@@ -214,7 +214,11 @@ export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: s
                   <div className="flex flex-wrap gap-2 text-[10px]">
                     <span className="text-slate-500">Started <span className="text-slate-300">{fmtDate(detail.createdAt)}</span></span>
                     {detail.source === "builder" && detail.workflowId && (
-                      <Link href={`/agents?wf=${detail.workflowId}${detail.versionId ? `&v=${detail.versionId}` : ""}&r=${detail.id}`} className="inline-flex items-center gap-1 text-violet-400 hover:text-violet-300">Open in builder <ArrowUpRight className="h-2.5 w-2.5" /></Link>
+                      <Link href={`/agents?wf=${detail.workflowId}${detail.versionId ? `&v=${detail.versionId}` : ""}&r=${detail.id}`} className="inline-flex items-center gap-1 text-violet-400 hover:text-violet-300">
+                        Open in builder
+                        {detail.workflowExists === false && <span className="text-amber-400/80" data-tooltip="Original workflow deleted — opens a read-only snapshot">(snapshot)</span>}
+                        <ArrowUpRight className="h-2.5 w-2.5" />
+                      </Link>
                     )}
                     {detail.taskId && (
                       <Link href={`/observability?task=${detail.taskId}`} className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300">View full trace <ArrowUpRight className="h-2.5 w-2.5" /></Link>
