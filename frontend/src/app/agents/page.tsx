@@ -633,17 +633,6 @@ function AgentsPageInner() {
           };
         }
 
-        const convId = `agents-${Date.now().toString(36)}`;
-        store.setConvId(sessionId, convId);
-
-        // Fire /chat in background for conversation history
-        const chatMsg = `[TaskForce] Goal: ${effectiveGoal}\nPattern: ${currentPattern}\nAgents: ${currentAgents.map(a => `${a.type}(${a.role})`).join(", ")}`;
-        fetch(`${BASE_URL}/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...th },
-          body: JSON.stringify({ message: chatMsg, conversation_id: convId, execution_mode: "react" }),
-        }).catch(() => {});
-
         // Launch taskforce (async — returns task_id immediately)
         const res = await fetch(`${BASE_URL}/agents/taskforce`, {
           method: "POST",
@@ -1002,16 +991,6 @@ function AgentsPageInner() {
       } else {
         // ── Single agent: use /agents/spawn (direct execution) ──
         const agent = currentAgents[0];
-        const convId = `agents-${Date.now().toString(36)}`;
-        store.setConvId(sessionId, convId);
-
-        // Also send via /chat for conversation record
-        const chatMsg = `[Agent: ${agent.type}] ${effectiveGoal}`;
-        fetch(`${BASE_URL}/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...th },
-          body: JSON.stringify({ message: chatMsg, conversation_id: convId, execution_mode: "react" }),
-        }).catch(() => {});
 
         // Execute agent directly
         const res = await fetch(`${BASE_URL}/agents/spawn`, {
