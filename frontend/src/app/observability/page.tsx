@@ -179,38 +179,7 @@ function ObservabilityInner() {
     if (mode === "dashboard") loadAnalytics();
   }, [mode]); // eslint-disable-line
 
-  // Reactive task list refresh
-  useEffect(() => {
-    if (taskChangeCounter === 0) return;
-    fetch(`${BASE}/api/tool`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...th },
-      body: JSON.stringify({ tool: "list_tasks", args: {} }),
-    })
-      .then(r => r.json())
-      .then(res => {
-        if (res?.result?.tasks) {
-          const mapped = res.result.tasks.map((t: any) => {
-            let status = t.status || "completed";
-            if (status === "running" && t.created_at && (Date.now() / 1000 - t.created_at) > 300) status = "failed";
-            return { id: t.task_id, goal: t.query || t.task_id.slice(0, 12), status, startedAt: new Date(t.created_at * 1000).toISOString(), durationMs: t.duration_ms };
-          });
-          setTasks(mapped);
-
-          const currentStatus = useExecutionStore.getState().status;
-          if (currentStatus !== "streaming") {
-            const running = mapped.find((t: any) => t.status === "running");
-            if (running && running.id !== taskId) {
-              setTaskId(running.id);
-              setGoal(running.goal);
-              setMode("trace");
-              startPolling(running.id);
-            }
-          }
-        }
-      })
-      .catch(() => {});
-  }, [taskChangeCounter]); // eslint-disable-line
+  // Task-list refresh + auto-switch-to-running is defined after startPolling (below).
 
   // ── Auto-switch to trace mode on task start ────────────────────────────
   useEffect(() => {
@@ -279,6 +248,48 @@ function ObservabilityInner() {
       } catch {}
     }, 1500);
   }, [th]);
+
+  // Refresh the task list and, if a NEW run is in flight, switch to it live.
+  // Reads current taskId/status from the store so it runs on a stable interval
+  // without stale closures.
+  const refreshTasks = useCallback(async () => {
+    try {
+      const r = await fetch(`${BASE}/api/tool`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...th },
+        body: JSON.stringify({ tool: "list_tasks", args: {} }),
+      });
+      const res = await r.json();
+      if (!res?.result?.tasks) return;
+      const mapped = res.result.tasks.map((t: any) => {
+        let status = t.status || "completed";
+        if (status === "running" && t.created_at && (Date.now() / 1000 - t.created_at) > 300) status = "failed";
+        return { id: t.task_id, goal: t.query || t.task_id.slice(0, 12), status, startedAt: new Date(t.created_at * 1000).toISOString(), durationMs: t.duration_ms };
+      });
+      setTasks(mapped);
+
+      // Auto-switch to a running task as soon as it appears — unless we're already
+      // streaming one, or the user is deliberately reviewing a picked history task.
+      // Just set the taskId: useTaskStream(taskId) opens the live SSE (which resets the
+      // graph via startStream and streams progress + completion). We deliberately do NOT
+      // also startPolling here — that would double-stream the same task.
+      const st = useExecutionStore.getState();
+      if (st.status === "streaming" || st.viewState === "reviewing") return;
+      const running = mapped.find((t: any) => t.status === "running");
+      if (running && running.id !== st.taskId) {
+        setTaskId(running.id);
+        setGoal(running.goal);
+        setMode("trace");
+      }
+    } catch { /* ignore */ }
+  }, [th]);
+
+  // Audit-driven refresh (fast path) + periodic poll (robust: runs appear/update
+  // live even when launched from another page and no audit event fired).
+  useEffect(() => { if (taskChangeCounter > 0) refreshTasks(); }, [taskChangeCounter]); // eslint-disable-line
+  useEffect(() => {
+    const id = setInterval(refreshTasks, 2500);
+    return () => clearInterval(id);
+  }, [refreshTasks]);
 
   const launchTask = useCallback(async () => {
     if (!goal.trim()) return;
