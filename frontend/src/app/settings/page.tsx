@@ -1669,6 +1669,16 @@ function EnvPanel() {
     <>
       <SectionHeader icon={KeyRound} color="text-lime-400" title="Environment Variables" desc="Secrets & config available to agents, tools and MCP servers as process env vars" />
 
+      {/* Clarity note: how this differs from the Security Vault */}
+      <div className="rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2.5 mb-3 flex items-start gap-2">
+        <AlertTriangle className="h-3.5 w-3.5 text-lime-400/80 shrink-0 mt-0.5" />
+        <p className="text-[10px] text-slate-500 leading-relaxed">
+          These are injected into the process environment (<code className="text-slate-400">os.environ</code>) and are readable by <span className="text-slate-300">everything</span> — tools, MCP servers, litellm. Use them for general config (API base URLs, feature flags) and integration tokens that tools expect as env vars.
+          <br />
+          For credentials that should stay <span className="text-slate-300">isolated to sandboxed code, scoped per tenant, and audited</span>, use the <span className="text-amber-300">Security → Secret Detection → Vault</span> instead — those are never put on <code className="text-slate-400">os.environ</code>.
+        </p>
+      </div>
+
       {/* Add / edit form */}
       <div className="rounded-xl border border-lime-500/15 bg-lime-500/[0.03] p-3 mb-4 space-y-2.5">
         <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{editing ? `Edit ${editing}` : "New variable"}</div>

@@ -933,6 +933,15 @@ function DLPPanel({ posture, events, onTogglePattern, vaultKeys, onAddSecret, on
           </div>
         </div>
         <div className="px-4 pb-3 space-y-2">
+          {/* Clarity note: how the Vault differs from Settings → Environment Variables */}
+          <div className="rounded-lg border border-amber-500/15 bg-amber-500/[0.04] px-3 py-2 flex items-start gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-400/80 shrink-0 mt-0.5" />
+            <p className="text-[10px] text-slate-400 leading-relaxed">
+              Vault secrets are <span className="text-slate-200">isolated to sandboxed code</span>, scoped per tenant, and audited — they are <span className="text-slate-200">never</span> exposed on <code className="text-slate-300">os.environ</code>. Use this for credentials the agents&apos; code should hold securely.
+              <br />
+              For general config or tokens that tools / MCP servers read as plain environment variables, use <span className="text-lime-300">Settings → Environment</span> instead.
+            </p>
+          </div>
           {/* Add secret */}
           <div className="flex gap-2">
             <input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="Key (e.g. OPENAI_API_KEY)"
