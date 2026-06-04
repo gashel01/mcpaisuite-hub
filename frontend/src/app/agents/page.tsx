@@ -911,8 +911,11 @@ function AgentsPageInner() {
                 });
               }
 
-              // Terminal events
-              if (event.type === "task_complete" || event.type === "task.completed" || event.type === "task.failed" || event.type === "crew.completed" || event.type === "crew.failed") {
+              // Terminal events. Taskforce terminals are emitted as "taskforce.*"
+              // (legacy "crew.*" kept for older backends/persisted runs).
+              if (event.type === "task_complete" || event.type === "task.completed" || event.type === "task.failed"
+                || event.type === "taskforce.completed" || event.type === "taskforce.failed"
+                || event.type === "crew.completed" || event.type === "crew.failed") {
                 es.close();
                 delete sseRefs[sessionId];
 
