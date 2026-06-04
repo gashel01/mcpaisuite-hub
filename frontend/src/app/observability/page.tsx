@@ -215,7 +215,13 @@ function ObservabilityInner() {
   // ── Auto-switch to trace mode on task start ────────────────────────────
   useEffect(() => {
     if (status === "streaming") { setMode("trace"); setViewMode("task"); setTraceSub("events"); }
-  }, [status]);
+    // SSE terminated (terminal event or server close) — useTaskStream sets status but not
+    // viewState, and the "Live" indicator reads viewState. Flip it so a finished live trace
+    // stops showing "Streaming".
+    else if (status === "completed" || status === "error") {
+      if (useExecutionStore.getState().viewState === "running") setViewState("completed");
+    }
+  }, [status]); // eslint-disable-line
 
   // ── URL param: auto-load task ──────────────────────────────────────────
 
