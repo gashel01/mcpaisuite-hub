@@ -6,6 +6,7 @@ import {
   RefreshCw, Globe, Trash, Copy, CheckCheck, Terminal,
   KeyRound, Plus, Loader2, Play, CheckCircle2, XCircle,
   Power, PlayCircle, Clock, Repeat, Link2, ChevronRight, Activity,
+  FolderOpen, UserCheck,
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { renderMarkdown } from "@/components/markdown";
@@ -177,6 +178,14 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
   };
 
   const agents = selected.config?.agents || [];
+  // Non-agent flow nodes (workspace, human gates) from the graph — shown in the pipeline
+  // so the deployed flow isn't represented as agents-only.
+  const flowExtras = ((selected.config as any)?.graph?.nodes || [])
+    .filter((n: any) => n.type === "workspace" || n.type === "human")
+    .map((n: any) => ({
+      kind: n.type as "workspace" | "human",
+      label: n.data?.workspaceName || n.data?.label || (n.type === "workspace" ? "workspace" : "human review"),
+    }));
   const paused = selected.status === "paused";
   const hasInputs = !!(selected.inputs && selected.inputs.length);
   const inputsReady = !(selected.inputs || []).some(k => !(testInputs[k]?.trim()));
@@ -277,7 +286,7 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
               <div>
                 <div className="text-[11px] font-semibold text-slate-300 mb-1.5">What it does</div>
                 {selected.config.goal && <p className="text-[12px] text-slate-400 leading-relaxed mb-2.5">{selected.config.goal}</p>}
-                {agents.length > 0 && (
+                {(agents.length > 0 || flowExtras.length > 0) && (
                   <>
                     <div className="flex items-center gap-1 flex-wrap">
                       {agents.map((a, i) => (
@@ -288,6 +297,16 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
                             <span className="font-medium">{a.role || `Agent ${i + 1}`}</span>
                             {a.type && <span className="opacity-60 text-[9px] uppercase tracking-wide">{a.type}</span>}
                           </button>
+                        </span>
+                      ))}
+                      {flowExtras.map((n: any, i: number) => (
+                        <span key={`x${i}`} className="flex items-center gap-1">
+                          {(agents.length > 0 || i > 0) && <ChevronRight className="h-3 w-3 text-slate-700 shrink-0" />}
+                          <span className="flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] text-slate-300 bg-white/[0.03] border-white/[0.08]">
+                            {n.kind === "workspace" ? <FolderOpen className="h-3 w-3 text-amber-400/80" /> : <UserCheck className="h-3 w-3 text-sky-400/80" />}
+                            <span className="font-medium truncate max-w-[120px]">{n.label}</span>
+                            <span className="opacity-60 text-[9px] uppercase tracking-wide">{n.kind === "workspace" ? "workspace" : "review"}</span>
+                          </span>
                         </span>
                       ))}
                     </div>
