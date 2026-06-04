@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
+import Link from "next/link";
 import type { SecurityPosture as SecurityPostureData, SecurityAuditEvent } from "@/components/security/types";
 
 
@@ -76,6 +77,11 @@ export default function SecurityPage() {
   const [stats, setStats] = useState<AuditStats>({ total: 0, blocked: 0, approved: 0, secrets_detected: 0 });
   const [loading, setLoading] = useState(true);
   const [activePanel, setActivePanel] = useState<string | null>(null);
+  // Deep-link: ?panel=<id> opens a specific security panel (e.g. from the Settings env-vars note)
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("panel");
+    if (p) setActivePanel(p);
+  }, []);
   const [liveEvents, setLiveEvents] = useState<SecurityAuditEvent[]>([]);
   const [vaultKeys, setVaultKeys] = useState<string[]>([]);
   const [hostPending, setHostPending] = useState<{ pattern: string; namespace?: string }[]>([]);
@@ -939,7 +945,7 @@ function DLPPanel({ posture, events, onTogglePattern, vaultKeys, onAddSecret, on
             <p className="text-[10px] text-slate-400 leading-relaxed">
               Vault secrets are <span className="text-slate-200">isolated to sandboxed code</span>, scoped per tenant, and audited — they are <span className="text-slate-200">never</span> exposed on <code className="text-slate-300">os.environ</code>. Use this for credentials the agents&apos; code should hold securely.
               <br />
-              For general config or tokens that tools / MCP servers read as plain environment variables, use <span className="text-lime-300">Settings → Environment</span> instead.
+              For general config or tokens that tools / MCP servers read as plain environment variables, use <Link href="/settings?tab=env" className="text-lime-300 hover:text-lime-200 underline decoration-lime-400/30 underline-offset-2 font-medium">Settings → Environment</Link> instead.
             </p>
           </div>
           {/* Add secret */}

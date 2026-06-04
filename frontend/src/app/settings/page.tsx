@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "framer-motion";
 // PageHeader replaced by inline header for better mobile layout
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import ConnectionsManager from "@/components/connections-manager";
+import Link from "next/link";
 
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -555,6 +556,11 @@ export default function SettingsPage() {
   const [savedCfg, setSavedCfg] = useState<FullConfig>(DEFAULTS);
   const [tab, setTab] = useState<TabId>("llm");
   const [navOpen, setNavOpen] = useState(false);
+  // Deep-link: ?tab=<id> opens a specific settings tab (e.g. from the Security Vault note)
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("tab");
+    if (p && TABS.some(t => t.id === p)) setTab(p as TabId);
+  }, []);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ service: string; ok: boolean; detail: string } | null>(null);
@@ -1675,7 +1681,7 @@ function EnvPanel() {
         <p className="text-[10px] text-slate-500 leading-relaxed">
           These are injected into the process environment (<code className="text-slate-400">os.environ</code>) and are readable by <span className="text-slate-300">everything</span> — tools, MCP servers, litellm. Use them for general config (API base URLs, feature flags) and integration tokens that tools expect as env vars.
           <br />
-          For credentials that should stay <span className="text-slate-300">isolated to sandboxed code, scoped per tenant, and audited</span>, use the <span className="text-amber-300">Security → Secret Detection → Vault</span> instead — those are never put on <code className="text-slate-400">os.environ</code>.
+          For credentials that should stay <span className="text-slate-300">isolated to sandboxed code, scoped per tenant, and audited</span>, use the <Link href="/security?panel=dlp" className="text-amber-300 hover:text-amber-200 underline decoration-amber-400/30 underline-offset-2 font-medium">Security → Secret Detection → Vault</Link> instead — those are never put on <code className="text-slate-400">os.environ</code>.
         </p>
       </div>
 
