@@ -405,6 +405,27 @@ async def delete_llm_connection(cid: str):
 # ── Environment Variables: secrets/config exposed to tools/MCP as process env ──
 _ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "env_vars.json")
 
+# Persistence for runtime-registered integrations so they survive restarts.
+_DATA = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+_MCP_SERVERS_PATH = os.path.join(_DATA, "mcp_servers.json")
+_LC_TOOLS_PATH = os.path.join(_DATA, "langchain_tools.json")
+
+
+def _load_list(path: str) -> list:
+    try:
+        return json.load(open(path, encoding="utf-8")) if os.path.isfile(path) else []
+    except Exception:
+        return []
+
+
+def _save_list(path: str, data: list) -> None:
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
 
 def _load_env_store() -> dict:
     try:
@@ -1471,6 +1492,10 @@ async def connect_mcp_server(body: dict):
         else:
             raise HTTPException(400, "For stdio: provide command. For sse: provide url.")
 
+        # Persist so it's reconnected on restart (upsert by name)
+        servers = [s for s in _load_list(_MCP_SERVERS_PATH) if s.get("name") != name]
+        servers.append({"name": name, "transport": transport, "command": command, "url": url, "env": env})
+        _save_list(_MCP_SERVERS_PATH, servers)
         # Get tools from the new server
         tools = [t for t in orch.get_tool_registry() if t["name"].startswith(name + "__")]
         return {"connected": True, "name": name, "tools_count": len(tools), "tools": [t["name"] for t in tools]}
@@ -1485,6 +1510,7 @@ async def disconnect_mcp_server(server_name: str):
     orch = k._engine._orchestrator
     try:
         await orch.disconnect_mcp_server(server_name)
+        _save_list(_MCP_SERVERS_PATH, [s for s in _load_list(_MCP_SERVERS_PATH) if s.get("name") != server_name])
         return {"disconnected": True, "name": server_name}
     except Exception as exc:
         raise HTTPException(500, f"Failed to disconnect: {exc}")
@@ -1544,7 +1570,12 @@ async def register_langchain_tool(body: dict):
                     raise
 
         orch.register_langchain_tool(tool_instance)
-        return {"registered": True, "name": f"lc__{tool_instance.name}", "description": tool_instance.description[:200]}
+        reg_name = f"lc__{tool_instance.name}"
+        # Persist so it's re-registered on restart (upsert by module+class)
+        tools = [t for t in _load_list(_LC_TOOLS_PATH) if not (t.get("module") == module_path and t.get("class") == class_name)]
+        tools.append({"module": module_path, "class": class_name, "pip": body.get("pip", []), "name": reg_name})
+        _save_list(_LC_TOOLS_PATH, tools)
+        return {"registered": True, "name": reg_name, "description": tool_instance.description[:200]}
     except ImportError as exc:
         raise HTTPException(400, f"Module not found: {module_path}. Install it with pip. Error: {exc}")
     except Exception as exc:
@@ -1558,6 +1589,7 @@ async def unregister_langchain_tool(tool_name: str):
     orch = k._engine._orchestrator
     try:
         orch.unregister_langchain_tool(tool_name)
+        _save_list(_LC_TOOLS_PATH, [t for t in _load_list(_LC_TOOLS_PATH) if t.get("name") != tool_name])
         return {"unregistered": True, "name": tool_name}
     except Exception as exc:
         raise HTTPException(500, f"Failed to unregister: {exc}")

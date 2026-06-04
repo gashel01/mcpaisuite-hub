@@ -302,8 +302,11 @@ async def startup():
             audit_collector.emit("scheduler", "job_completed", {"job_id": job.id, "goal": job.goal[:100], "success": result.success})
         pipelines["scheduler"]._executor = KernelExecutor(kernel, on_complete=_on_scheduled_complete)
         # Conversation ID is now passed via task.metadata, not a global variable
-        pipelines["scheduler"].start()
-        print("[STARTUP] scheduler started", flush=True)
+        if settings.get("scheduler_enabled", True):
+            pipelines["scheduler"].start()
+            print("[STARTUP] scheduler started", flush=True)
+        else:
+            print("[STARTUP] scheduler left stopped (disabled in settings)", flush=True)
 
     # Apply saved egress
     egress_cfg = load_json(EGRESS_CONFIG_PATH, {"enabled": True, "allowed_domains": []})
@@ -333,6 +336,31 @@ async def startup():
             _ns_guard._pending_has_listener = True
             kernel._engine._orchestrator._host_guards[_ns] = _ns_guard
             print(f"[STARTUP] host guard '{_ns}': {_approved}", flush=True)
+
+    # Re-apply saved runtime settings that KernelFactory doesn't restore (so they survive restarts)
+    try:
+        if kernel._engine._orchestrator.sandbox:
+            sb = kernel._engine._orchestrator.sandbox
+            if hasattr(sb, "_timeout"):
+                sb._timeout = settings.get("sandbox_timeout", 30)
+            if getattr(sb, "_host_guard", None):
+                sb._host_guard.auto_approve = bool(settings.get("auto_approve", False))
+    except Exception as exc:
+        print(f"[STARTUP] settings re-apply failed: {exc}", flush=True)
+
+    # Re-register persisted LangChain tools + reconnect MCP servers (survive restarts)
+    for spec in api_routes._load_list(api_routes._LC_TOOLS_PATH):
+        try:
+            await api_routes.register_langchain_tool({"module": spec.get("module"), "class": spec.get("class"), "pip": spec.get("pip", [])})
+            print(f"[STARTUP] re-registered LangChain tool {spec.get('class')}", flush=True)
+        except Exception as exc:
+            print(f"[STARTUP] LangChain tool {spec.get('class')} failed: {str(exc)[:120]}", flush=True)
+    for spec in api_routes._load_list(api_routes._MCP_SERVERS_PATH):
+        try:
+            await api_routes.connect_mcp_server(spec)
+            print(f"[STARTUP] reconnected MCP server {spec.get('name')}", flush=True)
+        except Exception as exc:
+            print(f"[STARTUP] MCP server {spec.get('name')} failed: {str(exc)[:120]}", flush=True)
 
     print(f"[STARTUP] Kernel ready ({kernel.orchestrator.connected_count}/6 servers, model={resolved_model})", flush=True)
 
