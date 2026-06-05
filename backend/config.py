@@ -22,6 +22,9 @@ PROVIDER_DEFAULT_MODELS = {
 
 DEFAULT_SETTINGS = {
     "max_turns": 10, "max_tokens": 50000, "execution_mode": "hybrid",
+    # Multi-agent graph (TaskForce) loop bounds — conservative defaults; raise for deeper
+    # iterative flows at the cost of more steps/tokens.
+    "graph_max_self_refines": 1, "graph_max_feedback_runs": 1, "graph_max_total_steps": 30,
     "workspace_root": "/app/data/workspace", "tenant_isolation": True,
     "max_file_size_mb": 50, "checkpoint_enabled": True,
     "host_exec_enabled": True, "auto_approve": False,

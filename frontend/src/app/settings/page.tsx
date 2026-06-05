@@ -20,6 +20,7 @@ import Link from "next/link";
 interface FullConfig {
   provider: string; model: string; api_key: string; base_url: string;
   max_turns: number; max_tokens: number; max_cost: number; execution_mode: string; routing_enabled: boolean;
+  graph_max_self_refines: number; graph_max_feedback_runs: number; graph_max_total_steps: number;
   num_ctx: number; keep_alive: string;
   workspace_root: string; tenant_isolation: boolean; max_file_size_mb: number; checkpoint_enabled: boolean;
   host_exec_enabled: boolean; auto_approve: boolean; sandbox_timeout: number; max_output_chars: number;
@@ -37,6 +38,7 @@ interface FullConfig {
 const DEFAULTS: FullConfig = {
   provider: "ollama", model: "qwen3.5:9b", api_key: "", base_url: "",
   max_turns: 10, max_tokens: 50000, max_cost: 1.0, execution_mode: "hybrid", routing_enabled: true,
+  graph_max_self_refines: 1, graph_max_feedback_runs: 1, graph_max_total_steps: 30,
   num_ctx: 16384, keep_alive: "30m",
   workspace_root: "~/.kernelmcp/workspace", tenant_isolation: true,
   max_file_size_mb: 50, checkpoint_enabled: true,
@@ -115,7 +117,7 @@ type TabId = typeof TABS[number]["id"];
 // Map fields to tabs for dirty tracking
 const TAB_FIELDS: Record<TabId, (keyof FullConfig)[]> = {
   llm: [],
-  engine: ["max_turns", "max_tokens", "max_cost", "execution_mode", "routing_enabled"],
+  engine: ["max_turns", "max_tokens", "max_cost", "execution_mode", "routing_enabled", "graph_max_self_refines", "graph_max_feedback_runs", "graph_max_total_steps"],
   workspace: ["workspace_root", "tenant_isolation", "max_file_size_mb", "checkpoint_enabled"],
   sandbox: ["host_exec_enabled", "auto_approve", "sandbox_timeout", "max_output_chars"],
   memory: ["memory_importance_threshold", "memory_max_results", "memory_default_tags"],
@@ -1061,6 +1063,20 @@ export default function SettingsPage() {
                     <NumberInput value={cfg.max_cost} onChange={v => update("max_cost", v)} min={0.01} max={100} step={0.1} />
                   </Field>
                   <Toggle label="Smart Tool Routing" value={cfg.routing_enabled} onChange={v => update("routing_enabled", v)} />
+                </AdvancedDisclosure>
+                <AdvancedDisclosure label="Multi-agent graph limits" hint="how far a TaskForce graph can iterate">
+                  <p className="text-[10px] text-slate-500 leading-relaxed -mt-1">
+                    Guardrails for graph workflows (the visual builder). Higher = deeper iteration and self-correction, at the cost of more steps, latency and tokens. Defaults are conservative on purpose.
+                  </p>
+                  <Field label="Max self-refine rounds" hint="How many times a node may re-run to improve its own output (self-loop)">
+                    <NumberInput value={cfg.graph_max_self_refines} onChange={v => update("graph_max_self_refines", v)} min={0} max={10} />
+                  </Field>
+                  <Field label="Max feedback re-runs" hint="How many times a node may re-run when a downstream node sends feedback">
+                    <NumberInput value={cfg.graph_max_feedback_runs} onChange={v => update("graph_max_feedback_runs", v)} min={0} max={10} />
+                  </Field>
+                  <Field label="Max graph steps" hint="Hard ceiling on total node executions per run — prevents a graph from running away">
+                    <NumberInput value={cfg.graph_max_total_steps} onChange={v => update("graph_max_total_steps", v)} min={1} max={500} step={5} />
+                  </Field>
                 </AdvancedDisclosure>
                 <div className="bg-slate-900/40 border border-slate-700/40 rounded-lg px-4 py-3 text-xs text-slate-400">
                   <strong className="text-slate-300">Hybrid mode</strong> classifies each task and routes to LTP for structured workflows (web search, data extraction) or ReAct for open-ended reasoning. Most efficient option.

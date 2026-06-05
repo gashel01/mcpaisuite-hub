@@ -1752,6 +1752,10 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
             executor = GraphExecutor(
                 graph=graph, agents=agents, goal=goal,
                 registry=k._agent_registry, namespace=namespace, task=task,
+                # Loop bounds from Settings → Engine (None-safe; falls back to lib defaults).
+                max_self_refines=settings.get("graph_max_self_refines"),
+                max_feedback_runs=settings.get("graph_max_feedback_runs"),
+                max_total_steps=settings.get("graph_max_total_steps"),
             )
             _active_executors[task.id] = executor
         else:

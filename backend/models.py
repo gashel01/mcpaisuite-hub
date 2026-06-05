@@ -50,6 +50,9 @@ class SettingsIn(BaseModel):
     max_turns: Optional[int] = None
     max_tokens: Optional[int] = None
     execution_mode: Optional[str] = None
+    graph_max_self_refines: Optional[int] = None
+    graph_max_feedback_runs: Optional[int] = None
+    graph_max_total_steps: Optional[int] = None
     tenant_isolation: Optional[bool] = None
     max_file_size_mb: Optional[int] = None
     checkpoint_enabled: Optional[bool] = None
