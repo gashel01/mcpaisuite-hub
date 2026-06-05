@@ -1479,10 +1479,13 @@ async def list_tools():
         else:
             built_in.append(t)
 
-    # Get connected MCP servers
+    # Get connected MCP servers. The connection manager is `_mcp_clients` (plural) — reading the
+    # old singular `_mcp_client` left this empty, so connected servers never showed as installed.
     mcp_servers = {}
-    if hasattr(orch, '_mcp_client') and orch._mcp_client:
-        for name, conn in orch._mcp_client._connections.items():
+    _mgr = getattr(orch, "_mcp_clients", None) or getattr(orch, "_mcp_client", None)
+    _conns = getattr(_mgr, "_connections", None) if _mgr is not None else None
+    if _conns:
+        for name in _conns:
             mcp_servers[name] = {"connected": True, "tools": len([t for t in mcp_external if t["name"].startswith(name + "__")])}
 
     return {
@@ -1510,11 +1513,50 @@ async def connect_mcp_server(body: dict):
 
     try:
         if transport == "stdio" and command:
-            await orch.connect_mcp_server(name, transport="stdio", command=command, env=env)
+            # Merge the backend's own environment so env vars set in Settings -> Environment
+            # (os.environ) reach the spawned server. The MCP SDK passes ONLY the explicit env to
+            # the subprocess, so without this a server's required token (e.g. SLACK_TOKEN) — and
+            # even PATH — never arrives. We persist the small `env` below, not the merged one.
+            spawn_env = {**os.environ, **(env or {})}
+            # The catalog stores a full command line ("npx -y @scope/server arg"); split it into
+            # executable + args[] — StdioServerParameters needs them separate, otherwise it tries
+            # to exec a file literally named "npx -y @scope/server" and the server never starts.
+            import shlex
+            parts = shlex.split(command)
+            cmd, cmd_args = (parts[0], parts[1:]) if parts else (command, [])
+            # npx needs -y to AUTO-INSTALL the package without an interactive "Ok to proceed?"
+            # prompt — a spawned server has no TTY, so without it npx hangs and the connection
+            # closes immediately. (Same for `npm exec`.)
+            if cmd in ("npx", "npx.cmd", "pnpm", "pnpm.cmd") and not any(a in ("-y", "--yes") for a in cmd_args):
+                cmd_args = ["-y"] + cmd_args
+            # On Windows, npx/npm/pnpm are .cmd shims — the bare name isn't directly spawnable.
+            import sys as _sys
+            if _sys.platform == "win32" and cmd in ("npx", "npm", "pnpm", "yarn"):
+                cmd = cmd + ".cmd"
+            result = await orch.connect_mcp_server(name, transport="stdio", command=cmd, args=cmd_args, env=spawn_env)
         elif transport == "sse" and url:
-            await orch.connect_mcp_server(name, transport="sse", url=url)
+            result = await orch.connect_mcp_server(name, transport="sse", url=url)
         else:
             raise HTTPException(400, "For stdio: provide command. For sse: provide url.")
+
+        # The orchestrator returns {success, error} instead of raising — surface a real failure
+        # (e.g. npx/node missing, bad command, server crashed) instead of a misleading "connected".
+        if not result.get("success"):
+            detail = result.get("error", "unknown error")
+            if transport == "stdio":
+                # The SDK error is generic ("Connection closed"). Re-run the command to capture the
+                # server's OWN stderr — that's where the real reason lives (missing env var like
+                # SLACK_BOT_TOKEN/SLACK_TEAM_ID, a 404 package, a crash on startup…).
+                try:
+                    import subprocess
+                    proc = subprocess.run([cmd, *cmd_args], env=spawn_env, capture_output=True, text=True, timeout=20)
+                    captured = (proc.stderr or proc.stdout or "")
+                    lines = [ln for ln in captured.splitlines() if ln.strip() and "warn deprecated" not in ln and not ln.startswith("npm notice")]
+                    if lines:
+                        detail = " ".join(lines[-4:])[:600]
+                except Exception:
+                    pass
+            raise HTTPException(502, f"Could not start '{name}': {detail}")
 
         # Persist so it's reconnected on restart (upsert by name)
         servers = [s for s in _load_list(_MCP_SERVERS_PATH) if s.get("name") != name]
@@ -1523,6 +1565,8 @@ async def connect_mcp_server(body: dict):
         # Get tools from the new server
         tools = [t for t in orch.get_tool_registry() if t["name"].startswith(name + "__")]
         return {"connected": True, "name": name, "tools_count": len(tools), "tools": [t["name"] for t in tools]}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(500, f"Failed to connect: {exc}")
 

@@ -13,6 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
     | tar xz --strip-components=1 -C /usr/local/bin docker/docker
 
+# Node.js + npx — required to run npx-based MCP servers installed from the marketplace
+# (github, slack, postgres, …). Without it those stdio servers can't spawn at all.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # ── Layer 1: pip dependencies (rarely changes → cached) ─────────────────

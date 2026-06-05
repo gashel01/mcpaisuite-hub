@@ -104,7 +104,6 @@ const TABS = [
   { id: "memory", label: "Memory", icon: Database, color: "text-pink-400", bg: "bg-pink-400" },
   { id: "scheduler", label: "Scheduler", icon: Clock, color: "text-cyan-400", bg: "bg-cyan-400" },
   { id: "rag", label: "Knowledge / RAG", icon: Search, color: "text-orange-400", bg: "bg-orange-400" },
-  { id: "servers", label: "Servers & MCP", icon: Plug, color: "text-emerald-400", bg: "bg-emerald-400" },
   { id: "tools", label: "Tools", icon: Wrench, color: "text-violet-400", bg: "bg-violet-400" },
   { id: "env", label: "Environment", icon: KeyRound, color: "text-lime-400", bg: "bg-lime-400" },
   { id: "infra", label: "Infrastructure", icon: HardDrive, color: "text-slate-400", bg: "bg-slate-400" },
@@ -123,7 +122,6 @@ const TAB_FIELDS: Record<TabId, (keyof FullConfig)[]> = {
   scheduler: ["scheduler_tick_interval", "scheduler_max_concurrent", "scheduler_enabled"],
   rag: ["rag_chunk_size", "rag_chunk_overlap", "rag_top_k", "rag_embedding_model"],
   tools: [],
-  servers: [],
   env: [],
   infra: ["memory_backend", "memory_semantic_backend", "memory_redis_url", "memory_decay_mode", "memory_neo4j_uri", "memory_neo4j_user", "memory_neo4j_password", "rag_vectorstore", "rag_vectorstore_url", "rag_vectorstore_api_key", "rag_graph_backend", "rag_neo4j_uri", "rag_neo4j_user", "rag_neo4j_password", "workspace_checkpoint_store", "workspace_audit_store", "sandbox_audit_store", "sandbox_vault", "scheduler_store"],
   remote: [],
@@ -242,9 +240,31 @@ function SectionHeader({ icon: Icon, color, title, desc }: { icon: React.Compone
   );
 }
 
+// Collapsible "Advanced" group — progressive disclosure for the pointy knobs in a section.
+// Keeps essentials visible and tucks rarely-touched fields out of the way. Purely visual:
+// the fields inside still read/write the same config, so collapsing changes nothing on save.
+function AdvancedDisclosure({ label = "Advanced", hint, defaultOpen = false, children }: { label?: string; hint?: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-xl border border-white/[0.05] bg-white/[0.01] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-[11px] font-medium text-slate-400 hover:text-slate-200 transition-colors"
+      >
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+        <Wrench className="h-3 w-3 text-slate-500 shrink-0" />
+        <span>{label}</span>
+        {hint && <span className="text-[10px] text-slate-600 truncate font-normal">· {hint}</span>}
+      </button>
+      {open && <div className="px-3 pb-3.5 pt-1 space-y-4 border-t border-white/[0.04]">{children}</div>}
+    </div>
+  );
+}
+
 // ── Health Overview Bar ───────────────────────────────────────────────────
 
-function HealthBar({ health, onServiceClick }: { health: Record<string, "ok" | "error" | "unknown">; onServiceClick: (tab: TabId) => void }) {
+function HealthBar({ health, onServiceClick, toolCount, toolsOpen, onToggleTools }: { health: Record<string, "ok" | "error" | "unknown">; onServiceClick: (tab: TabId) => void; toolCount?: number; toolsOpen?: boolean; onToggleTools?: () => void }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: -5 }}
@@ -277,6 +297,17 @@ function HealthBar({ health, onServiceClick }: { health: Record<string, "ok" | "
         <span className="flex items-center gap-1 text-[9px] text-emerald-400 shrink-0">
           <CircleCheck className="h-3 w-3" /> All OK
         </span>
+      )}
+      {onToggleTools && (
+        <button
+          onClick={onToggleTools}
+          title="Show each server's tools"
+          className="flex items-center gap-1 text-[9px] font-medium text-slate-400 hover:text-slate-200 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] rounded-md px-2 py-1 transition-colors shrink-0"
+        >
+          <Server className="h-3 w-3 text-violet-400" />
+          {toolCount ?? 0} tools
+          <ChevronDown className={`h-3 w-3 transition-transform ${toolsOpen ? "rotate-180" : ""}`} />
+        </button>
       )}
     </motion.div>
   );
@@ -622,6 +653,8 @@ export default function SettingsPage() {
   const [servers, setServers] = useState<ServerData[]>([]);
   const [serverExpanded, setServerExpanded] = useState<Record<string, boolean>>({});
   const [serversLoading, setServersLoading] = useState(false);
+  const [serversOpen, setServersOpen] = useState(false); // tool-detail panel under the HealthBar
+  const totalTools = servers.reduce((s, srv) => s + srv.tools, 0);
 
   const SERVER_DESCRIPTIONS: Record<string, string> = {
     memorymcp: "Persistent fact storage with semantic recall, importance scoring, and tag-based filtering",
@@ -820,7 +853,69 @@ export default function SettingsPage() {
 
       {/* Health Overview */}
       <div className="px-3 sm:px-4 shrink-0">
-        <HealthBar health={health} onServiceClick={(t) => { switchTab(t); setNavOpen(false); }} />
+        <HealthBar
+          health={health}
+          onServiceClick={(t) => { switchTab(t); setNavOpen(false); }}
+          toolCount={totalTools}
+          toolsOpen={serversOpen}
+          onToggleTools={() => setServersOpen(o => !o)}
+        />
+        {/* Tool-detail panel — the per-server tools, surfaced from the status bar (replaces the
+            redundant "Servers & MCP" tab). The bar already shows health; this adds the details. */}
+        {serversOpen && (
+          <div className="-mt-1 mb-3 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3 animate-fade-in">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] text-slate-500">
+                {servers.filter(s => s.connected).length}/{servers.length} servers connected &middot; {totalTools} tools available
+              </span>
+              <button onClick={loadServers} disabled={serversLoading} className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium text-slate-400 hover:text-slate-200 bg-white/[0.03] border border-white/[0.06] rounded-lg transition-all disabled:opacity-50">
+                <RefreshCw className={`h-3 w-3 ${serversLoading ? "animate-spin" : ""}`} /> Refresh
+              </button>
+            </div>
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+              {servers.map(srv => {
+                const isOpen = serverExpanded[srv.name] || false;
+                return (
+                  <div key={srv.name} className={`rounded-xl border overflow-hidden transition-all duration-200 ${srv.connected ? "border-white/[0.06] bg-white/[0.015] hover:border-white/[0.1]" : "border-red-500/10 bg-red-500/[0.02]"}`}>
+                    <button
+                      onClick={() => setServerExpanded(prev => ({ ...prev, [srv.name]: !prev[srv.name] }))}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/[0.02] transition-colors"
+                    >
+                      {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-500" />}
+                      <Server className={`h-3.5 w-3.5 ${srv.connected ? "text-violet-400" : "text-slate-600"}`} />
+                      <span className="font-medium text-[13px] text-slate-200">{srv.name}</span>
+                      <div className="flex-1" />
+                      <span className="text-[10px] text-slate-500 mr-2">{srv.tools} tools</span>
+                      <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${srv.connected ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15" : "bg-red-500/10 text-red-400 border border-red-500/15"}`}>
+                        {srv.connected ? <Wifi className="h-2.5 w-2.5" /> : <WifiOff className="h-2.5 w-2.5" />}
+                        {srv.connected ? "online" : "offline"}
+                      </span>
+                    </button>
+                    {isOpen && (
+                      <div className="px-4 pb-3 border-t border-white/[0.04] animate-fade-in">
+                        <p className="text-[11px] text-slate-500 mt-2.5 mb-2.5">{SERVER_DESCRIPTIONS[srv.name] || "MCP server"}</p>
+                        {srv.tool_list && srv.tool_list.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {srv.tool_list.map(tool => (
+                              <span key={tool} className="flex items-center gap-1 bg-violet-500/8 text-violet-400 text-[10px] px-2 py-0.5 rounded-md border border-violet-500/15 font-mono">
+                                <Wrench className="h-2.5 w-2.5" />{tool}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-slate-600 italic">Tool list not available</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {servers.length === 0 && !serversLoading && (
+                <p className="text-[11px] text-slate-600 text-center py-8">No servers found. Check that the backend is running.</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Mobile tab selector */}
@@ -958,13 +1053,15 @@ export default function SettingsPage() {
                 <Field label="Max Turns per Task" hint="Maximum reasoning steps before the engine stops">
                   <NumberInput value={cfg.max_turns} onChange={v => update("max_turns", v)} min={1} max={100} />
                 </Field>
-                <Field label="Max Tokens per Task" hint="Token budget across all turns">
-                  <NumberInput value={cfg.max_tokens} onChange={v => update("max_tokens", v)} min={256} max={500000} step={1000} />
-                </Field>
-                <Field label="Max Cost per Task ($)" hint="Task stops when cost exceeds this amount">
-                  <NumberInput value={cfg.max_cost} onChange={v => update("max_cost", v)} min={0.01} max={100} step={0.1} />
-                </Field>
-                <Toggle label="Smart Tool Routing" value={cfg.routing_enabled} onChange={v => update("routing_enabled", v)} />
+                <AdvancedDisclosure label="Limits & routing" hint="token / cost budget · smart routing">
+                  <Field label="Max Tokens per Task" hint="Token budget across all turns">
+                    <NumberInput value={cfg.max_tokens} onChange={v => update("max_tokens", v)} min={256} max={500000} step={1000} />
+                  </Field>
+                  <Field label="Max Cost per Task ($)" hint="Task stops when cost exceeds this amount">
+                    <NumberInput value={cfg.max_cost} onChange={v => update("max_cost", v)} min={0.01} max={100} step={0.1} />
+                  </Field>
+                  <Toggle label="Smart Tool Routing" value={cfg.routing_enabled} onChange={v => update("routing_enabled", v)} />
+                </AdvancedDisclosure>
                 <div className="bg-slate-900/40 border border-slate-700/40 rounded-lg px-4 py-3 text-xs text-slate-400">
                   <strong className="text-slate-300">Hybrid mode</strong> classifies each task and routes to LTP for structured workflows (web search, data extraction) or ReAct for open-ended reasoning. Most efficient option.
                 </div>
@@ -1054,89 +1151,26 @@ export default function SettingsPage() {
                 <div className="bg-amber-950/20 border border-amber-800/30 rounded-lg px-4 py-3 text-xs text-amber-300">
                   RAG settings are configured via environment variables at startup. Changes here show current defaults but require a server restart to take effect.
                 </div>
-                <Field label="Embedding Model" hint="Currently loaded at startup. Changing requires restart + collection recreation.">
-                  <SelectInput value={cfg.rag_embedding_model} onChange={v => update("rag_embedding_model", v)} options={[
-                    { value: "BAAI/bge-small-en-v1.5", label: "BGE Small EN (384d, 33M, fast)" },
-                    { value: "BAAI/bge-base-en-v1.5", label: "BGE Base EN (768d, 110M, balanced)" },
-                    { value: "BAAI/bge-large-en-v1.5", label: "BGE Large EN (1024d, 335M, accurate)" },
-                    { value: "sentence-transformers/all-MiniLM-L6-v2", label: "MiniLM L6 (384d, 22M, lightweight)" },
-                  ]} />
-                </Field>
-                <Field label="Chunk Size (tokens)" hint="Size of text chunks for indexing">
-                  <NumberInput value={cfg.rag_chunk_size} onChange={v => update("rag_chunk_size", v)} min={128} max={2048} step={64} />
-                </Field>
-                <Field label="Chunk Overlap (tokens)" hint="Overlap between consecutive chunks">
-                  <NumberInput value={cfg.rag_chunk_overlap} onChange={v => update("rag_chunk_overlap", v)} min={0} max={512} step={10} />
-                </Field>
                 <Field label="Top-K Results" hint="Number of chunks returned per search">
                   <NumberInput value={cfg.rag_top_k} onChange={v => update("rag_top_k", v)} min={1} max={20} />
                 </Field>
+                <AdvancedDisclosure label="Indexing" hint="embedding model · chunking">
+                  <Field label="Embedding Model" hint="Currently loaded at startup. Changing requires restart + collection recreation.">
+                    <SelectInput value={cfg.rag_embedding_model} onChange={v => update("rag_embedding_model", v)} options={[
+                      { value: "BAAI/bge-small-en-v1.5", label: "BGE Small EN (384d, 33M, fast)" },
+                      { value: "BAAI/bge-base-en-v1.5", label: "BGE Base EN (768d, 110M, balanced)" },
+                      { value: "BAAI/bge-large-en-v1.5", label: "BGE Large EN (1024d, 335M, accurate)" },
+                      { value: "sentence-transformers/all-MiniLM-L6-v2", label: "MiniLM L6 (384d, 22M, lightweight)" },
+                    ]} />
+                  </Field>
+                  <Field label="Chunk Size (tokens)" hint="Size of text chunks for indexing">
+                    <NumberInput value={cfg.rag_chunk_size} onChange={v => update("rag_chunk_size", v)} min={128} max={2048} step={64} />
+                  </Field>
+                  <Field label="Chunk Overlap (tokens)" hint="Overlap between consecutive chunks">
+                    <NumberInput value={cfg.rag_chunk_overlap} onChange={v => update("rag_chunk_overlap", v)} min={0} max={512} step={10} />
+                  </Field>
+                </AdvancedDisclosure>
                 <TestBtn service="rag" testing={testing} result={testResult} onClick={() => testConnection("rag")} />
-              </>
-            )}
-
-            {/* ── Servers ────────────────────────────────────────────────── */}
-            {tab === "servers" && (
-              <>
-                <SectionHeader icon={Server} color="text-emerald-400" title="MCP Servers" desc="Connected servers, tool count, and health status" />
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[11px] text-slate-500">
-                    {servers.filter(s => s.connected).length}/{servers.length} servers connected &middot; {servers.reduce((s, srv) => s + srv.tools, 0)} tools available
-                  </span>
-                  <button onClick={loadServers} disabled={serversLoading} className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium text-slate-400 hover:text-slate-200 bg-white/[0.03] border border-white/[0.06] rounded-lg transition-all disabled:opacity-50 hover:scale-[1.02] active:scale-[0.98]">
-                    <RefreshCw className={`h-3 w-3 ${serversLoading ? "animate-spin" : ""}`} />
-                    Refresh
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {servers.map(srv => {
-                    const isOpen = serverExpanded[srv.name] || false;
-                    return (
-                      <div key={srv.name} className={`rounded-xl border overflow-hidden transition-all duration-200 ${srv.connected ? "border-white/[0.06] bg-white/[0.015] hover:border-white/[0.1]" : "border-red-500/10 bg-red-500/[0.02]"}`}>
-                        <button
-                          onClick={() => setServerExpanded(prev => ({ ...prev, [srv.name]: !prev[srv.name] }))}
-                          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/[0.02] transition-colors"
-                        >
-                          {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-500" />}
-                          <Server className={`h-3.5 w-3.5 ${srv.connected ? "text-violet-400" : "text-slate-600"}`} />
-                          <span className="font-medium text-[13px] text-slate-200">{srv.name}</span>
-                          <div className="flex-1" />
-                          <span className="text-[10px] text-slate-500 mr-2">{srv.tools} tools</span>
-                          <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                            srv.connected
-                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/15"
-                              : "bg-red-500/10 text-red-400 border border-red-500/15"
-                          }`}>
-                            {srv.connected ? <Wifi className="h-2.5 w-2.5" /> : <WifiOff className="h-2.5 w-2.5" />}
-                            {srv.connected ? "online" : "offline"}
-                          </span>
-                        </button>
-                        {isOpen && (
-                          <div className="px-4 pb-3 border-t border-white/[0.04] animate-fade-in">
-                            <p className="text-[11px] text-slate-500 mt-2.5 mb-2.5">{SERVER_DESCRIPTIONS[srv.name] || "MCP server"}</p>
-                            {srv.tool_list && srv.tool_list.length > 0 ? (
-                              <div className="flex flex-wrap gap-1">
-                                {srv.tool_list.map(tool => (
-                                  <span key={tool} className="flex items-center gap-1 bg-violet-500/8 text-violet-400 text-[10px] px-2 py-0.5 rounded-md border border-violet-500/15 font-mono">
-                                    <Wrench className="h-2.5 w-2.5" />{tool}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-[10px] text-slate-600 italic">Tool list not available</p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {servers.length === 0 && !serversLoading && (
-                    <p className="text-[11px] text-slate-600 text-center py-8">No servers found. Check that the backend is running.</p>
-                  )}
-                </div>
-
-                {/* Marketplace */}
-                <MarketplaceSection />
               </>
             )}
 
@@ -1148,12 +1182,9 @@ export default function SettingsPage() {
             {/* ── Infrastructure ─────────────────────────────────────────── */}
             {tab === "infra" && (
               <>
-                <SectionHeader icon={HardDrive} color="text-slate-400" title="Infrastructure Backends" desc="Storage backends for each library. Changes require server restart." />
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-lg px-4 py-3 text-xs text-slate-400">
-                  Configure where each library stores its data. Use <code className="bg-slate-800 px-1 rounded">memory</code> for development, <code className="bg-slate-800 px-1 rounded">sqlite</code> for single-server, <code className="bg-slate-800 px-1 rounded">redis</code>/<code className="bg-slate-800 px-1 rounded">qdrant</code> for production.
-                </div>
+                <SectionHeader icon={HardDrive} color="text-slate-400" title="Infrastructure Backends" desc="Where each library stores its data — optional; changes require a server restart." />
 
-                <p className="text-[10px] text-slate-600 uppercase tracking-wider pt-2">Memory (memorymcp)</p>
+                <AdvancedDisclosure label="Memory storage" hint="episodic · facts · graph · decay">
                 <Field label="Episodic / Working Store" hint="Where episodes and working memory are stored">
                   <SelectInput value={cfg.memory_backend} onChange={v => update("memory_backend", v)} options={[
                     { value: "memory", label: "In-Memory (dev, volatile)" },
@@ -1176,7 +1207,7 @@ export default function SettingsPage() {
                     <TestBtn service="redis" testing={testing} result={testResult} onClick={() => testConnection("redis")} />
                   </>
                 )}
-                <Field label="Fact Graph Backend">
+                <Field label="Fact Graph Backend" hint="Stores how facts relate to each other (entities & links) for graph-aware recall">
                   <SelectInput value={cfg.memory_neo4j_uri ? "neo4j" : "memory"} onChange={v => { if (v === "neo4j") update("memory_neo4j_uri", cfg.memory_neo4j_uri || "bolt://localhost:7687"); else update("memory_neo4j_uri", ""); }} options={[
                     { value: "memory", label: "In-Memory (dev)" },
                     { value: "neo4j", label: "Neo4j (production)" },
@@ -1184,7 +1215,7 @@ export default function SettingsPage() {
                 </Field>
                 {cfg.memory_neo4j_uri && (
                   <>
-                    <Field label="Neo4j URI"><TextInput value={cfg.memory_neo4j_uri} onChange={v => update("memory_neo4j_uri", v)} placeholder="bolt://localhost:7687" /></Field>
+                    <Field label="Neo4j URI" hint="Connection address of your Neo4j instance"><TextInput value={cfg.memory_neo4j_uri} onChange={v => update("memory_neo4j_uri", v)} placeholder="bolt://localhost:7687" /></Field>
                     <Field label="Neo4j User"><TextInput value={cfg.memory_neo4j_user} onChange={v => update("memory_neo4j_user", v)} placeholder="neo4j" /></Field>
                     <Field label="Neo4j Password"><TextInput value={cfg.memory_neo4j_password} onChange={v => update("memory_neo4j_password", v)} placeholder="password" type="password" /></Field>
                     <TestBtn service="neo4j" testing={testing} result={testResult} onClick={() => testConnection("neo4j", { url: cfg.memory_neo4j_uri, user: cfg.memory_neo4j_user, password: cfg.memory_neo4j_password })} />
@@ -1198,9 +1229,10 @@ export default function SettingsPage() {
                     { value: "adaptive", label: "Adaptive (slows with retrieval)" },
                   ]} />
                 </Field>
+                </AdvancedDisclosure>
 
-                <p className="text-[10px] text-slate-600 uppercase tracking-wider pt-4">Knowledge (ragmcp)</p>
-                <Field label="Vector Store">
+                <AdvancedDisclosure label="Knowledge / vector storage" hint="vector store · graph store">
+                <Field label="Vector Store" hint="Where document embeddings are indexed for semantic search">
                   <SelectInput value={cfg.rag_vectorstore} onChange={v => update("rag_vectorstore", v)} options={[
                     { value: "memory", label: "In-Memory (dev)" },
                     { value: "qdrant", label: "Qdrant (production)" },
@@ -1211,7 +1243,7 @@ export default function SettingsPage() {
                 </Field>
                 {["qdrant", "milvus", "pgvector"].includes(cfg.rag_vectorstore) && (
                   <>
-                    <Field label="Vector Store URL">
+                    <Field label="Vector Store URL" hint="Connection URL of your vector database">
                       <TextInput value={cfg.rag_vectorstore_url} onChange={v => update("rag_vectorstore_url", v)} placeholder={cfg.rag_vectorstore === "qdrant" ? "http://localhost:6333" : cfg.rag_vectorstore === "pgvector" ? "postgresql://user:pass@localhost/db" : "http://localhost:19530"} />
                     </Field>
                     {["qdrant", "milvus"].includes(cfg.rag_vectorstore) && (
@@ -1222,7 +1254,7 @@ export default function SettingsPage() {
                     <TestBtn service={cfg.rag_vectorstore} testing={testing} result={testResult} onClick={() => testConnection(cfg.rag_vectorstore)} />
                   </>
                 )}
-                <Field label="Graph Store">
+                <Field label="Graph Store" hint="Stores the knowledge graph (entities & relations) extracted from documents">
                   <SelectInput value={cfg.rag_graph_backend} onChange={v => update("rag_graph_backend", v)} options={[
                     { value: "networkx", label: "NetworkX (in-memory)" },
                     { value: "neo4j", label: "Neo4j (persistent)" },
@@ -1230,29 +1262,31 @@ export default function SettingsPage() {
                 </Field>
                 {cfg.rag_graph_backend === "neo4j" && (
                   <>
-                    <Field label="Neo4j URI"><TextInput value={cfg.rag_neo4j_uri} onChange={v => update("rag_neo4j_uri", v)} placeholder="bolt://localhost:7687" /></Field>
+                    <Field label="Neo4j URI" hint="Connection address of your Neo4j instance"><TextInput value={cfg.rag_neo4j_uri} onChange={v => update("rag_neo4j_uri", v)} placeholder="bolt://localhost:7687" /></Field>
                     <Field label="Neo4j User"><TextInput value={cfg.rag_neo4j_user} onChange={v => update("rag_neo4j_user", v)} placeholder="neo4j" /></Field>
                     <Field label="Neo4j Password"><TextInput value={cfg.rag_neo4j_password} onChange={v => update("rag_neo4j_password", v)} placeholder="password" type="password" /></Field>
                     <TestBtn service="neo4j" testing={testing} result={testResult} onClick={() => testConnection("neo4j", { url: cfg.rag_neo4j_uri, user: cfg.rag_neo4j_user, password: cfg.rag_neo4j_password })} />
                   </>
                 )}
+                </AdvancedDisclosure>
 
-                <p className="text-[10px] text-slate-600 uppercase tracking-wider pt-4">Workspace / Sandbox / Scheduler</p>
-                <Field label="Workspace Audit">
+                <AdvancedDisclosure label="Audit & vault stores" hint="workspace · sandbox · scheduler">
+                <Field label="Workspace Audit" hint="Where workspace file operations (read/write/delete) are logged">
                   <SelectInput value={cfg.workspace_audit_store} onChange={v => update("workspace_audit_store", v)} options={[
                     { value: "memory", label: "In-Memory" }, { value: "sqlite", label: "SQLite" },
                   ]} />
                 </Field>
-                <Field label="Sandbox Vault">
+                <Field label="Sandbox Vault" hint="Where the code sandbox keeps secrets/credentials it needs at runtime">
                   <SelectInput value={cfg.sandbox_vault} onChange={v => update("sandbox_vault", v)} options={[
                     { value: "memory", label: "In-Memory" }, { value: "env", label: "Environment Variables" },
                   ]} />
                 </Field>
-                <Field label="Scheduler Store">
+                <Field label="Scheduler Store" hint="Where scheduled jobs (once / cron / interval / watch) are persisted">
                   <SelectInput value={cfg.scheduler_store} onChange={v => update("scheduler_store", v)} options={[
                     { value: "memory", label: "In-Memory" }, { value: "sqlite", label: "SQLite" },
                   ]} />
                 </Field>
+                </AdvancedDisclosure>
 
                 <p className="text-[10px] text-slate-600 uppercase tracking-wider pt-4">Health Checks</p>
                 <div className="flex flex-wrap gap-2">
@@ -1426,24 +1460,6 @@ function ToolsPanel() {
     try { await fetch(`${BASE_URL}/tools/langchain/${encodeURIComponent(name)}`, { method: "DELETE" }); loadTools(); } catch {}
   };
 
-  const MCP_CATALOG = [
-    { name: "github", command: "npx @modelcontextprotocol/server-github", desc: "Issues, PRs, code search", env: "GITHUB_TOKEN" },
-    { name: "slack", command: "npx @modelcontextprotocol/server-slack", desc: "Messages, channels", env: "SLACK_TOKEN" },
-    { name: "postgres", command: "npx @modelcontextprotocol/server-postgres", desc: "SQL queries", env: "DATABASE_URL" },
-    { name: "brave-search", command: "npx @modelcontextprotocol/server-brave-search", desc: "Web search via Brave", env: "BRAVE_API_KEY" },
-    { name: "puppeteer", command: "npx @modelcontextprotocol/server-puppeteer", desc: "Browser automation", env: "" },
-    { name: "filesystem", command: "npx @modelcontextprotocol/server-filesystem", desc: "Local file access", env: "" },
-    { name: "google-drive", command: "npx @anthropic/server-google-drive", desc: "Google Drive files", env: "GOOGLE_CREDENTIALS" },
-    { name: "notion", command: "npx @anthropic/server-notion", desc: "Notion pages & databases", env: "NOTION_TOKEN" },
-  ];
-
-  const LC_CATALOG = [
-    { name: "Wikipedia", module: "langchain_community.tools.wikipedia.tool", className: "WikipediaQueryRun" },
-    { name: "Arxiv", module: "langchain_community.tools.arxiv.tool", className: "ArxivQueryRun" },
-    { name: "DuckDuckGo", module: "langchain_community.tools.ddg_search.tool", className: "DuckDuckGoSearchRun" },
-    { name: "YouTube Transcript", module: "langchain_community.tools.youtube.search", className: "YouTubeSearchTool" },
-  ];
-
   if (loading) return <div className="space-y-3">{Array.from({length:3}).map((_,i) => <div key={i} className="h-16 rounded-xl bg-slate-800/40 animate-pulse" />)}</div>;
 
   return (
@@ -1505,122 +1521,103 @@ function ToolsPanel() {
         );
       })()}
 
-      {/* Connected MCP Servers */}
-      <div className="space-y-2 mb-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-slate-300">MCP Servers</h3>
-          <button onClick={() => setConnectForm({ name: "", transport: "stdio", command: "", url: "" })} className="text-[10px] text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 px-2.5 py-1 rounded-lg transition-all hover:scale-[1.02]">
-            + Connect
-          </button>
-        </div>
-
-        {Object.entries(tools?.mcp_servers || {}).map(([name, info]: [string, any]) => (
-          <div key={name} className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2 hover:border-white/[0.1] transition-all">
-            <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[11px] font-medium text-slate-200">{name}</span>
-            <span className="text-[9px] text-slate-500">{info.tools} tools</span>
-            <button onClick={() => disconnectMCP(name)} className="text-[10px] text-slate-600 hover:text-red-400 ml-auto transition-colors">Disconnect</button>
+      {/* Installed — MCP servers & LangChain tools you've added, with one-click remove */}
+      {(Object.keys(tools?.mcp_servers || {}).length > 0 || (tools?.langchain?.tools || []).length > 0) && (
+        <div className="mb-4">
+          <div className="flex items-baseline gap-2 mb-2">
+            <h3 className="text-xs font-semibold text-slate-300">Installed</h3>
+            <span className="text-[9px] text-slate-600">servers &amp; tools you&apos;ve added — remove to disconnect</span>
           </div>
-        ))}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {Object.entries(tools?.mcp_servers || {}).map(([name, info]: [string, any]) => (
+              <div key={name} className="flex items-center gap-2.5 p-3 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.03]">
+                <div className="p-1.5 rounded-md bg-emerald-500/10 shrink-0"><Plug className="h-3.5 w-3.5 text-emerald-400" /></div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5"><span className="text-xs font-medium text-slate-200 truncate">{name}</span><span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-400 shrink-0">MCP</span></div>
+                  <p className="text-[10px] text-slate-500">{info.tools} tools</p>
+                </div>
+                <button onClick={() => disconnectMCP(name)} className="shrink-0 px-2 py-1 text-[9px] font-medium rounded-md border text-red-400/80 bg-red-500/5 border-red-500/15 hover:bg-red-500/10 transition-all">Remove</button>
+              </div>
+            ))}
+            {(tools?.langchain?.tools || []).map((t: any) => (
+              <div key={t.name} className="flex items-center gap-2.5 p-3 rounded-lg border border-amber-500/15 bg-amber-500/[0.03]">
+                <div className="p-1.5 rounded-md bg-amber-500/10 shrink-0"><Wrench className="h-3.5 w-3.5 text-amber-400" /></div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5"><span className="text-xs font-medium text-amber-200 font-mono truncate">{t.name}</span><span className="text-[8px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 shrink-0">LC</span></div>
+                  <p className="text-[10px] text-slate-500 truncate">{t.description}</p>
+                </div>
+                <button onClick={() => unregisterLC(t.name)} className="shrink-0 px-2 py-1 text-[9px] font-medium rounded-md border text-red-400/80 bg-red-500/5 border-red-500/15 hover:bg-red-500/10 transition-all">Remove</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-        {connectForm && (
-          <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.03] p-3 space-y-2 animate-fade-in">
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Server Name"><TextInput value={connectForm.name} onChange={v => setConnectForm({...connectForm, name: v})} placeholder="github" /></Field>
-              <Field label="Transport">
-                <SelectInput value={connectForm.transport} onChange={v => setConnectForm({...connectForm, transport: v})} options={[{value:"stdio",label:"Stdio (command)"},{value:"sse",label:"SSE (URL)"}]} />
-              </Field>
+      {/* Add tools — the marketplace is the primary, one-click path */}
+      <MarketplaceSection
+        onInstalled={loadTools}
+        installedMcp={new Set(Object.keys(tools?.mcp_servers || {}))}
+        installedLc={(tools?.langchain?.tools || []).map((t: any) => String(t.name || "").toLowerCase())}
+      />
+
+      {/* Manual / advanced add — niche (custom command or Python module), collapsed by default */}
+      <div className="mt-5">
+        <AdvancedDisclosure label="Add a custom server or tool" hint="manual MCP connect · LangChain import by module path">
+          {/* MCP Servers — connect a custom one + manage connected */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-slate-300">MCP Servers</h3>
+              <button onClick={() => setConnectForm({ name: "", transport: "stdio", command: "", url: "" })} className="text-[10px] text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 px-2.5 py-1 rounded-lg transition-all hover:scale-[1.02]">
+                + Connect
+              </button>
             </div>
-            {connectForm.transport === "stdio" ? (
-              <Field label="Command"><TextInput value={connectForm.command} onChange={v => setConnectForm({...connectForm, command: v})} placeholder="npx @modelcontextprotocol/server-github" /></Field>
-            ) : (
-              <Field label="URL"><TextInput value={connectForm.url} onChange={v => setConnectForm({...connectForm, url: v})} placeholder="http://localhost:3001/sse" /></Field>
+
+            {connectForm && (
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.03] p-3 space-y-2 animate-fade-in">
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Server Name"><TextInput value={connectForm.name} onChange={v => setConnectForm({...connectForm, name: v})} placeholder="github" /></Field>
+                  <Field label="Transport">
+                    <SelectInput value={connectForm.transport} onChange={v => setConnectForm({...connectForm, transport: v})} options={[{value:"stdio",label:"Stdio (command)"},{value:"sse",label:"SSE (URL)"}]} />
+                  </Field>
+                </div>
+                {connectForm.transport === "stdio" ? (
+                  <Field label="Command"><TextInput value={connectForm.command} onChange={v => setConnectForm({...connectForm, command: v})} placeholder="npx @modelcontextprotocol/server-github" /></Field>
+                ) : (
+                  <Field label="URL"><TextInput value={connectForm.url} onChange={v => setConnectForm({...connectForm, url: v})} placeholder="http://localhost:3001/sse" /></Field>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={connectMCP} disabled={actionLoading || !connectForm.name} className="text-[10px] font-medium text-violet-400 bg-violet-500/8 border border-violet-500/15 px-3 py-1.5 rounded-lg disabled:opacity-40 hover:bg-violet-500/15 transition-all">
+                    {actionLoading ? "Connecting..." : "Connect"}
+                  </button>
+                  <button onClick={() => setConnectForm(null)} className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors">Cancel</button>
+                </div>
+              </div>
             )}
-            <div className="flex gap-2">
-              <button onClick={connectMCP} disabled={actionLoading || !connectForm.name} className="text-[10px] font-medium text-violet-400 bg-violet-500/8 border border-violet-500/15 px-3 py-1.5 rounded-lg disabled:opacity-40 hover:bg-violet-500/15 transition-all">
-                {actionLoading ? "Connecting..." : "Connect"}
+          </div>
+
+          {/* LangChain Tools — import a custom one + manage imported */}
+          <div className="space-y-2 pt-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-slate-300">LangChain Tools</h3>
+              <button onClick={() => setLcForm({ module: "", className: "" })} className="text-[10px] text-amber-400 hover:text-amber-300 bg-amber-500/8 border border-amber-500/15 px-2.5 py-1 rounded-lg transition-all hover:scale-[1.02]">
+                + Import
               </button>
-              <button onClick={() => setConnectForm(null)} className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors">Cancel</button>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* LangChain Tools */}
-      <div className="space-y-2 mb-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-slate-300">LangChain Tools</h3>
-          <button onClick={() => setLcForm({ module: "", className: "" })} className="text-[10px] text-amber-400 hover:text-amber-300 bg-amber-500/8 border border-amber-500/15 px-2.5 py-1 rounded-lg transition-all hover:scale-[1.02]">
-            + Import
-          </button>
-        </div>
-
-        {(tools?.langchain?.tools || []).map((t: any) => (
-          <div key={t.name} className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2 hover:border-white/[0.1] transition-all">
-            <span className="text-[11px] font-mono text-amber-300">{t.name}</span>
-            <span className="text-[9px] text-slate-500 truncate flex-1">{t.description}</span>
-            <button onClick={() => unregisterLC(t.name)} className="text-[10px] text-slate-600 hover:text-red-400 transition-colors">Remove</button>
-          </div>
-        ))}
-
-        {lcForm && (
-          <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.03] p-3 space-y-2 animate-fade-in">
-            <Field label="Module Path"><TextInput value={lcForm.module} onChange={v => setLcForm({...lcForm, module: v})} placeholder="langchain_community.tools.wikipedia.tool" /></Field>
-            <Field label="Class Name"><TextInput value={lcForm.className} onChange={v => setLcForm({...lcForm, className: v})} placeholder="WikipediaQueryRun" /></Field>
-            <div className="flex gap-2">
-              <button onClick={registerLC} disabled={actionLoading || !lcForm.module || !lcForm.className} className="text-[10px] font-medium text-amber-400 bg-amber-500/8 border border-amber-500/15 px-3 py-1.5 rounded-lg disabled:opacity-40 hover:bg-amber-500/15 transition-all">
-                {actionLoading ? "Importing..." : "Import"}
-              </button>
-              <button onClick={() => setLcForm(null)} className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors">Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Catalog */}
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold text-slate-300">Popular Tools</h3>
-
-        <p className="text-[10px] text-slate-500 uppercase tracking-wide mt-2 mb-1">MCP Servers</p>
-        <div className="grid grid-cols-1 gap-1.5">
-          {MCP_CATALOG.map(srv => {
-            const isConnected = Object.keys(tools?.mcp_servers || {}).includes(srv.name);
-            return (
-              <div key={srv.name} className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2 hover:border-white/[0.1] transition-all">
-                <span className="text-[11px] font-medium text-slate-200 w-24">{srv.name}</span>
-                <span className="text-[9px] text-slate-500 flex-1">{srv.desc}</span>
-                {srv.env && <span className="text-[8px] text-slate-600 font-mono">{srv.env}</span>}
-                {isConnected ? (
-                  <span className="text-[9px] text-emerald-400">Connected</span>
-                ) : (
-                  <button onClick={() => setConnectForm({ name: srv.name, transport: "stdio", command: srv.command, url: "" })} className="text-[9px] text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 px-2 py-0.5 rounded transition-all hover:scale-[1.05]">
-                    Connect
+            {lcForm && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.03] p-3 space-y-2 animate-fade-in">
+                <Field label="Module Path"><TextInput value={lcForm.module} onChange={v => setLcForm({...lcForm, module: v})} placeholder="langchain_community.tools.wikipedia.tool" /></Field>
+                <Field label="Class Name"><TextInput value={lcForm.className} onChange={v => setLcForm({...lcForm, className: v})} placeholder="WikipediaQueryRun" /></Field>
+                <div className="flex gap-2">
+                  <button onClick={registerLC} disabled={actionLoading || !lcForm.module || !lcForm.className} className="text-[10px] font-medium text-amber-400 bg-amber-500/8 border border-amber-500/15 px-3 py-1.5 rounded-lg disabled:opacity-40 hover:bg-amber-500/15 transition-all">
+                    {actionLoading ? "Importing..." : "Import"}
                   </button>
-                )}
+                  <button onClick={() => setLcForm(null)} className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors">Cancel</button>
+                </div>
               </div>
-            );
-          })}
-        </div>
-
-        <p className="text-[10px] text-slate-500 uppercase tracking-wide mt-3 mb-1">LangChain Community</p>
-        <div className="grid grid-cols-1 gap-1.5">
-          {LC_CATALOG.map(lc => {
-            const isRegistered = (tools?.langchain?.tools || []).some((t: any) => t.name.includes(lc.name.toLowerCase()));
-            return (
-              <div key={lc.name} className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2 hover:border-white/[0.1] transition-all">
-                <span className="text-[11px] font-medium text-slate-200 w-24">{lc.name}</span>
-                <span className="text-[9px] text-slate-500 font-mono flex-1 truncate">{lc.module}</span>
-                {isRegistered ? (
-                  <span className="text-[9px] text-emerald-400">Imported</span>
-                ) : (
-                  <button onClick={() => setLcForm({ module: lc.module, className: lc.className })} className="text-[9px] text-amber-400 hover:text-amber-300 bg-amber-500/8 border border-amber-500/15 px-2 py-0.5 rounded transition-all hover:scale-[1.05]">
-                    Import
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
+            )}
+          </div>
+        </AdvancedDisclosure>
       </div>
 
       <div className="mt-4">
@@ -1764,18 +1761,83 @@ function EnvPanel() {
 
 // ── Marketplace Section ─────────────────────────────────────────────────────
 
-function MarketplaceSection() {
+function MarketplaceSection({ onInstalled, installedMcp, installedLc }: { onInstalled?: () => void; installedMcp?: Set<string>; installedLc?: string[] }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [results, setResults] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [featured, setFeatured] = useState<any>(null);
+  const [installState, setInstallState] = useState<Record<string, "installing" | "done" | "error" | "needs-token">>({});
+  const [installError, setInstallError] = useState<Record<string, string>>({});
+  const [envKeys, setEnvKeys] = useState<Set<string>>(new Set());
+  const [pending, setPending] = useState<{ key: string; vars: string[]; inputs: Record<string, string> } | null>(null);
 
-  // Load featured on mount
+  const itemKey = (item: any) => `${item.type}-${item.name}`;
+  const requiredEnv = (item: any): string[] => (item.type === "mcp" ? (item.env || []) : []);
+  // Already connected/registered on the backend (passed down from ToolsPanel's authoritative tool
+  // list) → the card shows "Connected" even without a session action, and stays in sync on remove.
+  const isInstalled = (item: any) =>
+    item.type === "mcp"
+      ? !!installedMcp?.has(item.name)
+      : (installedLc || []).some(n => n.includes(String(item.name).toLowerCase()));
+
+  // Connect/register for real. If, after connecting, the item still needs an env var that isn't
+  // set, mark it "needs-token" (installed but won't actually work) rather than a green "done".
+  const doConnect = async (item: any, keys: Set<string>) => {
+    const key = itemKey(item);
+    setInstallState(s => ({ ...s, [key]: "installing" }));
+    try {
+      const r = item.type === "mcp"
+        ? await fetch(`${BASE_URL}/tools/mcp/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: item.name, transport: item.transport || "stdio", command: item.command || "", url: "" }) })
+        : await fetch(`${BASE_URL}/tools/langchain/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: item.module, "class": item.class_name }) });
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        throw new Error(body?.detail || `HTTP ${r.status}`);
+      }
+      const missing = requiredEnv(item).some(e => !keys.has(e));
+      setInstallState(s => ({ ...s, [key]: missing ? "needs-token" : "done" }));
+      setInstallError(s => { const n = { ...s }; delete n[key]; return n; });
+      onInstalled?.();
+    } catch (e: any) {
+      setInstallState(s => ({ ...s, [key]: "error" }));
+      setInstallError(s => ({ ...s, [key]: String(e?.message || e).slice(0, 240) }));
+    }
+  };
+
+  // Click "Install": if the server needs env vars that aren't set yet, invite the user to enter
+  // them right here first; otherwise connect straight away.
+  const install = (item: any) => {
+    const missing = requiredEnv(item).filter(e => !envKeys.has(e));
+    if (missing.length > 0) {
+      setPending({ key: itemKey(item), vars: missing, inputs: Object.fromEntries(missing.map(e => [e, ""])) });
+      return;
+    }
+    doConnect(item, envKeys);
+  };
+
+  // Save the entered token(s) to Settings → Environment (so the spawned server reads them), then connect.
+  const saveEnvAndInstall = async (item: any) => {
+    if (!pending) return;
+    const next = new Set(envKeys);
+    for (const v of pending.vars) {
+      const val = (pending.inputs[v] || "").trim();
+      if (!val) continue;
+      try {
+        await fetch(`${BASE_URL}/env`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: v, value: val, secret: true }) });
+        next.add(v);
+      } catch {}
+    }
+    setEnvKeys(next);
+    setPending(null);
+    doConnect(item, next);
+  };
+
+  // Load featured + existing env-var keys on mount
   useEffect(() => {
     fetch(`${BASE_URL}/marketplace/featured`).then(r => r.json()).then(setFeatured).catch(() => {});
     fetch(`${BASE_URL}/marketplace/categories`).then(r => r.json()).then(d => setCategories(d.categories || [])).catch(() => {});
+    fetch(`${BASE_URL}/env`).then(r => r.json()).then(d => setEnvKeys(new Set((d.vars || []).map((v: any) => v.key)))).catch(() => {});
   }, []);
 
   const search = useCallback(async () => {
@@ -1844,37 +1906,79 @@ function MarketplaceSection() {
               initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.03 }}
-              className="flex items-start gap-2.5 p-3 rounded-lg border border-white/[0.06] bg-white/[0.015] hover:border-white/[0.12] transition-all group"
+              className="flex flex-col p-3 rounded-lg border border-white/[0.06] bg-white/[0.015] hover:border-white/[0.12] transition-all group"
             >
-              <div className={`p-1.5 rounded-md shrink-0 ${item.type === "mcp" ? "bg-emerald-500/10" : "bg-amber-500/10"}`}>
-                {item.type === "mcp" ? (
-                  <Plug className="h-3.5 w-3.5 text-emerald-400" />
-                ) : (
-                  <Wrench className="h-3.5 w-3.5 text-amber-400" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-medium text-slate-200">{item.title || item.name}</span>
-                  <span className={`text-[8px] px-1 py-0.5 rounded ${
-                    item.type === "mcp" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
-                  }`}>
-                    {item.type === "mcp" ? "MCP" : "LC"}
-                  </span>
+              <div className="flex items-start gap-2.5">
+                <div className={`p-1.5 rounded-md shrink-0 ${item.type === "mcp" ? "bg-emerald-500/10" : "bg-amber-500/10"}`}>
+                  {item.type === "mcp" ? (
+                    <Plug className="h-3.5 w-3.5 text-emerald-400" />
+                  ) : (
+                    <Wrench className="h-3.5 w-3.5 text-amber-400" />
+                  )}
                 </div>
-                <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2">{item.description}</p>
-                {item.env && item.env.length > 0 && (
-                  <div className="flex items-center gap-1 mt-1">
-                    <span className="text-[8px] text-slate-600">Requires:</span>
-                    {item.env.map((e: string) => (
-                      <span key={e} className="text-[8px] text-amber-400/70 bg-amber-500/5 px-1 rounded">{e}</span>
-                    ))}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-slate-200">{item.title || item.name}</span>
+                    <span className={`text-[8px] px-1 py-0.5 rounded ${
+                      item.type === "mcp" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
+                    }`}>
+                      {item.type === "mcp" ? "MCP" : "LC"}
+                    </span>
                   </div>
-                )}
+                  <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2">{item.description}</p>
+                  {requiredEnv(item).length > 0 && (
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      <span className="text-[8px] text-slate-600">Requires:</span>
+                      {requiredEnv(item).map((e: string) => (
+                        <span key={e} className={`text-[8px] px-1 rounded ${envKeys.has(e) ? "text-emerald-400/80 bg-emerald-500/5" : "text-amber-400/70 bg-amber-500/5"}`}>{envKeys.has(e) ? `${e} ✓` : e}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {(() => {
+                  const st = installState[itemKey(item)] || (isInstalled(item) ? "done" : undefined);
+                  const base = "shrink-0 px-2 py-1 text-[9px] font-medium rounded-md border transition-all";
+                  if (st === "done") return <span className={`${base} text-emerald-400 bg-emerald-500/5 border-emerald-500/15`}>Connected ✓</span>;
+                  if (st === "needs-token") return <span title={`Installed, but needs ${requiredEnv(item).join(", ")} to work`} className={`${base} text-amber-400 bg-amber-500/5 border-amber-500/20`}>Needs {requiredEnv(item).filter(e => !envKeys.has(e))[0] || "config"}</span>;
+                  if (st === "installing") return <span className={`${base} text-slate-400 bg-white/[0.03] border-white/[0.08] flex items-center gap-1`}><Loader2 className="h-2.5 w-2.5 animate-spin" /> Installing…</span>;
+                  return (
+                    <button onClick={() => install(item)} className={`${base} ${st === "error" ? "text-amber-400 bg-amber-500/5 border-amber-500/20" : "text-cyan-400 bg-cyan-500/5 border-cyan-500/15 hover:bg-cyan-500/10"}`}>
+                      {st === "error" ? "Failed — retry" : "Install"}
+                    </button>
+                  );
+                })()}
               </div>
-              <button className="shrink-0 px-2 py-1 text-[9px] font-medium text-cyan-400 bg-cyan-500/5 border border-cyan-500/15 rounded-md opacity-0 group-hover:opacity-100 transition-all hover:bg-cyan-500/10">
-                Install
-              </button>
+
+              {/* Inline token prompt — invite the user to set the required var(s) now */}
+              {pending?.key === itemKey(item) && (
+                <div className="mt-2.5 pt-2.5 border-t border-white/[0.06] space-y-2 animate-fade-in">
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    <span className="text-slate-200 font-medium">{item.title || item.name}</span> needs {pending.vars.join(", ")} to work. Enter it now (saved to <span className="text-slate-300">Environment</span>), or install anyway and set it later.
+                  </p>
+                  {pending.vars.map(v => (
+                    <input
+                      key={v}
+                      value={pending.inputs[v]}
+                      onChange={e => setPending(p => p ? { ...p, inputs: { ...p.inputs, [v]: e.target.value } } : p)}
+                      placeholder={v}
+                      type="password"
+                      className="w-full !py-1.5 !px-2.5 !text-[11px] font-mono !bg-[#08080f] !border-white/[0.06]"
+                    />
+                  ))}
+                  <div className="flex gap-2">
+                    <button onClick={() => saveEnvAndInstall(item)} disabled={pending.vars.every(v => !(pending.inputs[v] || "").trim())} className="text-[10px] font-medium text-cyan-400 bg-cyan-500/8 border border-cyan-500/15 px-3 py-1.5 rounded-lg disabled:opacity-40 hover:bg-cyan-500/15 transition-all">Save &amp; install</button>
+                    <button onClick={() => { setPending(null); doConnect(item, envKeys); }} className="text-[10px] text-amber-400/80 hover:text-amber-300 transition-colors">Install anyway</button>
+                    <button onClick={() => setPending(null)} className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors ml-auto">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Real failure reason (server's own stderr), surfaced from the backend */}
+              {installState[itemKey(item)] === "error" && installError[itemKey(item)] && (
+                <p className="mt-2 pt-2 border-t border-white/[0.06] text-[9.5px] text-red-400/90 leading-relaxed break-words font-mono">
+                  {installError[itemKey(item)]}
+                </p>
+              )}
             </motion.div>
           ))}
         </div>

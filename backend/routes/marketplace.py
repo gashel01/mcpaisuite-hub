@@ -12,8 +12,8 @@ router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 
 MCP_CATALOG = [
     # Official / well-known
-    {"name": "github", "title": "GitHub", "description": "Repository management, issues, PRs, file operations", "command": "npx @modelcontextprotocol/server-github", "transport": "stdio", "env": ["GITHUB_TOKEN"], "category": "dev", "popularity": 95},
-    {"name": "slack", "title": "Slack", "description": "Channel management, messaging, search", "command": "npx @modelcontextprotocol/server-slack", "transport": "stdio", "env": ["SLACK_TOKEN"], "category": "communication", "popularity": 90},
+    {"name": "github", "title": "GitHub", "description": "Repository management, issues, PRs, file operations", "command": "npx @modelcontextprotocol/server-github", "transport": "stdio", "env": ["GITHUB_PERSONAL_ACCESS_TOKEN"], "category": "dev", "popularity": 95},
+    {"name": "slack", "title": "Slack", "description": "Channel management, messaging, search", "command": "npx @modelcontextprotocol/server-slack", "transport": "stdio", "env": ["SLACK_BOT_TOKEN", "SLACK_TEAM_ID"], "category": "communication", "popularity": 90},
     {"name": "postgres", "title": "PostgreSQL", "description": "Read-only database access with schema inspection", "command": "npx @modelcontextprotocol/server-postgres", "transport": "stdio", "env": ["DATABASE_URL"], "category": "database", "popularity": 85},
     {"name": "filesystem", "title": "Filesystem", "description": "Secure file operations with configurable access", "command": "npx @modelcontextprotocol/server-filesystem", "transport": "stdio", "env": [], "category": "system", "popularity": 80},
     {"name": "git", "title": "Git", "description": "Read, search, and manipulate Git repositories", "command": "npx @modelcontextprotocol/server-git", "transport": "stdio", "env": [], "category": "dev", "popularity": 88},
