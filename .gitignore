@@ -24,3 +24,6 @@ data/
 test_graph.py
 test_graph_output*.txt
 Modelfile.*
+
+# Local test scaffold — second real backend instance with a COPY of the real llm_config.json (API key). Never commit.
+test-backend-b/

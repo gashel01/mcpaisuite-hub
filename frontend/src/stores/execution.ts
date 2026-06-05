@@ -78,7 +78,7 @@ interface ExecutionStore {
   setActiveEvent: (id: string | null) => void;
   reset: () => void;
   tick: () => void;
-  loadTrace: (taskId: string, turns: Array<{ role: string; tool?: string; duration_ms?: number; tokens?: number; success?: boolean; content?: string }>, totalTokens?: number, totalCost?: number, taskStatus?: string) => void;
+  loadTrace: (taskId: string, turns: Array<{ role: string; tool?: string; duration_ms?: number; tokens?: number; success?: boolean; content?: string }>, totalTokens?: number, totalCost?: number, taskStatus?: string, durationMs?: number) => void;
   setViewState: (state: "idle" | "running" | "completed" | "reviewing") => void;
   setRightPanelTab: (tab: "live" | "analytics" | "alerts" | "studio") => void;
   toggleTaskHistory: () => void;
@@ -255,7 +255,7 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
     }
   },
 
-  loadTrace: (taskId, turns, totalTokens, totalCost, taskStatus?: string) => {
+  loadTrace: (taskId, turns, totalTokens, totalCost, taskStatus?: string, durationMs?: number) => {
     nodeCounter = 0;
     const events: StreamEvent[] = [];
     const nodes: GraphNode[] = [];
@@ -323,7 +323,9 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
       turns: turns.length,
       tokens: totalTokens || 0,
       cost: totalCost || 0,
-      elapsed: 0,
+      // Historical trace: show the run's real duration. The live `tick` only runs while
+      // streaming, so without this a finished trace's ELAPSED badge stays stuck at 0ms.
+      elapsed: durationMs || 0,
       startTime: null,
     });
   },

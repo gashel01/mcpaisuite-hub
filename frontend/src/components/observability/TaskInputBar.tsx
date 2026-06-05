@@ -39,7 +39,7 @@ export default function TaskInputBar({
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="What should the agent accomplish?"
+          placeholder="Run a task and watch it execute live…"
           disabled={status === "streaming"}
           className="w-full !py-1.5 !pl-8 !pr-20 text-[12px] sm:text-[13px] !bg-white/[0.02] !border-white/[0.06] focus:!border-violet-500/40 focus:!bg-white/[0.03] placeholder:text-slate-600 !rounded-lg"
         />

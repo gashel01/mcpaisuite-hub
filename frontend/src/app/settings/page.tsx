@@ -6,7 +6,7 @@ import {
   Settings, Save, Loader2, Cpu, Brain, HardDrive, Shield, Database, Clock, Search,
   Check, ChevronRight, ChevronDown, Plug, CircleCheck, CircleX, Server, Wifi, WifiOff, Wrench, RefreshCw,
   KeyRound, Eye, EyeOff, Copy, Trash2, Plus,
-  Sparkles, Undo2, AlertTriangle, Zap, Cloud, Monitor, X, ArrowRight, ArrowLeft, Rocket, Radio, Link2, Link2Off, Menu,
+  Sparkles, Undo2, AlertTriangle, Zap, Cloud, Monitor, X, ArrowRight, ArrowLeft, Rocket, Link2Off, Menu,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 // PageHeader replaced by inline header for better mobile layout
@@ -108,7 +108,7 @@ const TABS = [
   { id: "tools", label: "Tools", icon: Wrench, color: "text-violet-400", bg: "bg-violet-400" },
   { id: "env", label: "Environment", icon: KeyRound, color: "text-lime-400", bg: "bg-lime-400" },
   { id: "infra", label: "Infrastructure", icon: HardDrive, color: "text-slate-400", bg: "bg-slate-400" },
-  { id: "remote", label: "Remote Kernel", icon: Radio, color: "text-teal-400", bg: "bg-teal-400" },
+  { id: "remote", label: "Backend", icon: Server, color: "text-teal-400", bg: "bg-teal-400" },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -571,7 +571,8 @@ export default function SettingsPage() {
   const [animDir, setAnimDir] = useState<"left" | "right">("right");
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // Remote Kernel state
+  // Custom-backend override state (Settings → Backend): replaces the local backend.
+  // Distinct from connect_hub (additive remote-kernel scopes in Observability).
   const [remoteEnabled, setRemoteEnabled] = useState(false);
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remoteTesting, setRemoteTesting] = useState(false);
@@ -1266,17 +1267,26 @@ export default function SettingsPage() {
               </>
             )}
 
-            {/* ── Remote Kernel ─────────────────────────────────────────────── */}
+            {/* ── Backend (custom-backend override; replaces local) ──────────── */}
             {tab === "remote" && (
               <>
-                <SectionHeader icon={Radio} color="text-teal-400" title="Remote Kernel" desc="Connect this dashboard to an external kernelmcp instance" />
+                <SectionHeader icon={Server} color="text-teal-400" title="Backend URL" desc="Point this dashboard at a different backend — replaces the local one" />
+
+                {/* What this is / isn't */}
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-3 flex items-start gap-2.5">
+                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                    This <strong>swaps</strong> the backend every page talks to — the local kernel and its data are hidden while active. It&apos;s a deployment setting for when this UI has no co-located backend.{" "}
+                    <strong>Not</strong> how you watch other kernels: to observe kernels embedded in your own apps without losing the local view, have them call <code className="text-amber-300">connect_hub()</code> — they show up as extra scopes in Observability.
+                  </p>
+                </div>
 
                 {/* Current state banner */}
                 {remoteEnabled ? (
                   <div className="flex items-center gap-3 p-3 rounded-xl bg-teal-500/10 border border-teal-500/20">
-                    <Radio className="h-4 w-4 text-teal-400 animate-pulse shrink-0" />
+                    <Server className="h-4 w-4 text-teal-400 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-teal-300">Listening to remote kernel</p>
+                      <p className="text-xs font-medium text-teal-300">Using a custom backend — local replaced</p>
                       <p className="text-[10px] text-teal-500 truncate">{remoteUrl}</p>
                     </div>
                     <button
@@ -1289,12 +1299,12 @@ export default function SettingsPage() {
                 ) : (
                   <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
                     <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <p className="text-xs text-slate-400">Using local kernel (default)</p>
+                    <p className="text-xs text-slate-400">Using the local backend (default)</p>
                   </div>
                 )}
 
                 <div className="space-y-4 pt-2">
-                  <Field label="Remote Kernel URL" hint="Base URL of the kernelmcp API you want to observe (e.g. http://my-server:8000)">
+                  <Field label="Backend URL" hint="Base URL of the kernelmcp API this dashboard should drive (e.g. http://my-server:8000). This becomes THE backend — it does not run alongside the local one.">
                     <div className="flex gap-2">
                       <TextInput
                         value={remoteUrl}
@@ -1323,17 +1333,17 @@ export default function SettingsPage() {
                     disabled={!remoteUrl.trim()}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600/20 border border-teal-500/30 text-sm font-medium text-teal-300 hover:bg-teal-600/30 transition-all disabled:opacity-40"
                   >
-                    <Link2 className="h-4 w-4" />
-                    {remoteEnabled ? "Reconnect to new URL" : "Connect & Reload"}
+                    <Server className="h-4 w-4" />
+                    {remoteEnabled ? "Switch to this backend & reload" : "Use this backend & reload"}
                   </button>
 
                   <div className="rounded-xl border border-white/[0.06] bg-white/[0.015] p-4 space-y-2">
                     <p className="text-xs font-medium text-slate-300">How it works</p>
                     <ul className="space-y-1.5 text-[11px] text-slate-500">
-                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>All API calls (audit, memory, traces, security, scheduler…) are forwarded to the remote URL</li>
-                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>The remote kernel must have CORS enabled for this dashboard&apos;s origin</li>
-                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>LLM config and settings changes will apply to the remote kernel</li>
-                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>Disconnect to return to the local kernel</li>
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>Every page (chat, agents, memory, traces, security, scheduler…) is driven by this backend — the local one is hidden while active</li>
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>The backend must have CORS enabled for this dashboard&apos;s origin</li>
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>LLM config and settings changes apply to THIS backend, not the local one</li>
+                      <li className="flex items-start gap-2"><span className="text-teal-500 mt-0.5">•</span>Disconnect to return to the local backend</li>
                     </ul>
                   </div>
                 </div>

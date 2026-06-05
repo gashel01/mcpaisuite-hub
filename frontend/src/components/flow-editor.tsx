@@ -72,6 +72,19 @@ const TRIGGER_ICONS: Record<string, string> = {
 
 // ── Custom Nodes ───────────────────────────────────────────────────────────
 
+// Always-visible node-kind chip (top-right). Makes a node's TYPE clear at a glance even
+// when its subtitle shows a live status instead (e.g. a human gate reading "approved").
+function TypeTag({ label, color }: { label: string; color: string }) {
+  return (
+    <div
+      className="absolute -top-2 right-2 z-10 px-1.5 py-[0.5px] rounded-full text-[7px] font-bold uppercase tracking-wider border pointer-events-none whitespace-nowrap"
+      style={{ color, borderColor: color + "55", background: "#0c0c14" }}
+    >
+      {label}
+    </div>
+  );
+}
+
 function AgentNode({ data, selected }: NodeProps<Node<AgentNodeData>>) {
   const color = AGENT_COLORS[data.agentType] || "#6366f1";
   const hasError = (data as any).hasError;
@@ -79,12 +92,13 @@ function AgentNode({ data, selected }: NodeProps<Node<AgentNodeData>>) {
   const isActive = runState === "running";
   const isDone = runState === "done";
   return (
-    <div className={`px-3 py-2.5 rounded-xl border-2 min-w-[150px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""} ${hasError ? "animate-pulse" : ""} ${isActive ? "animate-pulse" : ""}`}
+    <div className={`relative px-3 py-2.5 rounded-xl border-2 min-w-[150px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""} ${hasError ? "animate-pulse" : ""} ${isActive ? "animate-pulse" : ""}`}
       style={{
         borderColor: hasError ? "rgb(239,68,68)" : isDone ? "rgb(16,185,129)" : isActive ? color : selected ? color : color + "50",
         background: hasError ? "rgba(239,68,68,0.06)" : isDone ? "rgba(16,185,129,0.04)" : isActive ? color + "08" : "#0c0c14",
         boxShadow: hasError ? "0 0 16px rgba(239,68,68,0.3), 0 0 4px rgba(239,68,68,0.2)" : isActive ? `0 0 20px ${color}50, 0 0 8px ${color}40` : isDone ? "0 0 12px rgba(16,185,129,0.2)" : selected ? `0 0 20px ${color}40, 0 0 6px ${color}30` : "none",
       }}>
+      <TypeTag label="Agent" color={color} />
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-400" />
       <div className="flex items-center gap-2">
         {isDone ? (
@@ -112,8 +126,9 @@ function TriggerNode({ data, selected }: NodeProps<Node<TriggerNodeData>>) {
   const tt = data.triggerType || "manual";
   const color = TRIGGER_COLORS[tt] || "#8b5cf6";
   return (
-    <div className={`px-3 py-2.5 rounded-xl border-2 min-w-[150px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
+    <div className={`relative px-3 py-2.5 rounded-xl border-2 min-w-[150px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
       style={{ borderColor: selected ? color : color + "40", background: color + "10", boxShadow: selected ? `0 0 20px ${color}40, 0 0 6px ${color}30` : "none" }}>
+      <TypeTag label="Trigger" color={color} />
       <div className="flex items-center gap-2">
         <span className="text-sm">{TRIGGER_ICONS[tt]}</span>
         <div>
@@ -129,8 +144,9 @@ function TriggerNode({ data, selected }: NodeProps<Node<TriggerNodeData>>) {
 function ConditionNode({ data, selected }: NodeProps<Node<ConditionNodeData>>) {
   const hasError = (data as any).hasError;
   return (
-    <div className={`px-3 py-2 rounded-lg border-2 min-w-[80px] text-center transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
+    <div className={`relative px-3 py-2 rounded-lg border-2 min-w-[80px] text-center transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
       style={{ borderColor: hasError ? "rgb(239,68,68)" : selected ? "rgb(245,158,11)" : "rgba(245,158,11,0.4)", background: hasError ? "rgba(239,68,68,0.06)" : "rgba(245,158,11,0.06)", boxShadow: hasError ? "0 0 16px rgba(239,68,68,0.3)" : selected ? "0 0 20px rgba(245,158,11,0.25), 0 0 6px rgba(245,158,11,0.2)" : "none" }}>
+      <TypeTag label="Condition" color="#f59e0b" />
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-400" />
       <div className="text-[10px] font-semibold text-amber-400">{data.label || "?"}</div>
       <div className="text-[8px] text-amber-400/50 font-mono">{data.expression}</div>
@@ -153,8 +169,9 @@ function HumanNode({ data, selected }: NodeProps<Node<HumanNodeData>>) {
   const dotClass = isDenied ? "bg-red-500" : isRevision ? "bg-orange-500 animate-pulse" : isWaiting ? "bg-yellow-500 animate-ping" : isDone ? "bg-emerald-500" : "bg-blue-500";
   const textClass = isDenied ? "text-red-300" : isRevision ? "text-orange-300" : isWaiting ? "text-yellow-300" : isDone ? "text-emerald-300" : "text-blue-300";
   return (
-    <div className={`px-3 py-2.5 rounded-xl border-2 min-w-[130px] transition-all duration-200 ${isWaiting ? "animate-pulse" : ""} ${selected ? "scale-[1.03]" : ""}`}
+    <div className={`relative px-3 py-2.5 rounded-xl border-2 min-w-[130px] transition-all duration-200 ${isWaiting ? "animate-pulse" : ""} ${selected ? "scale-[1.03]" : ""}`}
       style={{ borderColor: hasError ? "rgb(239,68,68)" : stateColor, background: hasError ? "rgba(239,68,68,0.06)" : stateBg, boxShadow: (isWaiting || isRevision) ? `0 0 20px ${stateColor}40` : isDenied ? `0 0 16px ${stateColor}40` : "none" }}>
+      <TypeTag label="Human gate" color="#3b82f6" />
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-400" />
       <div className="flex items-center gap-2">
         <div className={`h-3 w-3 rounded-full shrink-0 ${hasError ? "bg-red-500" : dotClass}`} />
@@ -173,8 +190,9 @@ function WorkspaceNode({ data, selected }: NodeProps<Node<WorkspaceNodeData>>) {
   const modeIcons: Record<string, string> = { user: "👤", isolated: "🔒", persistent: "💾" };
   const hasError = (data as any).hasError;
   return (
-    <div className={`px-3 py-2.5 rounded-xl border-2 min-w-[130px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
+    <div className={`relative px-3 py-2.5 rounded-xl border-2 min-w-[130px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
       style={{ borderColor: hasError ? "rgb(239,68,68)" : selected ? "rgb(20,184,166)" : "rgba(20,184,166,0.4)", background: hasError ? "rgba(239,68,68,0.06)" : "rgba(20,184,166,0.06)", boxShadow: hasError ? "0 0 16px rgba(239,68,68,0.3)" : selected ? "0 0 20px rgba(20,184,166,0.25), 0 0 6px rgba(20,184,166,0.2)" : "none" }}>
+      <TypeTag label="Workspace" color="#14b8a6" />
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-400" />
       <div className="flex items-center gap-2">
         <span className="text-sm">📁</span>
@@ -202,8 +220,9 @@ function EndNode({ selected }: NodeProps<Node<EndNodeData>>) {
 function WorkflowNode({ data, selected }: NodeProps<Node<WorkflowNodeData>>) {
   const hasError = (data as any).hasError;
   return (
-    <div className={`px-3 py-2.5 rounded-xl border-2 min-w-[160px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
+    <div className={`relative px-3 py-2.5 rounded-xl border-2 min-w-[160px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""}`}
       style={{ borderColor: hasError ? "rgb(239,68,68)" : selected ? "rgb(236,72,153)" : "rgba(236,72,153,0.4)", background: hasError ? "rgba(239,68,68,0.06)" : "rgba(236,72,153,0.06)", boxShadow: hasError ? "0 0 16px rgba(239,68,68,0.3)" : selected ? "0 0 20px rgba(236,72,153,0.25), 0 0 6px rgba(236,72,153,0.2)" : "none" }}>
+      <TypeTag label="Subflow" color="#ec4899" />
       <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-400" />
       <div className="flex items-center gap-2">
         <div className="h-6 w-6 rounded-lg bg-pink-500/15 border border-pink-500/25 flex items-center justify-center shrink-0">

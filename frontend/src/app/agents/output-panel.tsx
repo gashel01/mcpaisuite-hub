@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Bot, Play, Loader2, CheckCircle2, XCircle, Zap, DollarSign,
   RotateCw, Activity, ChevronRight, ChevronDown, X, Clock,
-  AlertCircle, MessageSquare, ArrowRight, Download, Plus, Save, Maximize2,
+  AlertCircle, MessageSquare, ArrowRight, ArrowUpRight, Download, Plus, Save, Maximize2,
 } from "lucide-react";
 import Link from "next/link";
 import CopyButton from "@/components/copy-button";
@@ -41,6 +41,23 @@ export default function OutputPanel({
   const [traceOpen, setTraceOpen] = useState(true);
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [templateName, setTemplateName] = useState("");
+
+  // Resolve the kernel task id behind the "View full trace" link. A fresh run already has it
+  // on the session; a REOPENED past run does not (the session is rebuilt from a run record that
+  // doesn't carry it), so we fetch it from the backend run record — exactly like Fleet's run
+  // detail (/runs/{id}.taskId). This is why the button used to vanish after closing/reopening.
+  const [resolvedTaskId, setResolvedTaskId] = useState<string | null>(session.taskId ?? null);
+  useEffect(() => {
+    if (session.taskId) { setResolvedTaskId(session.taskId); return; }
+    setResolvedTaskId(null);
+    if (!session.runId) return;
+    let cancelled = false;
+    fetch(`${BASE_URL}/runs/${session.runId}`, { headers: th })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled) setResolvedTaskId(d?.taskId || null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [session.taskId, session.runId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   HumanGateActions = HumanGateActionsComponent;
 
@@ -148,14 +165,13 @@ export default function OutputPanel({
               <span className="flex items-center gap-1"><DollarSign className="h-2.5 w-2.5" />${session.metrics.cost.toFixed(4)}</span>
               <span className="flex items-center gap-1"><Clock className="h-2.5 w-2.5" />{(session.metrics.duration / 1000).toFixed(1)}s</span>
             </div>
-            <div className="flex items-center gap-2 px-4 py-2 border-t border-white/[0.04]">
-              <Link href={`/chat${session.convId ? `?conv=${encodeURIComponent(session.convId)}` : ""}`} className="text-[10px] text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 px-3 py-1.5 rounded-lg transition-all">
-                Chat &rarr;
-              </Link>
-              <Link href={`/observability${session.taskId ? `?task=${session.taskId}` : ""}`} className="text-[10px] text-slate-400 hover:text-slate-300 bg-white/[0.03] border border-white/[0.06] px-3 py-1.5 rounded-lg transition-all flex items-center gap-1">
-                <Activity className="h-2.5 w-2.5" /> Observability
-              </Link>
-            </div>
+            {resolvedTaskId && (
+              <div className="flex items-center gap-2 px-4 py-2 border-t border-white/[0.04]">
+                <Link href={`/observability?task=${resolvedTaskId}`} className="text-[10px] text-sky-400 hover:text-sky-300 bg-white/[0.03] border border-white/[0.06] px-3 py-1.5 rounded-lg transition-all flex items-center gap-1">
+                  <Activity className="h-2.5 w-2.5" /> View full trace <ArrowUpRight className="h-2.5 w-2.5" />
+                </Link>
+              </div>
+            )}
           </div>
         )}
       </div>

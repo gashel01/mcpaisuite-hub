@@ -87,7 +87,7 @@ async def get_task(task_id: str, x_tenant_id: str = Header(default="")):
     task = k._tasks.get(task_id)  # Direct lookup (tasks may have sub-namespaces)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return {"id": task.id, "goal": task.goal, "status": task.status.value, "turns": flatten_turns(task), "total_tokens": task.total_tokens, "total_cost": task.total_cost, "total_turns": task.total_turns, "namespace": task.namespace, "metadata": task.metadata.get("result", {})}
+    return {"id": task.id, "goal": task.goal, "status": task.status.value, "turns": flatten_turns(task), "total_tokens": task.total_tokens, "total_cost": task.total_cost, "total_turns": task.total_turns, "duration_ms": getattr(task, "duration_ms", None), "namespace": task.namespace, "metadata": task.metadata.get("result", {})}
 
 
 @router.delete("/tasks/{task_id}")

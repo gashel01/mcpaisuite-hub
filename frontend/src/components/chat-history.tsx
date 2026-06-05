@@ -2,6 +2,7 @@
 
 import { MessageSquare, SquarePen, PanelLeftClose, Trash2, Loader2, X } from "lucide-react";
 import type { ConvInfo } from "@/types";
+import { parseTaskforce } from "@/lib/taskforce";
 
 interface ChatHistoryProps {
   conversations: ConvInfo[];
@@ -15,6 +16,11 @@ interface ChatHistoryProps {
 }
 
 export default function ChatHistory({ conversations, convId, runningConvId, open, onSwitchConv, onNewChat, onDeleteConv, onClose }: ChatHistoryProps) {
+  // TaskForce runs carry a "[TaskForce…]" prefix in their title. They are agent-team
+  // executions, not conversations — they belong in Observability (traces) and Agents (runs),
+  // not here. Keep the Chats bar for real chats only.
+  const chats = conversations.filter(c => !parseTaskforce(c.title || "").isTaskforce);
+
   const list = (
     <div className="w-56 flex flex-col min-h-0 h-full">
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-800/40 shrink-0">
@@ -32,10 +38,10 @@ export default function ChatHistory({ conversations, convId, runningConvId, open
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
-        {conversations.length === 0 && (
+        {chats.length === 0 && (
           <p className="text-[11px] text-slate-600 px-3 py-6 text-center">No conversations yet</p>
         )}
-        {conversations.map((c, i) => {
+        {chats.map((c, i) => {
           const isActive = c.id === convId;
           const isRunning = c.id === runningConvId;
           return (

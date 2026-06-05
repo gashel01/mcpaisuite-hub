@@ -114,6 +114,16 @@ export default function WorkspacePage() {
   const [stats, setStats] = useState<WsStats | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const { tenant: activeTenant } = useTenant();
+  // Optional ?ns= override: opened from a run's "View workspace" in Observability. Scopes
+  // THIS tab to a run's isolated/named workspace namespace WITHOUT mutating the global
+  // tenant (localStorage), so the run workspace is viewed without disturbing the user's
+  // selected tenant elsewhere.
+  const [nsOverride, setNsOverride] = useState<string | null>(null);
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("ns");
+    if (p) setNsOverride(p);
+  }, []);
+  const effectiveTenant = nsOverride || activeTenant;
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [selectedFile, setSelectedFile] = useState<FileContent | null>(null);
@@ -136,8 +146,8 @@ export default function WorkspacePage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const headers: Record<string, string> = activeTenant
-    ? { "X-Tenant-Id": activeTenant }
+  const headers: Record<string, string> = effectiveTenant
+    ? { "X-Tenant-Id": effectiveTenant }
     : {};
 
   // ── Data fetching ─────────────────────────────────────────────────────────
@@ -160,7 +170,7 @@ export default function WorkspacePage() {
       setFiles([]);
       setError("Failed to load files");
     }
-  }, [currentPath, activeTenant]);
+  }, [currentPath, effectiveTenant]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -170,7 +180,7 @@ export default function WorkspacePage() {
     } catch (_e) {
       setStats(null);
     }
-  }, [activeTenant]);
+  }, [effectiveTenant]);
 
   const loadCheckpoints = useCallback(async () => {
     try {
@@ -180,7 +190,7 @@ export default function WorkspacePage() {
     } catch (_e) {
       setCheckpoints([]);
     }
-  }, [activeTenant]);
+  }, [effectiveTenant]);
 
   // Initial load
   useEffect(() => {
@@ -471,6 +481,16 @@ export default function WorkspacePage() {
         </button>
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => { Array.from(e.target.files || []).forEach(f => uploadFile(f)); if (fileRef.current) fileRef.current.value = ""; }} />
       </div>
+
+      {/* Run-workspace banner — viewing an isolated/named run workspace via ?ns= (opened from Observability) */}
+      {nsOverride && (
+        <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 border-b border-violet-500/20 bg-violet-500/[0.06] text-[10px] text-violet-200">
+          <FolderOpen className="h-3 w-3 text-violet-400 shrink-0" />
+          <span className="truncate">
+            Viewing a run&rsquo;s workspace — <code className="text-violet-300">{nsOverride}</code>. This is scoped to this tab and does not change your selected namespace.
+          </span>
+        </div>
+      )}
 
       {/* Error */}
       {error && (

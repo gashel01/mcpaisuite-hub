@@ -2,7 +2,7 @@
 import { getApiUrl } from "@/lib/api-url";
 import { stripTaskforcePrefix } from "@/lib/taskforce";
 
-import { useState, useEffect, useRef, useCallback, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity, RefreshCw, Download, ArrowLeft, PanelRightOpen, PanelRightClose,
@@ -22,6 +22,7 @@ import TaskInputBar from "@/components/observability/TaskInputBar";
 import EventsPanel from "@/components/observability/EventsPanel";
 import { useAuditStore } from "@/stores/audit";
 import TraceWaterfall from "@/components/observability/TraceWaterfall";
+import RunWorkspacesButton from "@/components/observability/RunWorkspacesButton";
 import OverviewDashboard from "@/components/observability/OverviewDashboard";
 import { type TaskSummary } from "@/components/observability/TaskHistoryList";
 import HistorySidebar from "@/components/observability/HistorySidebar";
@@ -68,7 +69,11 @@ function ObservabilityInner() {
   const BASE = getApiUrl();
   const searchParams = useSearchParams();
   const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
+  // Memoize so `th` keeps a stable identity across renders. Otherwise every render makes a
+  // new object → refreshTasks/loadKernels change identity → their interval effects re-run and
+  // fire immediately every render → setState → re-render → a runaway /api/tool + /hub/instances
+  // polling storm. (Fleet already memoizes this; Observability had not.)
+  const th = useMemo(() => tenantHeaders(tenant), [tenant]);
   const { isMobile, isTablet, isMobileOrTablet, isDesktop } = useBreakpoint();
 
   // ── Page mode ──────────────────────────────────────────────────────────
@@ -211,20 +216,17 @@ function ObservabilityInner() {
 
   // ── URL param: auto-load task ──────────────────────────────────────────
 
+  // Deep-link: ?task=<id> opens that run's trace exactly like clicking it in the list —
+  // it SELECTS the task (highlights it in the bar), loads the trace, and shows the graph in
+  // review mode. We deliberately do NOT setTaskId here: that opens a live SSE stream and
+  // resets the graph for an already-finished run (the old bug — blank graph, no selection).
+  // Works regardless of pagination: selection is by id, independent of the visible page.
+  const deepLinkedTask = useRef<string | null>(null);
   useEffect(() => {
     const urlTask = searchParams.get("task");
-    if (urlTask && !taskId) {
-      setTaskId(urlTask);
-      setMode("trace");
-      Promise.all([
-        fetch(`${BASE}/tasks/${urlTask}`, { headers: th }).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${BASE}/api/tool`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ tool: "get_trace", args: { task_id: urlTask } }) }).then(r => r.json()).catch(() => null),
-      ]).then(([taskData, traceData]) => {
-        if (!taskData) return;
-        const turns = traceData?.result?.turns ?? taskData.turns ?? [];
-        useExecutionStore.getState().loadTrace(urlTask, turns, taskData.total_tokens, taskData.total_cost, taskData.status);
-        setGoal(stripTaskforcePrefix(taskData.goal || taskData.metadata?.result?.goal || ""));
-      }).catch(() => {});
+    if (urlTask && deepLinkedTask.current !== urlTask) {
+      deepLinkedTask.current = urlTask;
+      selectHistoryTask(urlTask);
     }
   }, [searchParams]); // eslint-disable-line
 
@@ -260,7 +262,7 @@ function ObservabilityInner() {
           const traceRes = await fetch(`${BASE}/api/tool`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ tool: "get_trace", args: { task_id: id } }) }).catch(() => null);
           const traceData = traceRes ? await traceRes.json() : null;
           const turns = traceData?.result?.turns ?? data.turns ?? [];
-          s.loadTrace(id, turns, data.total_tokens, data.total_cost, data.status);
+          s.loadTrace(id, turns, data.total_tokens, data.total_cost, data.status, data.duration_ms);
         }
       } catch {}
     }, 1500);
@@ -397,7 +399,7 @@ function ObservabilityInner() {
       const taskRes = await fetch(`${BASE}/tasks/${id}`, { headers: th });
       const taskData = taskRes.ok ? await taskRes.json() : null;
       const store = useExecutionStore.getState();
-      store.loadTrace(id, turns, taskData?.total_tokens, taskData?.total_cost, taskData?.status);
+      store.loadTrace(id, turns, taskData?.total_tokens, taskData?.total_cost, taskData?.status, taskData?.duration_ms);
       store.setViewState("reviewing");
       if (taskData?.goal) setGoal(stripTaskforcePrefix(taskData.goal));
     } catch {}
@@ -467,8 +469,15 @@ function ObservabilityInner() {
           </h1>
         </div>
 
-        {/* Center: Task Input — hidden on mobile in trace mode (no space) */}
-        {!(isMobile && mode === "trace") && (
+        {/* Center: in TRACE mode this is the selected run's goal as a read-only label (the
+            "Dashboard" button on the left clears/restores). Editing a past run's goal + Execute
+            would launch a brand-new task, which is misleading — so trace mode is observe-only.
+            In DASHBOARD mode it's the launcher: run a task and watch its trace live. */}
+        {mode === "trace" && status !== "streaming" ? (
+          <span className="flex-1 min-w-0 text-[12px] sm:text-[13px] text-slate-300 truncate" title={goal}>
+            {goal || "Trace"}
+          </span>
+        ) : (
           <div className="flex-1 min-w-0">
             <TaskInputBar
               goal={goal} setGoal={setGoal}
@@ -476,10 +485,6 @@ function ObservabilityInner() {
               status={status} launching={launching}
             />
           </div>
-        )}
-        {/* Mobile trace: show truncated goal instead */}
-        {isMobile && mode === "trace" && (
-          <span className="flex-1 min-w-0 text-[11px] text-slate-400 truncate">{goal || "Trace"}</span>
         )}
 
         {/* Right: metrics (desktop only) + actions */}
@@ -859,12 +864,15 @@ function RightPanelContent({
             )}
           </button>
         ))}
-        {isLive && (
-          <div className="ml-auto flex items-center gap-1.5">
-            <motion.div className="h-2 w-2 rounded-full bg-green-400" animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1.2 }} />
-            <span className="text-[10px] text-green-400/70 font-medium">live</span>
-          </div>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <RunWorkspacesButton taskId={taskId || selectedHistoryTask || ""} />
+          {isLive && (
+            <div className="flex items-center gap-1.5">
+              <motion.div className="h-2 w-2 rounded-full bg-green-400" animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1.2 }} />
+              <span className="text-[10px] text-green-400/70 font-medium">live</span>
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
         <AnimatePresence mode="wait">

@@ -155,8 +155,8 @@ export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: s
               </tr>
             </thead>
             <tbody>
-              {runs.map(r => (
-                <tr key={r.id} onClick={() => openDetail(r.id)} className={`border-b border-white/[0.03] cursor-pointer transition-colors ${selectedId === r.id ? "bg-violet-500/10" : "hover:bg-white/[0.025]"}`}>
+              {runs.map((r, i) => (
+                <tr key={r.id} onClick={() => openDetail(r.id)} style={{ animationDelay: `${Math.min(i, 20) * 20}ms` }} className={`animate-stagger border-b border-white/[0.03] cursor-pointer transition-colors ${selectedId === r.id ? "bg-violet-500/10" : "hover:bg-white/[0.025]"}`}>
                   <td className="px-4 py-2.5"><div className="flex items-center gap-1.5">{STATUS_ICON[r.status] || STATUS_ICON.cancelled}<span className="text-slate-400 capitalize text-[11px]">{r.status}</span></div></td>
                   <td className="px-2 py-2.5">
                     <div className="text-slate-200 truncate max-w-[260px]">{r.label || "—"}</div>

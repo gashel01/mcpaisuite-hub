@@ -141,8 +141,8 @@ export default function ConnectedKernels() {
             <p className="text-[11px] text-slate-600 py-2">No kernels connected yet. Mint a key below and call <code className="text-violet-300">connect_hub()</code> from your app.</p>
           ) : (
             <div className="space-y-1.5">
-              {instances.map(inst => (
-                <div key={inst.instance_id} className="rounded-lg border border-white/[0.06] bg-white/[0.015] overflow-hidden">
+              {instances.map((inst, i) => (
+                <div key={inst.instance_id} style={{ animationDelay: `${i * 30}ms` }} className="animate-stagger rounded-lg border border-white/[0.06] bg-white/[0.015] overflow-hidden">
                   <button onClick={() => toggle(inst.instance_id)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/[0.02] transition-colors text-left">
                     {expanded === inst.instance_id ? <ChevronDown className="h-3.5 w-3.5 text-slate-500" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-500" />}
                     <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${inst.live ? "bg-emerald-400" : "bg-slate-600"}`} />

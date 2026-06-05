@@ -2716,6 +2716,47 @@ async def get_task_spans(task_id: str, x_tenant_id: str = Header(default="")):
     }
 
 
+@router.get("/tasks/{task_id}/workspaces")
+async def get_task_workspaces(task_id: str):
+    """Workspace namespaces a run produced — powers the contextual 'View workspace' link in
+    Observability so isolated/named run workspaces are reachable WITHOUT exposing them in the
+    global tenant dropdown.
+
+    A TaskForce/deployment run executes under `{base}__run_{id}` (see call_tool/run_taskforce).
+    Its node workspaces are created by the graph executor as:
+      - isolated:   `{run_ns}__ws_{node8}`   (unique per run+node, invisible from the main tenant)
+      - persistent: `{base}__ws_{name}`      (named, shared across runs)
+    'user'-mode files go straight to the base tenant and are already visible on the Workspace
+    page, so they are intentionally NOT listed here.
+    """
+    k = _require()
+    task = k._tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    run_ns = task.namespace or ""
+    base = run_ns.split("__run_")[0] if "__run_" in run_ns else run_ns
+    ws = getattr(getattr(getattr(k, "_engine", None), "_orchestrator", None), "workspace", None)
+    tenants = ws.list_tenants() if ws and hasattr(ws, "list_tenants") else []
+    seen: set[str] = set()
+    out: list[dict] = []
+    for t in tenants:
+        if t in seen:
+            continue
+        kind = None
+        if "__run_" in run_ns and t == run_ns:
+            kind = "run"            # the run's own scratch namespace
+        elif "__run_" in run_ns and t.startswith(run_ns + "__ws_"):
+            kind = "isolated"       # per-node isolated workspace
+        elif t != base and t.startswith(base + "__ws_"):
+            kind = "persistent"     # named workspace shared across runs
+        if kind:
+            seen.add(t)
+            out.append({"namespace": t, "kind": kind,
+                        "label": t.split("__ws_")[-1] if "__ws_" in t else "run scratch"})
+    out.sort(key=lambda w: {"run": 0, "isolated": 1, "persistent": 2}.get(w["kind"], 3))
+    return {"task_id": task_id, "base": base, "run_namespace": run_ns, "workspaces": out}
+
+
 @router.get("/agents/classify")
 async def classify_task(goal: str = Query(...)):
     return {"goal": goal, "agent_type": _require().classify_task(goal)}

@@ -7,6 +7,7 @@ import { ModeProvider } from "@/context/mode";
 import { CodeRunnerProvider } from "@/context/code-runner";
 import { ToastProvider } from "@/components/ui/toast";
 import AuditStreamInit from "@/components/audit-stream-init";
+import BackendHealthGate from "@/components/backend-health-gate";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -38,6 +39,7 @@ export default function RootLayout({
             <CodeRunnerProvider>
               <ToastProvider>
                 <Sidebar />
+                <BackendHealthGate />
                 <AuditStreamInit />
                 <Onboarding />
                 <KeyboardShortcuts />

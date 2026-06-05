@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import {
   MessageSquare,
   Settings, Bot, Activity, Menu, X, Database, FolderOpen, Users, Plus,
-  ChevronDown, Clock, Shield, FlaskConical, Radio, History, Rocket, Gauge,
+  ChevronDown, Clock, Shield, FlaskConical, Server, History, Rocket, Gauge,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
 
@@ -42,6 +42,7 @@ export default function Sidebar() {
     return () => window.removeEventListener("kernelmcp:toggle-sidebar", handler);
   }, []);
   const [tenantOpen, setTenantOpen] = useState(false);
+  const [sandboxOpen, setSandboxOpen] = useState(false);
   const [newTenant, setNewTenant] = useState("");
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
 
@@ -53,6 +54,18 @@ export default function Sidebar() {
   }, []);
   const { tenant, setTenant, tenants, createTenant } = useTenant();
 
+  // Revert the custom-backend override (Settings → Backend) back to the local backend,
+  // without a trip to Settings. Preserves the URL (enabled:false) so it can be re-tested.
+  const revertBackend = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const r = JSON.parse(localStorage.getItem("kernelmcp_remote") || "{}");
+      localStorage.setItem("kernelmcp_remote", JSON.stringify({ ...r, enabled: false }));
+    } catch {}
+    window.location.reload();
+  };
+
   const handleCreateTenant = () => {
     if (newTenant.trim()) {
       createTenant(newTenant.trim());
@@ -63,6 +76,25 @@ export default function Sidebar() {
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
+
+  // Ephemeral per-run/per-node workspace namespaces (`{base}__run_*`, `…__ws_*`) created by
+  // TaskForce/deployment runs. They clutter the picker and are now reachable contextually
+  // (Observability run → "View workspace"), so collapse them behind a section here.
+  const isSandbox = (t: string) => t.includes("__run_") || t.includes("__ws_");
+  const realTenants = tenants.filter(t => !isSandbox(t));
+  const sandboxTenants = tenants.filter(isSandbox);
+
+  const TenantRow = (t: string) => (
+    <button
+      key={t}
+      onClick={() => { setTenant(t); setTenantOpen(false); }}
+      className={`w-full text-left px-3 py-2 text-xs transition-colors truncate ${
+        t === tenant ? "bg-violet-600/12 text-violet-400 font-medium" : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
+      }`}
+    >
+      {t}
+    </button>
+  );
 
   const NavLink = ({ href, label, icon: Icon }: { href: string; label: string; icon: React.ComponentType<{ className?: string }> }) => {
     const active = isActive(href);
@@ -114,6 +146,7 @@ export default function Sidebar() {
               <div className="h-2 w-2 rounded-full bg-violet-400 shadow-sm shadow-violet-400/50" />
             </div>
             <span className="text-[13px] font-bold tracking-tight text-slate-100 truncate">MCP AI Suite Hub</span>
+            <span className="shrink-0 px-1.5 py-[1px] rounded-full text-[8px] font-bold uppercase tracking-wider text-violet-300 bg-violet-500/15 border border-violet-500/25" title="In active development — feedback welcome">Beta</span>
           </div>
           <button onClick={() => setOpen(false)} className="text-slate-600 hover:text-slate-300 md:hidden transition-colors" aria-label="Close menu">
             <X className="h-4 w-4" />
@@ -138,18 +171,27 @@ export default function Sidebar() {
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setTenantOpen(false)} />
                 <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-[#0c0c14] border border-white/[0.08] rounded-xl shadow-xl shadow-black/40 overflow-hidden">
-                  <div className="max-h-40 overflow-y-auto">
-                    {tenants.map(t => (
-                      <button
-                        key={t}
-                        onClick={() => { setTenant(t); setTenantOpen(false); }}
-                        className={`w-full text-left px-3 py-2 text-xs transition-colors ${
-                          t === tenant ? "bg-violet-600/12 text-violet-400 font-medium" : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    ))}
+                  <div className="max-h-52 overflow-y-auto">
+                    {realTenants.map(TenantRow)}
+
+                    {/* Always surface the active tenant even if it's a run sandbox, so the
+                        user can see (and leave) where they are without expanding the group. */}
+                    {isSandbox(tenant) && !realTenants.includes(tenant) && !sandboxOpen && (
+                      <div className="border-t border-white/[0.04]">{TenantRow(tenant)}</div>
+                    )}
+
+                    {sandboxTenants.length > 0 && (
+                      <div className="border-t border-white/[0.04]">
+                        <button
+                          onClick={() => setSandboxOpen(o => !o)}
+                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-slate-500 hover:text-slate-300 transition-colors"
+                        >
+                          <ChevronDown className={`h-3 w-3 transition-transform ${sandboxOpen ? "" : "-rotate-90"}`} />
+                          Run sandboxes · {sandboxTenants.length}
+                        </button>
+                        {sandboxOpen && sandboxTenants.map(TenantRow)}
+                      </div>
+                    )}
                   </div>
                   <div className="border-t border-white/[0.06] p-2">
                     <div className="flex gap-1.5">
@@ -209,13 +251,18 @@ export default function Sidebar() {
         {/* Footer */}
         <div className="border-t border-white/[0.04] px-3 py-2.5 space-y-1.5">
           {remoteUrl && (
-            <Link href="/settings" onClick={() => setOpen(false)}
-              className="flex items-center gap-1.5 w-full px-2 py-1 rounded-md bg-teal-500/10 border border-teal-500/20 hover:bg-teal-500/15 transition-colors group"
-              title={`Listening to: ${remoteUrl}`}
-            >
-              <Radio className="h-3 w-3 text-teal-400 shrink-0" />
-              <span className="text-[10px] text-teal-300 font-medium truncate flex-1">{remoteUrl.replace(/^https?:\/\//, "")}</span>
-            </Link>
+            <div className="flex items-center gap-1 w-full px-2 py-1 rounded-md bg-teal-500/10 border border-teal-500/20">
+              <Server className="h-3 w-3 text-teal-400 shrink-0" />
+              <Link href="/settings?tab=remote" onClick={() => setOpen(false)}
+                className="text-[10px] text-teal-300 font-medium truncate flex-1 hover:underline"
+                title={`Custom backend (local replaced): ${remoteUrl}`}
+              >
+                {remoteUrl.replace(/^https?:\/\//, "")}
+              </Link>
+              <button onClick={revertBackend} title="Revert to the local backend" className="text-teal-400/70 hover:text-teal-100 shrink-0">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
           )}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">

@@ -179,6 +179,24 @@ function AgentsPageInner() {
     try { setSavedTemplates(JSON.parse(localStorage.getItem("kernelmcp_saved_templates") || "[]")); } catch {}
   }, []);
 
+  // Recover the output of an older FAILED run persisted before answers were stored
+  // (run.answer === null). The backend still holds it in the task result while the task
+  // is loaded; fetch it and patch the session + run record so reopening isn't blank.
+  const recoverFailedOutput = useCallback((sessionId: string, wfId: string, runId: string, taskId: string) => {
+    fetch(`${BASE_URL}/agents/taskforce/${taskId}`, { headers: th })
+      .then(r => (r.ok ? r.json() : null))
+      .then(resp => {
+        const res = resp?.result;
+        const recovered: string = res?.final_output || res?.error || "";
+        if (!recovered) return;
+        useAgentSessionStore.setState(s => ({
+          sessions: s.sessions.map(sess => sess.id === sessionId ? { ...sess, answer: recovered } : sess),
+        }));
+        wfStore.updateRun(wfId, runId, { answer: recovered }, th);
+      })
+      .catch(() => {});
+  }, [th]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── URL-based state: restore from URL on mount ──
   const urlRestored = useRef(false);
   useEffect(() => {
@@ -204,10 +222,14 @@ function AgentsPageInner() {
           sessions: s.sessions.map(sess => sess.id === newSess ? {
             ...sess, graph: ver.graph, readOnly: true, status: (run?.status as any) || "completed",
             answer: run?.answer || null, metrics: run?.metrics || null, liveEvents: run?.liveEvents || [],
-            feedback: run?.feedback || null, workflowId: wfId, versionId: ver.id, runId, workflowName: wf.name,
+            feedback: run?.feedback || null, workflowId: wfId, versionId: ver.id, runId, taskId: run?.taskId ?? null, workflowName: wf.name,
             completedAgents: ver.config.agents.map((_: any, i: number) => i),
           } : sess),
         }));
+        // Older failed run stored with no answer → recover its output from the backend.
+        if (run?.status === "failed" && !run.answer && run.taskId) {
+          recoverFailedOutput(newSess, wfId, runId, run.taskId);
+        }
       } else {
         useAgentSessionStore.setState(s => ({
           sessions: s.sessions.map(sess => sess.id === newSess ? {
@@ -233,10 +255,13 @@ function AgentsPageInner() {
               ...sess, graph: run.graph, readOnly: true, fromSnapshot: true,
               status: (run.status as any) || "completed",
               answer: run.answer || null, metrics: run.metrics || null, liveEvents: run.liveEvents || [],
-              feedback: run.feedback || null, workflowId: wfId, versionId: run.versionId, runId,
+              feedback: run.feedback || null, workflowId: wfId, versionId: run.versionId, runId, taskId: run.taskId ?? null,
               workflowName: run.workflowName || "Deleted workflow",
             } : sess),
           }));
+          if (run.status === "failed" && !run.answer && run.taskId) {
+            recoverFailedOutput(newSess, wfId, runId, run.taskId);
+          }
         } else {
           // Legacy run with no snapshot — nothing to reconstruct.
           setDeepLinkError(run?.workflowName || true);
@@ -940,18 +965,20 @@ function AgentsPageInner() {
                         turns: data.total_turns || 0,
                         duration: data.duration_ms || duration,
                       };
-                      if (data.success !== false) {
-                        store.setResult(sessionId, answer || "Completed", metrics);
-                      } else {
-                        store.setStatus(sessionId, "failed");
-                        store.setResult(sessionId, answer || "Failed", metrics);
-                      }
-                      // Update run in workflow hierarchy
+                      const failed = data.success === false;
+                      // Resolve a non-empty answer. A gracefully-failed run can return an empty
+                      // final_output with no error text; persist a clear message so reopening it
+                      // later isn't blank (previously stored `answer || null` → blank on reopen,
+                      // even though the live view showed "Failed").
+                      const resolved = answer || (failed ? "Run failed — no output was produced." : "Completed");
+                      if (failed) store.setStatus(sessionId, "failed");
+                      store.setResult(sessionId, resolved, metrics);
+                      // Update run in workflow hierarchy — persist the SAME resolved answer.
                       const sess = useAgentSessionStore.getState().sessions.find(s => s.id === sessionId);
                       if (sess?.workflowId && sess?.runId) {
                         wfStore.updateRun(sess.workflowId, sess.runId, {
-                          status: data.success !== false ? "completed" : "failed",
-                          answer: answer || null, metrics,
+                          status: failed ? "failed" : "completed",
+                          answer: resolved, metrics,
                           liveEvents: sess.liveEvents.slice(-30),
                           ...(sess.taskId ? { taskId: sess.taskId } : {}),
                         }, th);

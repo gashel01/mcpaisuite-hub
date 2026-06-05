@@ -45,9 +45,16 @@ export default function Onboarding() {
             <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-600/20 to-violet-800/10 border border-violet-500/20 flex items-center justify-center mb-4">
               <div className="h-3 w-3 rounded-full bg-violet-400 shadow-sm shadow-violet-400/50" />
             </div>
-            <h2 className="text-lg font-bold text-slate-100 mb-1">Welcome to MCP AI Suite Hub</h2>
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-lg font-bold text-slate-100">Welcome to MCP AI Suite Hub</h2>
+              <span className="px-1.5 py-[1px] rounded-full text-[8px] font-bold uppercase tracking-wider text-violet-300 bg-violet-500/15 border border-violet-500/25">Beta</span>
+            </div>
             <p className="text-sm text-slate-400 leading-relaxed">
               The orchestration dashboard for the MCP AI Suite. Your agent has access to 97 tools across 7 servers.
+            </p>
+            <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
+              In active development — still evolving. Found a bug or have an idea?{" "}
+              <a href="https://github.com/gashel01/kernelmcp-demo/issues" target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 underline">Open an issue</a>.
             </p>
           </div>
         </div>
