@@ -1,7 +1,7 @@
 "use client";
 import { getApiUrl } from "@/lib/api-url";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Clock, RefreshCw, Menu } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
@@ -20,7 +20,6 @@ export default function SchedulerPage() {
   const th = tenantHeaders(tenant);
 
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
-  const [stats, setStats] = useState<SchedulerStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
@@ -29,9 +28,8 @@ export default function SchedulerPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [schedulesRes, statsRes, taskforceRes] = await Promise.all([
+      const [schedulesRes, taskforceRes] = await Promise.all([
         fetch(`${BASE}/schedules`, { headers: th }).then((r) => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${BASE}/schedules/stats`, { headers: th }).then((r) => r.ok ? r.json() : null).catch(() => null),
         fetch(`${BASE}/agents/taskforce/schedules`, { headers: th }).then((r) => r.ok ? r.json() : null).catch(() => null),
       ]);
 
@@ -76,7 +74,6 @@ export default function SchedulerPage() {
       }));
 
       setJobs([...schedulerJobs, ...taskforceJobs]);
-      if (statsRes) setStats(statsRes);
     } catch {
       /* silent — keep previous state */
     } finally {
@@ -123,6 +120,39 @@ export default function SchedulerPage() {
 
   /* ── Derived ─────────────────────────────────────────────────── */
 
+  // Derive stats from the merged jobs list (scheduler + taskforce) so the
+  // hero counters always match exactly what the grid renders. The server-side
+  // /schedules/stats endpoint only knows about scheduler jobs, which left the
+  // cards out of sync with the cards shown below.
+  //
+  // Total Jobs / Active / Paused are job-status counts; Total Runs / Completed
+  // / Failures are run-outcome counts derived from each job's run history, so
+  // that Total Runs === Completed + Failures.
+  const derivedStats: SchedulerStats = useMemo(() => {
+    const byStatus = (status: ScheduledJob["status"]) =>
+      jobs.filter((j) => j.status === status).length;
+
+    let totalRuns = 0;
+    let succeededRuns = 0;
+    let failedRuns = 0;
+    for (const j of jobs) {
+      for (const r of j.history ?? []) {
+        totalRuns++;
+        if (r.success) succeededRuns++;
+        else failedRuns++;
+      }
+    }
+
+    return {
+      total_jobs: jobs.length,
+      active_jobs: byStatus("active"),
+      paused_jobs: byStatus("paused"),
+      completed_jobs: succeededRuns,
+      total_runs: totalRuns,
+      total_failures: failedRuns,
+    };
+  }, [jobs]);
+
   const selectedJob = selectedJobId ? jobs.find((j) => j.id === selectedJobId) ?? null : null;
 
   /* ── Render ──────────────────────────────────────────────────── */
@@ -160,7 +190,7 @@ export default function SchedulerPage() {
 
       <div className="flex-1 overflow-y-auto px-3 sm:px-4 pt-3 sm:pt-4 pb-3 sm:pb-4 space-y-3 sm:space-y-4">
         <SchedulerHero
-          stats={stats}
+          stats={derivedStats}
           loading={loading}
           activeFilter={activeFilter}
           onFilterClick={setActiveFilter}

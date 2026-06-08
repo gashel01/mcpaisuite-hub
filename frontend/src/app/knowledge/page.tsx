@@ -14,8 +14,10 @@ import { getTypeColor } from "./types";
 import { useKnowledgeData, useSearch, useUpload, useChunks } from "./hooks";
 import { TopLeftHUD, TopRightHUD, FocusModeIndicator, GraphBuildProgress, NodeDetail, SearchResults, FactPanel, DocumentPanel, IngestionStepper, AddFactDialog, GapDetector, CoverageHeatmap } from "./components";
 
-const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), { ssr: false });
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
+// Loaded via local wrappers that forward the ref through an `innerRef` prop — next/dynamic
+// drops a real `ref`, which would leave graphRef.current null (camera/zoom no-ops).
+const ForceGraph3D = dynamic(() => import("./force-graph-3d"), { ssr: false });
+const ForceGraph2D = dynamic(() => import("./force-graph-2d"), { ssr: false });
 
 export default function KnowledgePage() {
   const { tenant } = useTenant();
@@ -37,7 +39,7 @@ export default function KnowledgePage() {
   const [graphMode, setGraphMode] = useState<GraphMode>("2d");
   const [graphSearch, setGraphSearch] = useState("");
   const [graphFilter, setGraphFilter] = useState<string | null>(null);
-  const [showFacts, setShowFacts] = useState(true);
+  const [showFacts, setShowFacts] = useState(false);
   const [showDocs, setShowDocs] = useState(true);
   const [showEntities, setShowEntities] = useState(true);
 
@@ -59,10 +61,14 @@ export default function KnowledgePage() {
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>(null);
   const [graphDim, setGraphDim] = useState({ width: 800, height: 600 });
+  // True until the first data load resolves — lets us show a calm loader instead of
+  // flashing the "brain is empty" placeholder (and the graph at default dimensions)
+  // before data arrives, which read as a glitch when navigating onto the page.
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // ── Init ──────────────────────────────────────────────────────────────
 
-  useEffect(() => { data.loadAll(); }, []); // eslint-disable-line
+  useEffect(() => { data.loadAll().finally(() => setInitialLoading(false)); }, []); // eslint-disable-line
 
   useEffect(() => {
     const el = graphContainerRef.current;
@@ -74,6 +80,14 @@ export default function KnowledgePage() {
     obs.observe(el);
     return () => obs.disconnect();
   }, [sideOpen]);
+
+  // Exit coverage mode with Escape (returns the graph to its normal rendering).
+  useEffect(() => {
+    if (!coverageEnabled) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCoverageEnabled(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [coverageEnabled]);
 
   // ── Search handler ────────────────────────────────────────────────────
 
@@ -120,6 +134,59 @@ export default function KnowledgePage() {
     }
   }, [graphMode]);
 
+  // ── 3D entrance animation ─────────────────────────────────────────────
+  // When the user switches to the 3D graph, play a short cinematic intro: orbit the camera
+  // 180° horizontally (around the vertical Y axis) while zooming out ~7 "ticks".
+  // We drive it frame-by-frame (rather than ForceGraph's straight-line cameraPosition tween,
+  // which would fly THROUGH the graph centre) so it sweeps around the graph on an arc.
+  // The 3D scene mounts asynchronously (dynamic import + layout) so we poll until the camera
+  // has a real position before starting.
+  useEffect(() => {
+    if (graphMode !== "3d") return;
+    const TICKS = 7;          // wheel-style zoom-out steps
+    const PER_TICK = 1.12;    // distance multiplier per tick (≈ 2.2× further out at 7)
+    const zoomFactor = Math.pow(PER_TICK, TICKS);
+    const DURATION = 1400;
+    const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    let cancelled = false;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    let raf = 0;
+    const start = () => {
+      if (cancelled) return;
+      const g = graphRef.current;
+      if (!g || typeof g.cameraPosition !== "function") {
+        if (tries++ < 40) timer = setTimeout(start, 80); // wait for the graph to mount (~3s)
+        return;
+      }
+      const cam = typeof g.camera === "function" ? g.camera() : null;
+      const p = cam?.position;
+      let rh0 = p ? Math.hypot(p.x, p.z) : 0;   // horizontal radius from the Y axis
+      let px = p?.x ?? 0, pz = p?.z ?? 0, y0 = p?.y ?? 0;
+      if (rh0 < 1) {
+        // Camera distance not set yet — wait a bit, then fall back so we always animate.
+        if (tries++ < 20) { timer = setTimeout(start, 80); return; }
+        rh0 = 300; px = 0; pz = 300; y0 = 0;
+      }
+      const a0 = Math.atan2(pz, px);  // starting azimuth around the vertical axis
+      let t0: number | null = null;
+      const step = (now: number) => {
+        if (cancelled) return;
+        if (t0 === null) t0 = now;
+        const t = Math.min(1, (now - t0) / DURATION);
+        const e = ease(t);
+        const a = a0 + Math.PI * e;                 // sweep 180°
+        const scale = 1 + (zoomFactor - 1) * e;     // zoom out over the sweep
+        const rh = rh0 * scale;
+        g.cameraPosition({ x: rh * Math.cos(a), y: y0 * scale, z: rh * Math.sin(a) }, { x: 0, y: 0, z: 0 }, 0);
+        if (t < 1) raf = requestAnimationFrame(step);
+      };
+      raf = requestAnimationFrame(step);
+    };
+    timer = setTimeout(start, 300);
+    return () => { cancelled = true; clearTimeout(timer); if (raf) cancelAnimationFrame(raf); };
+  }, [graphMode]);
+
   // ── Insights ──────────────────────────────────────────────────────────
 
   const insights = useMemo(() => {
@@ -141,7 +208,7 @@ export default function KnowledgePage() {
 
   // ── Unified graph data ────────────────────────────────────────────────
 
-  const { unifiedData, allTypes } = useMemo(() => {
+  const { unifiedData } = useMemo(() => {
     const nodes: GraphNode[] = [];
     const links: GraphLink[] = [];
     const searchLower = graphSearch.toLowerCase();
@@ -213,8 +280,19 @@ export default function KnowledgePage() {
       n.val = Math.min(5, n.val + Math.min(cc * 0.15, 2));
     }
 
-    return { unifiedData: { nodes, links } as GraphData, allTypes: [...new Set(nodes.map(n => n.type))].sort() };
+    return { unifiedData: { nodes, links } as GraphData };
   }, [data.entityNodes, data.entityEdges, data.allFacts, data.sources, showFacts, showDocs, showEntities, graphFilter, graphSearch]);
+
+  // Legend types — derived from the active layers only, NOT from graphFilter, so picking a
+  // type filter never collapses the legend (otherwise it would show a single type and you
+  // couldn't click "All" to return to normal).
+  const allTypes = useMemo(() => {
+    const types = new Set<string>();
+    if (showEntities) for (const n of data.entityNodes) types.add(n.type);
+    if (showFacts && data.allFacts.length > 0) types.add("Fact");
+    if (showDocs && data.sources.length > 0) types.add("Document");
+    return [...types].sort();
+  }, [data.entityNodes, data.allFacts.length, data.sources.length, showEntities, showFacts, showDocs]);
 
   // ── Focus visibility (computed separately to avoid graph re-render) ────
   const focusSet = useMemo(() => {
@@ -236,6 +314,28 @@ export default function KnowledgePage() {
     }
     return depthMap;
   }, [focusedNode, focusDepth, unifiedData.links]);
+
+  // ── Coverage heatmap ──────────────────────────────────────────────────
+  // Connection degree per node, used by coverage mode to encode how well-sourced a node is.
+  const degreeMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of unifiedData.links) {
+      const src = typeof l.source === "string" ? l.source : (l.source as any)?.id;
+      const tgt = typeof l.target === "string" ? l.target : (l.target as any)?.id;
+      if (src) m.set(src, (m.get(src) || 0) + 1);
+      if (tgt) m.set(tgt, (m.get(tgt) || 0) + 1);
+    }
+    return m;
+  }, [unifiedData.links]);
+
+  // Map a node's degree to the legend tiers: well-sourced / moderate / sparse / orphan.
+  const coverageInfo = useCallback((node: any): { opacity: number; ring: boolean } => {
+    const deg = degreeMap.get(node.id) ?? 0;
+    if (deg === 0) return { opacity: 0.18, ring: true };  // orphan — faint + red ring
+    if (deg <= 2) return { opacity: 0.28, ring: false };  // sparse
+    if (deg <= 5) return { opacity: 0.55, ring: false };  // moderate
+    return { opacity: 1, ring: false };                   // well-sourced
+  }, [degreeMap]);
 
   // Compute node opacity dynamically (used in render callbacks, NOT in graphData)
   const getNodeOpacity = useCallback((node: any): number => {
@@ -259,8 +359,10 @@ export default function KnowledgePage() {
       });
       if (!isNeighbor) return 0.08;
     }
+    // Coverage mode: in the neutral state, shade nodes by how well-connected they are.
+    if (coverageEnabled) return coverageInfo(node).opacity;
     return 1;
-  }, [focusedNode, focusSet, graphSearch, selectedNode, unifiedData.links]);
+  }, [focusedNode, focusSet, graphSearch, selectedNode, unifiedData.links, coverageEnabled, coverageInfo]);
 
   const getLinkOpacity = useCallback((link: any): number => {
     if (!focusedNode) return 1;
@@ -431,6 +533,7 @@ export default function KnowledgePage() {
             onToggleEntities={() => setShowEntities(v => !v)}
             onToggleFacts={() => setShowFacts(v => !v)}
             onToggleDocs={() => setShowDocs(v => !v)}
+            coverageEnabled={coverageEnabled} onToggleCoverage={() => setCoverageEnabled(v => !v)}
             stats={data.memoryStats} entityCount={data.entityNodes.length} insights={insights}
             activeUploads={activeUploads}
             graphControls={{
@@ -496,23 +599,23 @@ export default function KnowledgePage() {
             </div>
           )}
 
-          {/* Coverage heatmap toggle */}
-          <CoverageHeatmap enabled={coverageEnabled} onToggle={() => setCoverageEnabled(!coverageEnabled)} />
-
           {/* Add Fact dialog */}
           <AddFactDialog open={showAddFact} onClose={() => setShowAddFact(false)} onAdded={() => { setShowAddFact(false); data.loadAll(); }} />
 
-          {/* Type legend */}
-          {allTypes.length > 1 && (
-            <div className="absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-1 bg-black/50  border border-white/[0.08] rounded-xl px-2 py-1.5 max-w-80">
-              <button onClick={() => setGraphFilter(null)} className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${!graphFilter ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>All</button>
-              {allTypes.map(t => (
-                <button key={t} onClick={() => setGraphFilter(graphFilter === t ? null : t)} className={`flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${graphFilter === t ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>
-                  <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getTypeColor(t) }} />{t}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Bottom-left legends — coverage (toggled from the HUD) stacked above the type legend */}
+          <div className="absolute bottom-3 left-3 z-20 flex flex-col items-start gap-1.5">
+            <CoverageHeatmap enabled={coverageEnabled} onExit={() => setCoverageEnabled(false)} />
+            {allTypes.length > 1 && (
+              <div className="flex flex-wrap items-center gap-1 bg-black/50  border border-white/[0.08] rounded-xl px-2 py-1.5 max-w-80">
+                <button onClick={() => setGraphFilter(null)} className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${!graphFilter ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>All</button>
+                {allTypes.map(t => (
+                  <button key={t} onClick={() => setGraphFilter(graphFilter === t ? null : t)} className={`flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${graphFilter === t ? "bg-white/[0.08] text-slate-300" : "text-slate-600 hover:text-slate-400"}`}>
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getTypeColor(t) }} />{t}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Contextual suggestion */}
           {contextualSuggestion && !selectedNode && (
@@ -546,10 +649,18 @@ export default function KnowledgePage() {
           )}
 
           {/* Graph renderer */}
-          {totalNodes > 0 ? (
+          {initialLoading ? (
+            /* First load — calm loader instead of flashing the empty/placeholder state */
+            <div className="flex items-center justify-center h-full">
+              <div className="flex flex-col items-center gap-3 text-slate-600">
+                <Loader2 className="h-6 w-6 animate-spin text-violet-500/50" />
+                <span className="text-[11px] tracking-wide">Loading knowledge…</span>
+              </div>
+            </div>
+          ) : totalNodes > 0 ? (
             graphMode === "2d" ? (
               <ForceGraph2D
-                ref={graphRef} width={graphDim.width} height={graphDim.height}
+                innerRef={graphRef} width={graphDim.width} height={graphDim.height}
                 graphData={unifiedData}
                 nodeLabel={() => ""}
                 nodeRelSize={2}
@@ -567,6 +678,16 @@ export default function KnowledgePage() {
                   ctx.globalAlpha = op;
                   ctx.fillStyle = node.color || "#a78bfa";
                   ctx.fill();
+
+                  // Coverage mode: ring orphan nodes (no connections) in red
+                  if (coverageEnabled && coverageInfo(node).ring) {
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, r + 1.5 / gs, 0, 2 * Math.PI);
+                    ctx.globalAlpha = 1;
+                    ctx.strokeStyle = "rgba(239,68,68,0.9)";
+                    ctx.lineWidth = 1 / gs;
+                    ctx.stroke();
+                  }
 
                   // Glow ring for focused/selected nodes
                   if (isFocusTarget || isSel) {
@@ -613,7 +734,7 @@ export default function KnowledgePage() {
               />
             ) : (
               <ForceGraph3D
-                ref={graphRef} width={graphDim.width} height={graphDim.height}
+                innerRef={graphRef} width={graphDim.width} height={graphDim.height}
                 graphData={unifiedData}
                 nodeLabel={(n: any) => {
                   const op = getNodeOpacity(n);
@@ -622,6 +743,8 @@ export default function KnowledgePage() {
                 }}
                 nodeColor={(n: any) => {
                   const op = getNodeOpacity(n);
+                  // Coverage mode: paint orphan nodes (no connections) red.
+                  if (coverageEnabled && coverageInfo(n).ring) return `rgba(239,68,68,${op})`;
                   const hex = n.color || "#a78bfa";
                   // Convert hex to rgba with opacity
                   const r = parseInt(hex.slice(1, 3), 16);

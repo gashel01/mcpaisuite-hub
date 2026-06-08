@@ -279,6 +279,7 @@ async def summary(
     prev_completed = sum(1 for t in prev_tasks if t.get("status") == "completed")
     prev_failed = sum(1 for t in prev_tasks if t.get("status") == "failed")
     prev_cost = sum(t.get("total_cost", 0.0) for t in prev_tasks)
+    prev_tokens = sum(t.get("total_tokens", 0) for t in prev_tasks)
     prev_durations = [t.get("duration_ms", 0) for t in prev_tasks if t.get("duration_ms")]
     prev_avg_latency = sum(prev_durations) / len(prev_durations) if prev_durations else 0.0
     prev_success_rate = (prev_completed / (prev_completed + prev_failed) * 100) if (prev_completed + prev_failed) > 0 else 0.0
@@ -291,9 +292,18 @@ async def summary(
     trends = {
         "tasks": _pct_change(total_tasks, prev_total),
         "cost": _pct_change(total_cost, prev_cost),
+        "tokens": _pct_change(total_tokens, prev_tokens),
         "latency": _pct_change(avg_latency, prev_avg_latency),
         "success_rate": _pct_change(success_rate, prev_success_rate),
     }
+
+    # Per-bucket sparklines over the current window (same bucketing as the charts).
+    spark_bucket_secs = AUTO_BUCKETS.get(window, 3600)
+    spark_buckets = _bucket_tasks(tasks, start_ts, now, spark_bucket_secs)
+    tasks_sparkline = [len(b) for b in spark_buckets.values()]
+    cost_sparkline = [round(_compute_metric(b, "cost"), 4) for b in spark_buckets.values()]
+    tokens_sparkline = [round(_compute_metric(b, "tokens")) for b in spark_buckets.values()]
+    latency_sparkline = [round(_compute_metric(b, "latency")) for b in spark_buckets.values()]
 
     # Top tools and models from audit_collector
     top_tools: list[dict] = []
@@ -319,6 +329,10 @@ async def summary(
         "avg_turns": round(avg_turns, 1),
         "avg_cost_per_task": round(avg_cost_per_task, 4),
         "trends": trends,
+        "tasks_sparkline": tasks_sparkline,
+        "cost_sparkline": cost_sparkline,
+        "tokens_sparkline": tokens_sparkline,
+        "latency_sparkline": latency_sparkline,
         "top_tools": top_tools,
         "top_models": top_models,
     }

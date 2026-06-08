@@ -2,7 +2,7 @@
 
 import {
   Search, Filter, Sparkles, Upload, RefreshCw, Loader2,
-  Brain, FileText, Network, Target, X, PanelRightOpen,
+  Brain, FileText, Network, Target, X, PanelRightOpen, Activity,
 } from "lucide-react";
 import type { SearchMode, GraphMode, MemoryStats } from "../types";
 import type { GraphStatus } from "../hooks";
@@ -51,6 +51,8 @@ interface TopLeftHUDProps {
   onToggleEntities: () => void;
   onToggleFacts: () => void;
   onToggleDocs: () => void;
+  coverageEnabled: boolean;
+  onToggleCoverage: () => void;
   stats: MemoryStats | null;
   entityCount: number;
   insights: string[];
@@ -112,6 +114,14 @@ export function TopLeftHUD(props: TopLeftHUDProps) {
         <LayerToggle active={props.showEntities} color="#a78bfa" label="E" onClick={props.onToggleEntities} />
         <LayerToggle active={props.showFacts} color="#f472b6" label="F" onClick={props.onToggleFacts} />
         <LayerToggle active={props.showDocs} color="#34d399" label="D" onClick={props.onToggleDocs} />
+        <div className="w-px h-4 bg-white/[0.06]" />
+        <button
+          onClick={props.onToggleCoverage}
+          title="Coverage heatmap — shade nodes by how well-connected they are (Esc to exit)"
+          className={`flex items-center gap-1 px-1.5 py-1 bg-black/40 rounded-lg border transition-all text-[9px] font-medium hover:scale-105 active:scale-95 ${props.coverageEnabled ? "border-violet-500/40 text-violet-300 bg-violet-500/15" : "border-white/[0.04] text-slate-600 hover:text-slate-400"}`}
+        >
+          <Activity className="h-2.5 w-2.5" /> Coverage
+        </button>
       </div>
 
       {/* Knowledge score — hide on very small screens to save space */}

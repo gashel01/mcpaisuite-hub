@@ -71,8 +71,12 @@ export function ChartGrid({ namespace }: ChartGridProps) {
           avg_latency: data.avg_latency_ms ?? 0,
           tasks_trend: data.trends?.tasks,
           cost_trend: data.trends?.cost,
-          tokens_trend: data.trends?.latency,
+          tokens_trend: data.trends?.tokens,
           latency_trend: data.trends?.latency,
+          tasks_sparkline: data.tasks_sparkline,
+          cost_sparkline: data.cost_sparkline,
+          tokens_sparkline: data.tokens_sparkline,
+          latency_sparkline: data.latency_sparkline,
         });
       }
     } catch {
@@ -121,6 +125,7 @@ export function ChartGrid({ namespace }: ChartGridProps) {
           trend={summary.cost_trend}
           sparkline={summary.cost_sparkline}
           color="#10b981"
+          lowerIsBetter
           icon={<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.5 10.5v1h-1v-1a2.5 2.5 0 01-2-1.5l1-.5a1.5 1.5 0 001 1h2a.5.5 0 000-1H7.5a1.5 1.5 0 010-3h1v-1h1v1a2.5 2.5 0 012 1.5l-1 .5a1.5 1.5 0 00-1-1h-2a.5.5 0 000 1h2a1.5 1.5 0 010 3h-1z"/></svg>}
         />
         <StatCard
@@ -138,6 +143,7 @@ export function ChartGrid({ namespace }: ChartGridProps) {
           trend={summary.latency_trend}
           sparkline={summary.latency_sparkline}
           color="#ec4899"
+          lowerIsBetter
           icon={<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.5 3h1v4.5l3 1.5-.5 1-3.5-1.75V4z"/></svg>}
         />
       </div>

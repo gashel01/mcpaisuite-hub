@@ -9,6 +9,9 @@ interface StatCardProps {
   sparkline?: number[];
   icon?: React.ReactNode;
   color?: string;
+  // When true, a rising trend is "bad" (e.g. cost, latency): up arrow shows red,
+  // down arrow green. Defaults to false (rising = good = green).
+  lowerIsBetter?: boolean;
 }
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
@@ -32,7 +35,9 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-export function StatCard({ label, value, unit, trend, sparkline, icon, color = '#8b5cf6' }: StatCardProps) {
+export function StatCard({ label, value, unit, trend, sparkline, icon, color = '#8b5cf6', lowerIsBetter = false }: StatCardProps) {
+  // A rising trend is "good" unless lowerIsBetter (cost/latency), where it's "bad".
+  const isGood = trend != null && (lowerIsBetter ? trend < 0 : trend > 0);
   return (
     <div className="obs-card p-4 sm:p-5 flex flex-col gap-2.5 sm:gap-3 min-w-0">
       {/* Top: icon + label */}
@@ -52,7 +57,7 @@ export function StatCard({ label, value, unit, trend, sparkline, icon, color = '
         <div>
           {trend != null && trend !== 0 && (
             <div className="flex items-center gap-1">
-              <span className={`text-[11px] sm:text-xs font-medium ${trend > 0 ? 'text-[#10b981]' : 'text-[#f43f5e]'}`}>
+              <span className={`text-[11px] sm:text-xs font-medium ${isGood ? 'text-[#10b981]' : 'text-[#f43f5e]'}`}>
                 {trend > 0 ? '↑' : '↓'}{Math.abs(trend).toFixed(1)}%
               </span>
               <span className="text-[#8b8ba8] text-[9px] sm:text-[10px]">vs previous</span>

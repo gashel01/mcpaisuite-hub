@@ -119,8 +119,13 @@ export default function SchedulerGrid({
   const filteredJobs = useMemo(() => {
     let result = [...jobs];
 
-    // Status filter from hero
-    if (activeFilter) {
+    // Filter from hero. "completed" / "failed" are run-outcome filters (the
+    // hero counts successful / failed runs), the rest match the job status.
+    if (activeFilter === "completed") {
+      result = result.filter((j) => (j.history ?? []).some((r) => r.success));
+    } else if (activeFilter === "failed") {
+      result = result.filter((j) => (j.history ?? []).some((r) => !r.success));
+    } else if (activeFilter) {
       result = result.filter((j) => j.status === activeFilter);
     }
 

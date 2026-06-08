@@ -43,6 +43,7 @@ interface FlowEditorProps {
   activeAgentIndices?: number[];
   completedAgents?: number[];
   isRunning?: boolean;
+  building?: boolean;
   locked?: boolean;
   waitingNodeId?: string | null;
   deniedNodeIds?: string[];
@@ -298,6 +299,45 @@ function isAncestorInGraph(targetId: string, sourceId: string, _allNodes: Node[]
 let _idC = 0;
 function gid() { return `n${++_idC}-${Date.now().toString(36).slice(-4)}`; }
 
+// Styled label for built-in (smoothstep) edges — feedback / yes / no … — so the label
+// matches its line's colour and the app's small-pill aesthetic instead of React Flow's
+// raw white default. `rgb` is the edge's base colour as an "r,g,b" string.
+function edgeLabelDeco(rgb: string) {
+  return {
+    labelShowBg: true,
+    labelBgPadding: [6, 3] as [number, number],
+    labelBgBorderRadius: 6,
+    labelStyle: { fill: `rgba(${rgb},0.95)`, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as const },
+    labelBgStyle: { fill: "rgba(8,8,18,0.92)", stroke: `rgba(${rgb},0.45)`, strokeWidth: 1 },
+  };
+}
+
+// Pure BFS "auto layout": lay nodes out top-down in layers from the trigger.
+// Shared by the floating toolbar's Auto-layout button and the AI-build flow so both
+// produce the exact same tidy arrangement. Cyclic/feedback edges are ignored once a
+// node already has a layer; orphans are pushed to a trailing layer.
+function bfsLayout(nodes: Node[], edges: Edge[]): Node[] {
+  const trigger = nodes.find(n => n.type === "trigger");
+  if (!trigger) return nodes;
+  const layers: Record<string, number> = { [trigger.id]: 0 };
+  const queue = [trigger.id];
+  while (queue.length) {
+    const c = queue.shift()!;
+    for (const e of edges.filter(e => e.source === c)) {
+      if (layers[e.target] === undefined) { layers[e.target] = (layers[c] || 0) + 1; queue.push(e.target); }
+    }
+  }
+  nodes.forEach(n => { if (layers[n.id] === undefined) layers[n.id] = Object.keys(layers).length; });
+  const byLayer: Record<number, string[]> = {};
+  Object.entries(layers).forEach(([id, l]) => (byLayer[l] ||= []).push(id));
+  return nodes.map(n => {
+    const l = layers[n.id] || 0;
+    const sibs = byLayer[l] || [n.id];
+    const idx = sibs.indexOf(n.id);
+    return { ...n, position: { x: 300 - (sibs.length * 200) / 2 + idx * 200 + 100, y: l * 120 } };
+  });
+}
+
 function buildInitialFlow(
   agents: TeamAgent[], pattern: string,
   opts?: { triggerType?: string; workspaceEnabled?: boolean; workspaceName?: string; workspaceMode?: string; humanGates?: number[]; triggerConfig?: Record<string, any> }
@@ -403,7 +443,7 @@ function buildInitialFlow(
       return { id: gid(), source: srcId, target: tgtId, type: "selfLoop", markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(245,158,11,0.6)" }, style: { stroke: "rgba(245,158,11,0.4)", strokeWidth: 2, strokeDasharray: "6 3" }, label: label || "loop" };
     }
     if (isFeedback) {
-      return { id: gid(), source: srcId, target: tgtId, ...es, style: { stroke: "rgba(245,158,11,0.4)", strokeWidth: 2, strokeDasharray: "6 3" }, markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(245,158,11,0.6)" }, label: label || "feedback" };
+      return { id: gid(), source: srcId, target: tgtId, ...es, style: { stroke: "rgba(245,158,11,0.4)", strokeWidth: 2, strokeDasharray: "6 3" }, markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(245,158,11,0.6)" }, label: label || "feedback", ...edgeLabelDeco("245,158,11") };
     }
     return { id: gid(), source: srcId, target: tgtId, ...es, ...(label ? { label } : {}) };
   }
@@ -520,11 +560,14 @@ function buildInitialFlow(
 
 // ── Main Component ─────────────────────────────────────────────────────────
 
-export default function FlowEditor({ agents, pattern, triggerType: propTriggerType, triggerConfig, workspaceEnabled, workspaceName, workspaceMode, humanGates, errorNodeIds, errorReasons, validationWarnings, graphRef, initialGraph, activeAgentIndex = -1, activeAgentIndices = [], completedAgents = [], isRunning = false, locked = false, waitingNodeId = null, deniedNodeIds = [], approvedNodeIds = [], revisionNodeIds = [], agentOutputs = {}, onPatternChange, onUpdateFlow }: FlowEditorProps) {
+export default function FlowEditor({ agents, pattern, triggerType: propTriggerType, triggerConfig, workspaceEnabled, workspaceName, workspaceMode, humanGates, errorNodeIds, errorReasons, validationWarnings, graphRef, initialGraph, activeAgentIndex = -1, activeAgentIndices = [], completedAgents = [], isRunning = false, building = false, locked = false, waitingNodeId = null, deniedNodeIds = [], approvedNodeIds = [], revisionNodeIds = [], agentOutputs = {}, onPatternChange, onUpdateFlow }: FlowEditorProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+
+  // ReactFlow instance (captured via onInit) so we can drive fitView programmatically.
+  const rfRef = useRef<any>(null);
 
   // Load available tools from backend
   const [availableTools, setAvailableTools] = useState<{name: string; description: string; category: string}[]>([]);
@@ -614,8 +657,16 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
     const { nodes: n, edges: e } = buildInitialFlow(agents, pattern, {
       triggerType: propTriggerType, workspaceEnabled, workspaceName, workspaceMode, humanGates,
     });
-    setNodes(n);
+    // When this rebuild is driven by the AI architect (building in progress), the
+    // pattern-specific positions from buildInitialFlow can overlap/scatter — so tidy the
+    // brand-new graph with the shared auto-layout right here, on the fresh nodes/edges.
+    // Doing it on `n`/`e` directly (not via state) avoids any race with setNodes/setEdges.
+    setNodes(building ? bfsLayout(n, e) : n);
     setEdges(e);
+    if (building) {
+      const t = setTimeout(() => rfRef.current?.fitView({ padding: 0.3, duration: 400 }), 80);
+      return () => clearTimeout(t);
+    }
   }, [configKey]); // eslint-disable-line
 
   // Soft-sync agent node DATA (tools, instructions, maxTurns, type, role) from the agents prop
@@ -826,21 +877,22 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
 
     // Auto-detect edge style from context
     let stroke = "rgba(139,92,246,0.3)";
+    let rgb = "139,92,246";
     let label: string | undefined;
     let dash: string | undefined;
     let width = 2;
 
     if (isSelf) {
-      stroke = "rgba(245,158,11,0.4)"; label = "loop"; dash = "6 3";
+      stroke = "rgba(245,158,11,0.4)"; rgb = "245,158,11"; label = "loop"; dash = "6 3";
     } else if (srcIsCondition) {
       const existingFromCondition = edges.filter(e => e.source === connection.source).length;
       if (existingFromCondition === 0) {
-        stroke = "rgba(16,185,129,0.4)"; label = "yes";
+        stroke = "rgba(16,185,129,0.4)"; rgb = "16,185,129"; label = "yes";
       } else {
-        stroke = "rgba(239,68,68,0.4)"; label = "no";
+        stroke = "rgba(239,68,68,0.4)"; rgb = "239,68,68"; label = "no";
       }
     } else if (isFeedback) {
-      stroke = "rgba(245,158,11,0.4)"; label = "feedback"; dash = "6 3";
+      stroke = "rgba(245,158,11,0.4)"; rgb = "245,158,11"; label = "feedback"; dash = "6 3";
     }
 
     const edgeId = gid();
@@ -854,6 +906,9 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
       markerEnd: { type: MarkerType.ArrowClosed, color: stroke.replace(/[\d.]+\)$/, "0.6)") },
       style: { stroke, strokeWidth: width, ...(dash ? { strokeDasharray: dash } : {}) },
       label,
+      // Style the rendered label (smoothstep edges) to match the line; self-loops use a
+      // custom edge that doesn't render a label, so skip the decoration there.
+      ...(label && !isSelf ? edgeLabelDeco(rgb) : {}),
     };
     setEdges(eds => [...eds, newEdge]);
     setSelectedEdgeId(edgeId);
@@ -906,30 +961,22 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
   }, [locked, undo, redo, copySelected, pasteClipboard, deleteSelected]);
 
   const autoLayout = useCallback(() => {
-    setNodes(nds => {
-      const trigger = nds.find(n => n.type === "trigger");
-      if (!trigger) return nds;
-      // Simple BFS layout
-      const layers: Record<string, number> = { [trigger.id]: 0 };
-      const queue = [trigger.id];
-      while (queue.length) {
-        const c = queue.shift()!;
-        for (const e of edges.filter(e => e.source === c)) {
-          if (layers[e.target] === undefined) { layers[e.target] = (layers[c] || 0) + 1; queue.push(e.target); }
-        }
-      }
-      nds.forEach(n => { if (layers[n.id] === undefined) layers[n.id] = Object.keys(layers).length; });
-      const byLayer: Record<number, string[]> = {};
-      Object.entries(layers).forEach(([id, l]) => (byLayer[l] ||= []).push(id));
-
-      return nds.map(n => {
-        const l = layers[n.id] || 0;
-        const sibs = byLayer[l] || [n.id];
-        const idx = sibs.indexOf(n.id);
-        return { ...n, position: { x: 300 - (sibs.length * 200) / 2 + idx * 200 + 100, y: l * 120 } };
-      });
-    });
+    setNodes(nds => bfsLayout(nds, edges));
   }, [edges, setNodes]);
+
+  // After the AI architect finishes building (building: true → false), do a final tidy +
+  // fit. The rebuild effect already lays the new graph out race-free while building is in
+  // progress; this is a safety net (re-runs the same auto-layout on the now-settled state,
+  // then fits the viewport — same as ReactFlow's "fit view" control).
+  const prevBuilding = useRef(building);
+  useEffect(() => {
+    const was = prevBuilding.current;
+    prevBuilding.current = building;
+    if (!was || building) return; // only fire on the build-finished edge
+    const t1 = setTimeout(() => autoLayout(), 80);
+    const t2 = setTimeout(() => rfRef.current?.fitView({ padding: 0.3, duration: 400 }), 220);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [building, autoLayout]);
 
   const [canvasHover, setCanvasHover] = useState(false);
   const [patternDropdown, setPatternDropdown] = useState<{x: number; y: number} | null>(null);
@@ -959,6 +1006,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
         <div className={`rounded-xl border border-white/[0.06] overflow-hidden ${selectedNode || selectedEdge ? "flex-1" : "w-full"} h-full`}
           onMouseEnter={() => setCanvasHover(true)} onMouseLeave={() => setCanvasHover(false)}>
           <ReactFlow
+            onInit={(inst) => { rfRef.current = inst; }}
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}

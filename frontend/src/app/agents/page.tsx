@@ -54,7 +54,7 @@ function AgentsPageInner() {
   const [loadingInfos, setLoadingInfos] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [rightTab, setRightTab] = useState<"result" | "trace">("trace"); // kept for auto-switch logic
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [agentRatings, setAgentRatings] = useState<Record<number, "good" | "bad">>({});
   const [compareItems, setCompareItems] = useState<import("./compare-view").CompareItem[]>([]);
   const [compareMode, setCompareMode] = useState(false);
@@ -296,10 +296,33 @@ function AgentsPageInner() {
     return Object.entries(nodeLastState).filter(([, s]) => s === "revision").map(([id]) => id);
   }, [session?.liveEvents]);
 
-  // Auto-open right panel when running/done
+  // Auto-open the output panel only when there's actual output to show.
+  // - Fresh/configuring session with no output → stays collapsed.
+  // - User hits run (output starts arriving) → opens.
+  // - Reopening a past run that already has output → opens.
+  // After that the user is free to collapse/expand; we only act on the rising
+  // edge (no output → output) or when switching to a different session, so a
+  // manual collapse is never overridden mid-run.
+  const sessionHasOutput = !!session && (
+    session.status !== "configuring" ||
+    (session.liveEvents?.length ?? 0) > 0 ||
+    !!session.answer
+  );
+  const lastPanelSessionId = useRef<string | null>(null);
+  const prevHasOutput = useRef(false);
   useEffect(() => {
-    if (isRunning || isDone) setRightPanelOpen(true);
-  }, [isRunning, isDone]);
+    const sid = session?.id ?? null;
+    if (sid !== lastPanelSessionId.current) {
+      // Switched session: default the panel to whether this one has output.
+      lastPanelSessionId.current = sid;
+      prevHasOutput.current = sessionHasOutput;
+      setRightPanelOpen(sessionHasOutput);
+      return;
+    }
+    // Same session: open when output first appears (e.g. user hit run).
+    if (sessionHasOutput && !prevHasOutput.current) setRightPanelOpen(true);
+    prevHasOutput.current = sessionHasOutput;
+  }, [session?.id, sessionHasOutput]);
 
   // Auto-switch right panel tabs
   useEffect(() => {
@@ -1666,9 +1689,8 @@ function AgentsPageInner() {
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => handleArchitect(goal)}
-                    disabled={!goal.trim() || isRunning || building}
+                    disabled={!goal.trim() || isRunning || building || isDone || isReadOnly}
                     className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 rounded-lg transition-all disabled:opacity-30"
-                    data-tooltip="AI architects the agent team — describe, then refine in chat"
                   >
                     {building ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} {building ? "Building…" : "Build with AI"}
                   </button>
@@ -1760,7 +1782,7 @@ function AgentsPageInner() {
             </div>{/* end disabled-during-run wrapper */}
 
             <div className="flex-1 min-h-0 relative">
-            <FlowEditor key={activeId} agents={agents} pattern={pattern} triggerType={triggerType} triggerConfig={{ cronExpression: session?.config.cronExpression, intervalSeconds: session?.config.intervalSeconds, scheduleDate: session?.config.scheduleDate, scheduleTime: session?.config.scheduleTime, webhookPath: session?.config.webhookPath, watchCommand: session?.config.watchCommand, watchCondition: session?.config.watchCondition }} workspaceEnabled={workspaceEnabled} workspaceName={session?.config.workspaceName} workspaceMode={session?.config.workspaceMode} humanGates={humanGates} errorNodeIds={errorNodeIds} errorReasons={errorReasons} validationWarnings={[...agentsWithoutRole.length > 0 ? [`${agentsWithoutRole.length} agent${agentsWithoutRole.length > 1 ? "s" : ""} missing a role`] : [], ...flowWarnings]} activeAgentIndex={session?.activeAgentIndex ?? -1} activeAgentIndices={session?.activeAgentIndices ?? []} completedAgents={session?.completedAgents ?? []} isRunning={isRunning} locked={isRunning || isDone || isReadOnly || building} waitingNodeId={waitingNodeId} deniedNodeIds={deniedNodeIds} approvedNodeIds={approvedNodeIds} revisionNodeIds={revisionNodeIds} agentOutputs={(() => {
+            <FlowEditor key={activeId} agents={agents} pattern={pattern} triggerType={triggerType} triggerConfig={{ cronExpression: session?.config.cronExpression, intervalSeconds: session?.config.intervalSeconds, scheduleDate: session?.config.scheduleDate, scheduleTime: session?.config.scheduleTime, webhookPath: session?.config.webhookPath, watchCommand: session?.config.watchCommand, watchCondition: session?.config.watchCondition }} workspaceEnabled={workspaceEnabled} workspaceName={session?.config.workspaceName} workspaceMode={session?.config.workspaceMode} humanGates={humanGates} errorNodeIds={errorNodeIds} errorReasons={errorReasons} validationWarnings={[...agentsWithoutRole.length > 0 ? [`${agentsWithoutRole.length} agent${agentsWithoutRole.length > 1 ? "s" : ""} missing a role`] : [], ...flowWarnings]} activeAgentIndex={session?.activeAgentIndex ?? -1} activeAgentIndices={session?.activeAgentIndices ?? []} completedAgents={session?.completedAgents ?? []} isRunning={isRunning} building={building} locked={isRunning || isDone || isReadOnly || building} waitingNodeId={waitingNodeId} deniedNodeIds={deniedNodeIds} approvedNodeIds={approvedNodeIds} revisionNodeIds={revisionNodeIds} agentOutputs={(() => {
               const outputs: Record<number, string> = {};
               (session?.liveEvents || []).forEach(e => {
                 if (e.type === "message" && e.content) outputs[e.agentIndex] = e.content;
@@ -1863,7 +1885,7 @@ function AgentsPageInner() {
                 {isDone ? (
                   <>
                     {!isReadOnly && (
-                      <button onClick={() => handleRun()} disabled={!canRun}
+                      <button onClick={() => handleRun()} disabled={!canRun || building}
                         className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium rounded-lg transition-all">
                         <Play className="h-4 w-4" /> Run Again
                       </button>
@@ -1873,20 +1895,20 @@ function AgentsPageInner() {
                       <Copy className="h-4 w-4" /> Fork & Edit
                     </button>
                     {!isReadOnly && agents.length > 0 && (
-                      <button onClick={openPublish}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-sky-600/15 hover:bg-sky-600/25 text-sky-300 border border-sky-500/25 text-sm font-medium rounded-lg transition-all shrink-0"
+                      <button onClick={openPublish} disabled={building}
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-sky-600/15 hover:bg-sky-600/25 text-sky-300 border border-sky-500/25 disabled:opacity-30 text-sm font-medium rounded-lg transition-all shrink-0"
                         data-tooltip="Publish as a callable API endpoint (bearer-token auth)" data-tooltip-top data-tooltip-left>
                         <Rocket className="h-4 w-4" /> Publish
                       </button>
                     )}
                     {!session?.workflowId ? (
-                      <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600/80 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-all shrink-0">
+                      <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }} disabled={building}
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600/80 hover:bg-emerald-500 disabled:opacity-30 text-white text-sm font-medium rounded-lg transition-all shrink-0">
                         <Save className="h-4 w-4" /> Save
                       </button>
                     ) : (
-                      <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-emerald-300 border border-white/[0.06] hover:border-emerald-500/20 text-sm font-medium rounded-lg transition-all shrink-0">
+                      <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }} disabled={building}
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-emerald-300 border border-white/[0.06] hover:border-emerald-500/20 disabled:opacity-30 text-sm font-medium rounded-lg transition-all shrink-0">
                         <Save className="h-4 w-4" />
                       </button>
                     )}
@@ -1908,17 +1930,17 @@ function AgentsPageInner() {
                   </>
                 ) : (
                   <>
-                    <button onClick={() => handleRun()} disabled={!canRun} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium rounded-lg transition-all">
+                    <button onClick={() => handleRun()} disabled={!canRun || building} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium rounded-lg transition-all">
                       <Play className="h-4 w-4" /> Run
                     </button>
                     {agents.length > 0 && !session?.workflowId && (
-                      <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }}
-                        className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600/80 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-all shrink-0">
+                      <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }} disabled={building}
+                        className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600/80 hover:bg-emerald-500 disabled:opacity-30 text-white text-sm font-medium rounded-lg transition-all shrink-0">
                         <Save className="h-4 w-4" /> Save
                       </button>
                     )}
                     {agents.length > 0 && !isReadOnly && (
-                      <button onClick={openPublish} disabled={!canRun}
+                      <button onClick={openPublish} disabled={!canRun || building}
                         className="flex items-center justify-center gap-2 px-4 py-3 bg-sky-600/15 hover:bg-sky-600/25 text-sky-300 border border-sky-500/25 disabled:opacity-30 text-sm font-medium rounded-lg transition-all shrink-0"
                         data-tooltip="Publish as a callable API endpoint (bearer-token auth)" data-tooltip-top data-tooltip-left>
                         <Rocket className="h-4 w-4" /> Publish
