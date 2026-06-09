@@ -536,7 +536,7 @@ export default function ChatPage() {
           </div>
           <div className="flex-1 min-w-0">
             <h1 className="text-sm font-semibold text-slate-100 leading-tight">Kernel Chat</h1>
-            <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Full orchestrator &middot; 97 tools</p>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Full orchestrator &middot; 90+ tools</p>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <ConnectionPicker compact />

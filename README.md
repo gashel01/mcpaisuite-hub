@@ -54,24 +54,26 @@ Open http://localhost:3000.
 | Page | Path | Description |
 |------|------|-------------|
 | Chat | `/chat` | Multi-turn chat with streaming, ReAct/LTP/hybrid mode selection |
-| Agents | `/agents` | Spawn and monitor sub-agents (research, code, QA, creative) |
+| Agents | `/agents` | Spawn and monitor sub-agents / TaskForce (code, research, file, memory, plan, rag, ltp, custom) |
 | Knowledge | `/knowledge` | RAG file upload, vector search, knowledge graph explorer |
-| Memory | `/memory` | Browse facts, episodic search, memory stats |
-| Planning | `/planning` | View/manage plans, hybrid decomposition, replan |
 | Workspace | `/workspace` | File manager with checkpoints, DLP, approval gates |
-| Sandbox | `/sandbox` | Code execution with vault, audit, host access control |
-| Scheduler | `/scheduler` | Cron jobs, one-shot tasks, execution history |
-| Audit | `/audit` | Real-time event stream, tool dispatch logs, LLM call traces |
-| Servers | `/servers` | Connected MCP server status and tool registry |
+| Scheduler | `/scheduler` | Cron, one-shot, interval and watch jobs with execution history |
+| Security | `/security` | Network egress control, host-access gates, constitution editor |
+| Observability | `/observability` | Traces, token/cost/latency analytics |
+| Monitor | `/monitor` | Live execution event stream and tool-dispatch logs |
+| Deployments | `/deployments` | Deploy agents as token-authed callable APIs |
+| Fleet | `/fleet` | Multi-agent fleet management |
+| Control | `/control` | Remote control plane for connected kernels |
+| Eval | `/eval` | Evaluation suites and regression tracking |
+| Executions | `/executions` | Execution and run history |
+| Observatory | `/observatory` | Aggregate system overview |
 | Settings | `/settings` | LLM provider, model, execution mode, service connections |
-| Constitution | `/constitution` | Edit safety/behavior rules for the engine |
-| Cost | `/cost` | Token usage and cost tracking |
 
 ---
 
 ## API Reference
 
-68 endpoints across 11 categories. All endpoints accept `X-Tenant-ID` header for multi-tenant isolation.
+200+ endpoints across many categories. All endpoints accept `X-Tenant-ID` header for multi-tenant isolation. The most-used endpoints are listed below by category (not exhaustive — see `/docs` for the full OpenAPI spec).
 
 ### Health / Config (7 endpoints)
 

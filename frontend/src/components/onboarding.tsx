@@ -50,7 +50,7 @@ export default function Onboarding() {
               <span className="px-1.5 py-[1px] rounded-full text-[8px] font-bold uppercase tracking-wider text-violet-300 bg-violet-500/15 border border-violet-500/25">Beta</span>
             </div>
             <p className="text-sm text-slate-400 leading-relaxed">
-              The orchestration dashboard for the MCP AI Suite. Your agent has access to 97 tools across 7 servers.
+              The orchestration dashboard for the MCP AI Suite. Your agent has access to 90+ tools across 6 servers.
             </p>
             <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
               In active development — still evolving. Found a bug or have an idea?{" "}
