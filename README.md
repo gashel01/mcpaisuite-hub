@@ -229,3 +229,11 @@ The bundled SearXNG instance provides web search capabilities to the kernel's to
 | `RAGMCP_VECTORSTORE_URL` | `http://host.docker.internal:6333` | Qdrant URL |
 | `RAGMCP_EMBEDDER` | `fastembed` | Embedding backend |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8007` | API URL for frontend |
+
+---
+
+## License
+
+AGPL-3.0 — see [LICENSE](LICENSE).
+
+Open source for individuals and open-source projects. For commercial use in closed-source products, a commercial license is available — contact [gaeldev@gmail.com](mailto:gaeldev@gmail.com).
