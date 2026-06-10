@@ -94,12 +94,16 @@ async def startup():
             contradiction_threshold=0.92,
             episodic_store=settings.get("memory_backend", "sqlite"),
             semantic_store=settings.get("memory_semantic_backend", "chroma"),
+            hot_cache=settings.get("memory_hotcache_backend", "") or None,
+            fact_graph=settings.get("memory_graph_backend", "") or None,
             chroma_path=str(_DATA_DIR / "chroma_memory"),
             sqlite_path=str(_DATA_DIR / "memorymcp.db"),
             redis_url=settings.get("memory_redis_url", "") or None,
             neo4j_uri=settings.get("memory_neo4j_uri", "") or None,
             neo4j_user=settings.get("memory_neo4j_user", "neo4j"),
             neo4j_password=settings.get("memory_neo4j_password", ""),
+            qdrant_url=settings.get("memory_qdrant_url", "http://localhost:6333"),
+            qdrant_collection=settings.get("memory_qdrant_collection", "memorymcp_facts"),
         )
 
     # 2. ragmcp — from env (qdrant + fastembed), configured via docker-compose
@@ -209,6 +213,7 @@ async def startup():
         api_key=api_key, base_url=base_url, enable_routing=True,
         max_turns=int(os.getenv("KERNELMCP_MAX_TURNS", str(settings.get("max_turns", 20)))),
         max_tokens_per_task=settings.get("max_tokens", 50000),
+        checkpoint_url=settings.get("kernel_checkpoint_url", "") or os.getenv("KERNELMCP_CHECKPOINT_URL", ""),
         namespace=DEFAULT_NAMESPACE,
         memory_pipeline=pipelines.get("memory"), planning_pipeline=pipelines.get("planning"),
         workspace_pipeline=pipelines.get("workspace"), sandbox_pipeline=pipelines.get("sandbox"),
