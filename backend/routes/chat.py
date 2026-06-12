@@ -124,7 +124,7 @@ async def resume_task(task_id: str, body: dict = {}, x_tenant_id: str = Header(d
 @router.post("/tasks/{task_id}/human-gate/{node_id}/approve")
 async def approve_human_gate(task_id: str, node_id: str, body: dict = {}, x_tenant_id: str = Header(default="")):
     """Respond to a human gate: approve, deny, or feedback."""
-    from routes.api import _active_executors
+    from routes.agents import _active_executors
     executor = _active_executors.get(task_id)
     if not executor:
         raise HTTPException(status_code=404, detail="No active executor for this task")

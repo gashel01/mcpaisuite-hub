@@ -14,7 +14,14 @@ from kernelmcp.events import kernel_event_bus, KernelEvent, KernelEventType
 from config import llm_config, litellm_kwargs, resolve_url, load_json, is_docker, \
     DEFAULT_NAMESPACE, DATA_DIR, EGRESS_CONFIG_PATH, settings
 from stores import conversations, audit_collector
-from routes import chat as chat_routes, rag as rag_routes, api as api_routes, stream as stream_routes, metrics as metrics_routes, alerts as alerts_routes, traces as traces_routes, constitution as constitution_routes, regression as regression_routes, eval as eval_routes, marketplace as marketplace_routes, hub as hub_routes
+from routes import chat as chat_routes, rag as rag_routes, stream as stream_routes, metrics as metrics_routes, alerts as alerts_routes, traces as traces_routes, review as review_routes, constitution as constitution_routes, regression as regression_routes, eval as eval_routes, marketplace as marketplace_routes, hub as hub_routes
+# api.py was split into nine domain routers:
+from routes import system as system_routes, settings as settings_routes, security as security_routes, \
+    workspace as workspace_routes, tools as tools_routes, agents as agents_routes, \
+    deployments as deployments_routes, fleet as fleet_routes, workflows as workflows_routes
+
+_API_ROUTERS = [system_routes, settings_routes, security_routes, workspace_routes,
+                tools_routes, agents_routes, deployments_routes, fleet_routes, workflows_routes]
 
 # ── App ──────────────────────────────────────────────────────────────────────
 
@@ -31,12 +38,14 @@ kernel = None
 # Wire routers
 app.include_router(chat_routes.router)
 app.include_router(rag_routes.router)
-app.include_router(api_routes.router)
+for _r in _API_ROUTERS:
+    app.include_router(_r.router)
 app.include_router(hub_routes.router)
 app.include_router(stream_routes.router)
 app.include_router(metrics_routes.router)
 app.include_router(alerts_routes.router)
 app.include_router(traces_routes.router)
+app.include_router(review_routes.router)
 app.include_router(constitution_routes.router)
 app.include_router(regression_routes.router)
 app.include_router(eval_routes.router)
@@ -220,6 +229,7 @@ async def startup():
         context_window_tokens=int(os.getenv("KERNELMCP_CONTEXT_WINDOW", str(settings.get("context_window_tokens", 40000)))),
         checkpoint_url=settings.get("kernel_checkpoint_url", "") or os.getenv("KERNELMCP_CHECKPOINT_URL", ""),
         namespace=DEFAULT_NAMESPACE,
+        enable_dlp=bool(settings.get("kernel_enable_dlp", True)),
         memory_pipeline=pipelines.get("memory"), planning_pipeline=pipelines.get("planning"),
         workspace_pipeline=pipelines.get("workspace"), sandbox_pipeline=pipelines.get("sandbox"),
         scheduler_pipeline=pipelines.get("scheduler"), rag_pipeline=pipelines.get("rag"),
@@ -254,7 +264,7 @@ async def startup():
 
     # Tag historical deployment runs so they carry the deployment badge in Recent Tasks.
     try:
-        n = api_routes.backfill_deployment_tags()
+        n = deployments_routes.backfill_deployment_tags()
         if n:
             print(f"[STARTUP] tagged {n} historical deployment runs", flush=True)
     except Exception as exc:
@@ -308,7 +318,8 @@ async def startup():
     # Share kernel with route modules
     chat_routes.kernel = kernel
     rag_routes.kernel = kernel
-    api_routes.kernel = kernel
+    for _r in _API_ROUTERS:
+        _r.kernel = kernel
     stream_routes.kernel = kernel
     hub_routes.kernel = kernel
 
@@ -369,15 +380,15 @@ async def startup():
         print(f"[STARTUP] settings re-apply failed: {exc}", flush=True)
 
     # Re-register persisted LangChain tools + reconnect MCP servers (survive restarts)
-    for spec in api_routes._load_list(api_routes._LC_TOOLS_PATH):
+    for spec in tools_routes._load_list(tools_routes._LC_TOOLS_PATH):
         try:
-            await api_routes.register_langchain_tool({"module": spec.get("module"), "class": spec.get("class"), "pip": spec.get("pip", [])})
+            await tools_routes.register_langchain_tool({"module": spec.get("module"), "class": spec.get("class"), "pip": spec.get("pip", [])})
             print(f"[STARTUP] re-registered LangChain tool {spec.get('class')}", flush=True)
         except Exception as exc:
             print(f"[STARTUP] LangChain tool {spec.get('class')} failed: {str(exc)[:120]}", flush=True)
-    for spec in api_routes._load_list(api_routes._MCP_SERVERS_PATH):
+    for spec in tools_routes._load_list(tools_routes._MCP_SERVERS_PATH):
         try:
-            await api_routes.connect_mcp_server(spec)
+            await tools_routes.connect_mcp_server(spec)
             print(f"[STARTUP] reconnected MCP server {spec.get('name')}", flush=True)
         except Exception as exc:
             print(f"[STARTUP] MCP server {spec.get('name')} failed: {str(exc)[:120]}", flush=True)
@@ -435,14 +446,14 @@ async def startup():
         # fleet (read registry, metrics, executions; pause/resume/run/rotate/delete with
         # built-in confirmation gates) instead of guessing from workspace/memory. Handled
         # here because deployments are a demo concept, not part of the kernelmcp orchestrator.
-        if tool_name in api_routes.FLEET_TOOL_NAMES:
+        if tool_name in fleet_routes.FLEET_TOOL_NAMES:
             audit_collector.emit("orchestrator", "tool_dispatch", {"tool": tool_name, "namespace": namespace, "args": arguments or {}})
             # During an interactive chat the engine exposes _ask_user_fn (a real UI
             # elicitation that pauses the task until the human answers). Pass it so
             # destructive fleet ops gate on a genuine human approval, not the LLM's
             # own confirm flag. None in non-interactive contexts (API/scheduled runs).
             ask_fn = getattr(getattr(kernel, "_engine", None), "_ask_user_fn", None)
-            res = await api_routes.run_fleet_tool(tool_name, arguments or {}, ask_fn=ask_fn)
+            res = await fleet_routes.run_fleet_tool(tool_name, arguments or {}, ask_fn=ask_fn)
             audit_collector.emit("orchestrator", "tool_result", {"tool": tool_name, "success": res.get("success", True), "duration_ms": 0, "output": str(res.get("output", ""))[:150], "error": "" if res.get("success", True) else str(res.get("output", ""))[:150]})
             return res
         # Summarize args (avoid logging huge code blobs)
@@ -479,14 +490,14 @@ async def startup():
     def _registry_with_deployments():
         tools = _orig_registry()
         have = {t.get("name") for t in tools}
-        for sch in api_routes.FLEET_TOOL_SCHEMAS:
+        for sch in fleet_routes.FLEET_TOOL_SCHEMAS:
             if sch["name"] not in have:
                 tools.append(sch)
         return tools
     kernel.orchestrator.get_tool_registry = _registry_with_deployments
     try:
         from kernelmcp.core import tool_selection as _tsel
-        _tsel.INTENT_TOOLS["deployments"] = set(api_routes.FLEET_TOOL_NAMES)
+        _tsel.INTENT_TOOLS["deployments"] = set(fleet_routes.FLEET_TOOL_NAMES)
         _tsel.INTENT_KEYWORDS.insert(0, ("deployments", [
             "deployed", "deployment", "fleet", "in production",
             "what's deployed", "whats deployed", "anything deployed", "agents deployed",

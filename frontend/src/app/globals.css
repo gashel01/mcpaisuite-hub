@@ -102,6 +102,9 @@ main {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* Opt-in page-entry animation for pages whose root re-mounts on client navigation
+   (where the persistent <main> animation above doesn't re-trigger). */
+.animate-page-in { animation: page-in 0.2s ease-out; }
 
 @keyframes slide-in {
   from { opacity: 0; transform: translateX(-20px); }
