@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bell } from "lucide-react";
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch } from '@/lib/api';
 
 
 interface AlertBellProps {
@@ -11,7 +11,6 @@ interface AlertBellProps {
 }
 
 export default function AlertBell({ onClick }: AlertBellProps) {
-  const API = getApiUrl();
   const [unreadCount, setUnreadCount] = useState(0);
   const prevCount = useRef(0);
   const [pulse, setPulse] = useState(false);
@@ -21,9 +20,7 @@ export default function AlertBell({ onClick }: AlertBellProps) {
 
     async function fetchCount() {
       try {
-        const res = await fetch(`${API}/alerts/unread-count`);
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await apiFetch<any>("/alerts/unread-count");
         if (mounted) {
           const count = data.count ?? data.unread_count ?? 0;
           if (count !== prevCount.current) {

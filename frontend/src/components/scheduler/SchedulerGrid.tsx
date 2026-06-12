@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
   LayoutGrid,
@@ -275,31 +274,21 @@ export default function SchedulerGrid({
 
       {/* Empty state */}
       {filteredJobs.length === 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="flex flex-col items-center justify-center py-16 text-center"
-        >
+        <div className="flex flex-col items-center justify-center py-16 text-center animate-fade-in">
           <Clock className="h-8 w-8 text-slate-700 mb-3" />
           <p className="text-sm text-slate-400 font-medium">No scheduled jobs yet</p>
           <p className="text-[11px] text-slate-600 mt-1">
             Jobs are created from chat or agent workflows
           </p>
-        </motion.div>
+        </div>
       )}
 
       {/* List view */}
       {viewMode === "list" && filteredJobs.length > 0 && (
-        <div className="space-y-0.5">
-          <AnimatePresence mode="popLayout">
-            {filteredJobs.map((job, i) => (
-              <motion.button
+        <div className="space-y-0.5 animate-fade-in">
+            {filteredJobs.map((job) => (
+              <button
                 key={job.id}
-                layout
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ delay: i * 0.03, type: "spring", stiffness: 300, damping: 30 }}
                 onClick={() => onSelectJob(job.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors group ${
                   selectedJobId === job.id
@@ -324,26 +313,19 @@ export default function SchedulerGrid({
                   {job.run_count}
                 </span>
                 <MiniSuccessBar job={job} />
-              </motion.button>
+              </button>
             ))}
-          </AnimatePresence>
         </div>
       )}
 
       {/* Grid view */}
       {viewMode === "grid" && filteredJobs.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-          <AnimatePresence mode="popLayout">
-            {filteredJobs.map((job, i) => {
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 animate-fade-in">
+            {filteredJobs.map((job) => {
               const TypeIcon = typeIcons[job.schedule_type];
               return (
-                <motion.button
+                <button
                   key={job.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ delay: i * 0.03, type: "spring", stiffness: 300, damping: 30 }}
                   onClick={() => onSelectJob(job.id)}
                   className={`text-left rounded-xl border p-3 transition-colors ${
                     selectedJobId === job.id
@@ -382,10 +364,9 @@ export default function SchedulerGrid({
                   <div className="mt-2">
                     <MiniSuccessBar job={job} width={9999} />
                   </div>
-                </motion.button>
+                </button>
               );
             })}
-          </AnimatePresence>
         </div>
       )}
     </div>

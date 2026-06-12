@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { KeyRound, AlertTriangle, Loader2, Check, Plus, Search, EyeOff, Eye, Copy, Settings, Trash2 } from "lucide-react";
+import { KeyRound, AlertTriangle, Check, Plus, Search, EyeOff, Eye, Copy, Settings, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch, ApiError } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
 import { SectionHeader } from "./_ui";
-
-const BASE_URL = getApiUrl();
 
 interface EnvVar { key: string; secret: boolean; preview: string; updated_at?: number }
 
@@ -23,14 +22,14 @@ export default function EnvPanel() {
 
   const load = async () => {
     setLoading(true);
-    try { const r = await fetch(`${BASE_URL}/env`); const d = await r.json(); setVars(d.vars || []); } catch {}
+    try { const d = await apiFetch<{ vars?: EnvVar[] }>("/env"); setVars(d.vars || []); } catch {}
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
 
   const reveal = async (key: string) => {
     if (revealed[key] !== undefined) { setRevealed(r => { const n = { ...r }; delete n[key]; return n; }); return; }
-    try { const r = await fetch(`${BASE_URL}/env/${encodeURIComponent(key)}`); const d = await r.json(); setRevealed(r2 => ({ ...r2, [key]: d.value ?? "" })); } catch {}
+    try { const d = await apiFetch<{ value?: string }>(`/env/${encodeURIComponent(key)}`); setRevealed(r2 => ({ ...r2, [key]: d.value ?? "" })); } catch {}
   };
   const copy = (text: string, key: string) => { navigator.clipboard?.writeText(text).then(() => { setCopied(key); setTimeout(() => setCopied(""), 1500); }).catch(() => {}); };
 
@@ -39,19 +38,20 @@ export default function EnvPanel() {
     if (!key) { setErr("Key is required"); return; }
     setSaving(true); setErr("");
     try {
-      const r = await fetch(`${BASE_URL}/env`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, value: form.value, secret: form.secret }) });
-      if (!r.ok) { const e = await r.json().catch(() => ({})); setErr(e.detail || `Error ${r.status}`); }
-      else { setForm({ key: "", value: "", secret: true }); setEditing(null); load(); }
-    } catch (e: any) { setErr(String(e?.message || e)); }
+      await apiFetch("/env", { method: "POST", body: { key, value: form.value, secret: form.secret } });
+      setForm({ key: "", value: "", secret: true }); setEditing(null); load();
+    } catch (e: any) {
+      setErr(e instanceof ApiError ? ((e.body as any)?.detail || `Error ${e.status}`) : String(e?.message || e));
+    }
     setSaving(false);
   };
   const startEdit = async (v: EnvVar) => {
     let val = "";
-    try { const r = await fetch(`${BASE_URL}/env/${encodeURIComponent(v.key)}`); val = (await r.json()).value ?? ""; } catch {}
+    try { val = (await apiFetch<{ value?: string }>(`/env/${encodeURIComponent(v.key)}`)).value ?? ""; } catch {}
     setForm({ key: v.key, value: val, secret: v.secret }); setEditing(v.key); setErr("");
   };
   const remove = async (key: string) => {
-    try { await fetch(`${BASE_URL}/env/${encodeURIComponent(key)}`, { method: "DELETE" }); } catch {}
+    try { await apiFetch(`/env/${encodeURIComponent(key)}`, { method: "DELETE" }); } catch {}
     load();
   };
 
@@ -89,7 +89,7 @@ export default function EnvPanel() {
             {err && <span className="text-[10px] text-red-400">{err}</span>}
             {editing && <button onClick={() => { setEditing(null); setForm({ key: "", value: "", secret: true }); }} className="text-[11px] text-slate-500 hover:text-slate-300">Cancel</button>}
             <button onClick={save} disabled={saving || !form.key.trim()} className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] font-medium text-black bg-lime-500/90 hover:bg-lime-400 disabled:bg-slate-800 disabled:text-slate-600 rounded-lg transition-all">
-              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : editing ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />} {editing ? "Save" : "Add"}
+              {saving ? <Spinner className="h-3 w-3" /> : editing ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />} {editing ? "Save" : "Add"}
             </button>
           </div>
         </div>

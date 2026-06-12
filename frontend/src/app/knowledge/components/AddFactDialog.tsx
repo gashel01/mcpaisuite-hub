@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { X, Plus, Check, Loader2 } from "lucide-react";
+import { X, Plus, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { BASE_URL } from "@/types";
-import { useTenant, tenantHeaders } from "@/context/tenant";
+import { apiFetch } from "@/lib/api";
+import { useTenant } from "@/context/tenant";
+import { Spinner } from "@/components/ui/Spinner";
+import { Modal } from "@/components/ui/Modal";
 
 interface AddFactDialogProps {
   open: boolean;
@@ -91,21 +93,16 @@ export function AddFactDialog({ open, onClose, onAdded, prefillContent }: AddFac
     setError(null);
 
     try {
-      const res = await fetch(`${BASE_URL}/rag/fact`, {
+      await apiFetch("/rag/fact", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...tenantHeaders(tenant) },
-        body: JSON.stringify({
+        tenant,
+        body: {
           content: c,
           importance,
           fact_type: factType,
           tags: tags.length > 0 ? tags : undefined,
-        }),
+        },
       });
-
-      if (!res.ok) {
-        const msg = await res.text().catch(() => "Failed to add fact");
-        throw new Error(msg);
-      }
 
       setSuccess(true);
       setTimeout(() => {
@@ -120,27 +117,12 @@ export function AddFactDialog({ open, onClose, onAdded, prefillContent }: AddFac
   };
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={(e) => e.target === e.currentTarget && onClose()}
-        >
-          {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/60 " />
-
-          {/* Dialog */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="relative w-full max-w-md mx-4 bg-[#0f0f1c] border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden"
-          >
+    <Modal
+      open={open}
+      onClose={onClose}
+      backdropClassName="z-50 bg-black/60"
+      className="relative w-full max-w-md bg-[#0f0f1c] border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden"
+    >
             {/* Success overlay */}
             <AnimatePresence>
               {success && (
@@ -267,16 +249,13 @@ export function AddFactDialog({ open, onClose, onAdded, prefillContent }: AddFac
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:hover:bg-violet-600 text-white text-xs font-medium rounded-xl transition-all active:scale-[0.98]"
               >
                 {loading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner className="h-3.5 w-3.5" />
                 ) : (
                   <Plus className="h-3.5 w-3.5" />
                 )}
                 Add to Brain
               </button>
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    </Modal>
   );
 }

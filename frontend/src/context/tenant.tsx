@@ -1,5 +1,5 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 
@@ -21,13 +21,10 @@ const TenantContext = createContext<TenantCtx>({
 });
 
 export function TenantProvider({ children }: { children: ReactNode }) {
-  const BASE = getApiUrl();
-  const [tenant, setTenantState] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("kernelmcp_tenant") || "demo";
-    }
-    return "demo";
-  });
+  // Init to the SSR-safe default and read localStorage only AFTER mount (in the effect below).
+  // Reading it during the initial render makes the server HTML ("demo") differ from the client's
+  // (the stored tenant), which triggers React hydration errors (#418/#425).
+  const [tenant, setTenantState] = useState("demo");
   const [tenants, setTenants] = useState<string[]>(["demo"]);
 
   const setTenant = (t: string) => {
@@ -38,8 +35,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshTenants = () => {
-    fetch(`${BASE}/workspace/tenants`)
-      .then((r) => r.json())
+    apiFetch<any>("/workspace/tenants")
       .then((d) => {
         const list: string[] = (d.tenants as string[]) || ["demo"];
         if (!list.includes(tenant)) list.push(tenant);
@@ -57,6 +53,12 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     }
     setTenant(clean);
   };
+
+  // Restore the persisted tenant once, after mount (hydration-safe).
+  useEffect(() => {
+    const stored = localStorage.getItem("kernelmcp_tenant");
+    if (stored && stored !== "demo") setTenantState(stored);
+  }, []);
 
   useEffect(() => {
     refreshTenants();

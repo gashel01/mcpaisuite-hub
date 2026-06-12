@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Shield, RefreshCw, Loader2, ChevronDown, ChevronUp,
+  Shield, RefreshCw, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle2, Plus, Upload, Network,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { BASE_URL } from "@/types";
-import { useTenant, tenantHeaders } from "@/context/tenant";
+import { apiFetch } from "@/lib/api";
+import { useTenant } from "@/context/tenant";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface Gap {
   severity: "high" | "medium" | "low";
@@ -67,17 +68,13 @@ export function GapDetector({ onNavigateToNode }: GapDetectorProps) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${BASE_URL}/rag/gaps`, {
-        headers: tenantHeaders(tenant),
-      });
-      if (!res.ok) throw new Error("Failed to analyze gaps");
-      const data = await res.json();
+      const data = await apiFetch<any>("/rag/gaps", { tenant });
       setReport({
         score: data.score ?? data.health_score ?? 0.5,
         gaps: data.gaps || [],
       });
     } catch (err: any) {
-      setError(err.message || "Failed to fetch gap analysis");
+      setError(err?.message || "Failed to fetch gap analysis");
     } finally {
       setLoading(false);
     }
@@ -106,7 +103,7 @@ export function GapDetector({ onNavigateToNode }: GapDetectorProps) {
           </span>
         )}
 
-        {loading && <Loader2 className="h-3 w-3 text-slate-500 animate-spin" />}
+        {loading && <Spinner className="h-3 w-3 text-slate-500" />}
 
         <button
           onClick={(e) => {
@@ -157,7 +154,7 @@ export function GapDetector({ onNavigateToNode }: GapDetectorProps) {
               {/* Loading */}
               {loading && !report && (
                 <div className="flex items-center justify-center py-6">
-                  <Loader2 className="h-4 w-4 text-violet-400 animate-spin" />
+                  <Spinner className="h-4 w-4 text-violet-400" />
                 </div>
               )}
 

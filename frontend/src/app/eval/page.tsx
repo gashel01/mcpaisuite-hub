@@ -1,17 +1,19 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FlaskConical, Plus, Play, Trash2, ChevronRight, CheckCircle2,
-  XCircle, Clock, BarChart3, GitCompare, Loader2, Upload, Download,
+  XCircle, Clock, BarChart3, GitCompare, Upload, Download,
   FileText, AlertCircle, Menu, PanelLeftOpen,
 } from "lucide-react";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { useBreakpoint } from "@/hooks/useBreakpoint";
 import { useToast } from "@/components/ui/toast";
 import ConfirmDialog from "@/components/ui/confirm";
+import { Modal } from "@/components/ui/Modal";
 
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ interface EvalRun {
   id: string;
   dataset_id: string;
   dataset_name: string;
+  namespace?: string; // tenant the run executed under (provenance badge)
   status: string;
   started_at: string;
   completed_at: string | null;
@@ -68,8 +71,6 @@ interface Scorer {
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────
-
-const BASE = getApiUrl();
 
 export default function EvalPage() {
   return (
@@ -111,37 +112,45 @@ function EvalInner() {
   const [running, setRunning] = useState(false);
   const [stopping, setStopping] = useState(false);
 
+  // Track the run-progress poll so it's always torn down (on unmount, or before a new run) —
+  // previously the setInterval/setTimeout leaked and kept setState-ing after navigation away.
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (pollTimeoutRef.current) { clearTimeout(pollTimeoutRef.current); pollTimeoutRef.current = null; }
+  }, []);
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
   const fetchAll = useCallback(async () => {
     setLoading(true);
     const [dsRes, runRes, scorerRes] = await Promise.all([
-      fetch(`${BASE}/eval/datasets`, { headers: th }).then(r => r.json()).catch(() => ({ datasets: [] })),
-      fetch(`${BASE}/eval/runs`, { headers: th }).then(r => r.json()).catch(() => ({ runs: [] })),
-      fetch(`${BASE}/eval/scorers`, { headers: th }).then(r => r.json()).catch(() => ({ scorers: [] })),
+      apiFetch<any>("/eval/datasets", { headers: th }).catch(() => ({ datasets: [] })),
+      apiFetch<any>("/eval/runs", { headers: th }).catch(() => ({ runs: [] })),
+      apiFetch<any>("/eval/scorers", { headers: th }).catch(() => ({ scorers: [] })),
     ]);
     setDatasets(dsRes.datasets || []);
     setRuns(runRes.runs || []);
     setScorers(scorerRes.scorers || []);
     setLoading(false);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps  (eval is global — not tenant-scoped)
 
   useEffect(() => { fetchAll(); }, []); // eslint-disable-line
 
   const fetchDatasetDetail = async (id: string) => {
-    const res = await fetch(`${BASE}/eval/datasets/${id}`, { headers: th });
-    if (res.ok) {
-      const ds = await res.json();
+    try {
+      const ds = await apiFetch<any>(`/eval/datasets/${id}`, { headers: th });
       setSelectedDataset(ds);
       setRunDetail(null);
       setSelectedRun(null);
-    }
+    } catch { /* ignore */ }
   };
 
   const fetchRunDetail = async (id: string) => {
-    const res = await fetch(`${BASE}/eval/runs/${id}`, { headers: th });
-    if (res.ok) {
-      setRunDetail(await res.json());
+    try {
+      setRunDetail(await apiFetch<any>(`/eval/runs/${id}`, { headers: th }));
       setSelectedRun(id);
-    }
+    } catch { /* ignore */ }
   };
 
   const deleteDataset = (id: string) => {
@@ -150,8 +159,7 @@ function EvalInner() {
       message: "This will permanently delete the dataset and all its test cases. This cannot be undone.",
       action: async () => {
         try {
-          const res = await fetch(`${BASE}/eval/datasets/${id}`, { method: "DELETE", headers: th });
-          if (!res.ok) throw new Error("Delete failed");
+          await apiFetch(`/eval/datasets/${id}`, { method: "DELETE", headers: th });
           setSelectedDataset(null);
           fetchAll();
           toastOk("Dataset deleted");
@@ -166,8 +174,7 @@ function EvalInner() {
       message: "This will permanently delete this evaluation run and its results.",
       action: async () => {
         try {
-          const res = await fetch(`${BASE}/eval/runs/${id}`, { method: "DELETE", headers: th });
-          if (!res.ok) throw new Error("Delete failed");
+          await apiFetch(`/eval/runs/${id}`, { method: "DELETE", headers: th });
           setSelectedRun(null);
           setRunDetail(null);
           fetchAll();
@@ -179,55 +186,50 @@ function EvalInner() {
 
   const startRun = async (datasetId: string) => {
     setRunning(true);
+    stopPolling();
     try {
-      const res = await fetch(`${BASE}/eval/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({
+      const data = await apiFetch<any>("/eval/runs", {
+        method: "POST", headers: th,
+        body: {
           dataset_id: datasetId,
           scoring_functions: runScorers.map(s => ({ type: s })),
           namespace: tenant,
-        }),
+        },
       });
-      if (res.ok) {
-        const data = await res.json();
-        const runId = data.run_id;
+      const runId = data.run_id;
 
-        // Switch to run view immediately
-        setSelectedDataset(null);
-        setSelectedRun(runId);
-        setTab("runs");
+      // Switch to run view immediately
+      setSelectedDataset(null);
+      setSelectedRun(runId);
+      setTab("runs");
 
-        // Add placeholder to sidebar (avoid duplicates from fetchAll)
-        setRuns(prev => {
-          if (prev.some(r => r.id === runId)) return prev;
-          return [{
-            id: runId, dataset_id: datasetId, dataset_name: selectedDataset?.name || "",
-            status: "running", started_at: new Date().toISOString(), completed_at: null,
-            summary: {} as RunSummary,
-          }, ...prev];
-        });
+      // Add placeholder to sidebar (avoid duplicates from fetchAll)
+      setRuns(prev => {
+        if (prev.some(r => r.id === runId)) return prev;
+        return [{
+          id: runId, dataset_id: datasetId, dataset_name: selectedDataset?.name || "",
+          status: "running", started_at: new Date().toISOString(), completed_at: null,
+          summary: {} as RunSummary,
+        }, ...prev];
+      });
 
-        // Poll for progress
-        const pollId = setInterval(async () => {
-          const r = await fetch(`${BASE}/eval/runs/${runId}`, { headers: th });
-          if (r.ok) {
-            const run = await r.json();
-            setRunDetail(run);
-            // Update sidebar entry
-            setRuns(prev => prev.map(r => r.id === runId ? { ...r, status: run.status, summary: run.summary || {} } : r));
-            if (run.status !== "running") {
-              clearInterval(pollId);
-              setRunning(false);
-              setStopping(false);
-              const msg = run.status === "cancelled" ? "Eval stopped" : `Eval complete — ${run.summary?.pass_rate?.toFixed(0) || 0}% pass rate`;
-              toastOk(msg);
-            }
+      // Poll for progress — tracked in refs so it's torn down on unmount / next run.
+      pollRef.current = setInterval(async () => {
+        try {
+          const run = await apiFetch<any>(`/eval/runs/${runId}`, { headers: th });
+          setRunDetail(run);
+          setRuns(prev => prev.map(r => r.id === runId ? { ...r, status: run.status, summary: run.summary || {} } : r));
+          if (run.status !== "running") {
+            stopPolling();
+            setRunning(false);
+            setStopping(false);
+            const msg = run.status === "cancelled" ? "Eval stopped" : `Eval complete — ${run.summary?.pass_rate?.toFixed(0) || 0}% pass rate`;
+            toastOk(msg);
           }
-        }, 1500);
-        toastOk("Evaluation started");
-        setTimeout(() => { clearInterval(pollId); setRunning(false); }, 300000);
-      }
+        } catch { /* transient — keep polling */ }
+      }, 1500);
+      toastOk("Evaluation started");
+      pollTimeoutRef.current = setTimeout(() => { stopPolling(); setRunning(false); }, 300000);
     } catch {
       setRunning(false);
     }
@@ -235,12 +237,12 @@ function EvalInner() {
 
   const doCompare = async () => {
     if (compareIds.length !== 2) return;
-    const res = await fetch(`${BASE}/eval/compare`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...th },
-      body: JSON.stringify({ run_id_a: compareIds[0], run_id_b: compareIds[1] }),
-    });
-    if (res.ok) setComparison(await res.json());
+    try {
+      setComparison(await apiFetch<any>("/eval/compare", {
+        method: "POST", headers: th,
+        body: { run_id_a: compareIds[0], run_id_b: compareIds[1] },
+      }));
+    } catch { /* ignore */ }
   };
 
   return (
@@ -307,7 +309,7 @@ function EvalInner() {
 
           {/* List */}
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {loading && <div className="flex justify-center py-8"><Loader2 className="w-4 h-4 animate-spin text-slate-500" /></div>}
+            {loading && <div className="flex justify-center py-8"><Spinner className="w-4 h-4 text-slate-500" /></div>}
 
             {tab === "datasets" && (
               <>
@@ -376,11 +378,14 @@ function EvalInner() {
                   >
                     <div className="flex items-center gap-1.5">
                       {run.status === "completed" && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />}
-                      {run.status === "running" && <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin" />}
+                      {run.status === "running" && <Spinner className="w-2.5 h-2.5 text-blue-400" />}
                       {run.status === "failed" && <XCircle className="w-2.5 h-2.5 text-red-400" />}
                       <span className="text-[10px] font-medium text-slate-300 truncate">{run.dataset_name}</span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
+                      {run.namespace && (
+                        <span className="text-[8px] px-1 rounded bg-violet-500/10 text-violet-300/80 font-medium" data-tooltip="Ran under tenant">{run.namespace}</span>
+                      )}
                       {run.summary?.avg_score != null && (
                         <span className="text-[9px] text-slate-500">Score: {(run.summary.avg_score * 100).toFixed(0)}%</span>
                       )}
@@ -436,7 +441,7 @@ function EvalInner() {
                   stopping={stopping}
                   onStop={async () => {
                     setStopping(true);
-                    await fetch(`${BASE}/eval/runs/${runDetail.id}/stop`, { method: "POST", headers: th });
+                    await apiFetch(`/eval/runs/${runDetail.id}/stop`, { method: "POST", headers: th }).catch(() => {});
                     // Polling will detect the status change and update UI
                   }}
                 />
@@ -470,15 +475,13 @@ function EvalInner() {
       </div>
 
       {/* Create dataset modal */}
-      <AnimatePresence>
-        {showCreate && (
-          <CreateDatasetModal
-            onClose={() => setShowCreate(false)}
-            onCreate={(ds) => { setShowCreate(false); fetchAll(); fetchDatasetDetail(ds.id); toastOk("Dataset created"); }}
-            tenantHeaders={th}
-          />
-        )}
-      </AnimatePresence>
+      {showCreate && (
+        <CreateDatasetModal
+          onClose={() => setShowCreate(false)}
+          onCreate={(ds) => { setShowCreate(false); fetchAll(); fetchDatasetDetail(ds.id); toastOk("Dataset created"); }}
+          tenantHeaders={th}
+        />
+      )}
 
       {/* Confirm dialog */}
       <ConfirmDialog
@@ -514,17 +517,14 @@ function DatasetDetail({ dataset, scorers, runScorers, setRunScorers, onRun, onD
 
   const addCase = async () => {
     if (!newCase.input.trim()) return;
-    const res = await fetch(`${BASE}/eval/datasets/${dataset.id}/cases`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...th },
-      body: JSON.stringify({ cases: [newCase] }),
-    });
-    if (res.ok) {
-      const ds = await res.json();
+    try {
+      const ds = await apiFetch<any>(`/eval/datasets/${dataset.id}/cases`, {
+        method: "POST", headers: th, body: { cases: [newCase] },
+      });
       onUpdate(ds);
       setNewCase({ input: "", expected_output: "" });
       setShowAddCase(false);
-    }
+    } catch { /* ignore */ }
   };
 
   const exportDataset = () => {
@@ -581,7 +581,7 @@ function DatasetDetail({ dataset, scorers, runScorers, setRunScorers, onRun, onD
           disabled={running || cases.length === 0}
           className="flex items-center gap-2 px-4 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {running ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+          {running ? <Spinner className="w-3 h-3" /> : <Play className="w-3 h-3" />}
           {running ? "Running..." : `Run Eval (${cases.length} cases)`}
         </button>
       </div>
@@ -678,7 +678,7 @@ function RunDetail({ run, onDelete, onStop, stopping, onBackToDataset }: { run: 
             <span>{new Date(run.started_at).toLocaleString()}</span>
             {isRunning ? (
               <span className="flex items-center gap-1 text-violet-400">
-                <Loader2 className="w-3 h-3 animate-spin" />
+                <Spinner className="w-3 h-3" />
                 Running {completedCases}/{totalCases}
               </span>
             ) : isCancelled ? (
@@ -696,7 +696,7 @@ function RunDetail({ run, onDelete, onStop, stopping, onBackToDataset }: { run: 
               stopping ? "bg-amber-500/10 text-amber-300" : "bg-red-500/10 hover:bg-red-500/20 text-red-300"
             }`}
           >
-            {stopping ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+            {stopping ? <Spinner className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
             {stopping ? "Stopping..." : "Stop"}
           </button>
         ) : (
@@ -721,7 +721,7 @@ function RunDetail({ run, onDelete, onStop, stopping, onBackToDataset }: { run: 
           </div>
           {run.current_case && (
             <div className="text-[10px] text-slate-500 truncate">
-              <Loader2 className="w-3 h-3 inline animate-spin mr-1" />
+              <Spinner className="w-3 h-3 inline mr-1" />
               {run.current_case}
             </div>
           )}
@@ -777,7 +777,7 @@ function RunDetail({ run, onDelete, onStop, stopping, onBackToDataset }: { run: 
             }`}>
               <div className="flex items-center gap-2 mb-1">
                 {isCurrent ? (
-                  <Loader2 className="w-3 h-3 text-violet-400 animate-spin shrink-0" />
+                  <Spinner className="w-3 h-3 text-violet-400 shrink-0" />
                 ) : allPassed ? (
                   <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
                 ) : r.error ? (
@@ -898,12 +898,11 @@ function CreateDatasetModal({ onClose, onCreate, tenantHeaders: th }: {
       const [input, expected] = line.split("|").map(s => s.trim());
       return { input: input || "", expected_output: expected || "" };
     });
-    const res = await fetch(`${BASE}/eval/datasets`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...th },
-      body: JSON.stringify({ name, description, cases }),
-    });
-    if (res.ok) onCreate(await res.json());
+    try {
+      onCreate(await apiFetch<any>("/eval/datasets", {
+        method: "POST", headers: th, body: { name, description, cases },
+      }));
+    } catch { /* ignore */ }
   };
 
   const importJson = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -912,32 +911,19 @@ function CreateDatasetModal({ onClose, onCreate, tenantHeaders: th }: {
     const text = await file.text();
     try {
       const data = JSON.parse(text);
-      const res = await fetch(`${BASE}/eval/datasets/import`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) onCreate(await res.json());
+      onCreate(await apiFetch<any>("/eval/datasets/import", { method: "POST", headers: th, body: data }));
     } catch {
       // Invalid JSON
     }
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 "
-      onClick={onClose}
+    <Modal
+      open
+      onClose={onClose}
+      backdropClassName="z-50 bg-black/50"
+      className="bg-[#0f0f1c] border border-white/[0.08] rounded-xl p-5 w-[500px] max-h-[80vh] overflow-y-auto"
     >
-      <motion.div
-        initial={{ scale: 0.95, y: 10 }}
-        animate={{ scale: 1, y: 0 }}
-        exit={{ scale: 0.95 }}
-        className="bg-[#0f0f1c] border border-white/[0.08] rounded-xl p-5 w-[500px] max-h-[80vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
         <h3 className="text-sm font-semibold text-white mb-4">Create Evaluation Dataset</h3>
 
         <div className="space-y-3">
@@ -992,8 +978,7 @@ function CreateDatasetModal({ onClose, onCreate, tenantHeaders: th }: {
             Create
           </button>
         </div>
-      </motion.div>
-    </motion.div>
+    </Modal>
   );
 }
 

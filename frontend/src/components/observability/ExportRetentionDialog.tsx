@@ -1,12 +1,13 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
 
-import { useState, useEffect, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect } from "react";
 import {
-  Download, FileJson, FileSpreadsheet, Loader2, Trash2, Settings2,
+  Download, FileJson, FileSpreadsheet, Trash2, Settings2,
   Calendar, AlertTriangle, X,
 } from "lucide-react";
+import { Modal } from "@/components/ui/Modal";
 
 
 interface Props {
@@ -24,7 +25,6 @@ interface Retention {
 }
 
 export default function ExportRetentionDialog({ open, onClose, namespace }: Props) {
-  const BASE = getApiUrl();
   const [tab, setTab] = useState<"export" | "retention">("export");
 
   // Export state
@@ -41,13 +41,10 @@ export default function ExportRetentionDialog({ open, onClose, namespace }: Prop
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState<string>("");
 
-  const th = { "X-Tenant-Id": namespace };
-
   // Load retention config
   useEffect(() => {
     if (!open) return;
-    fetch(`${BASE}/retention`, { headers: th })
-      .then(r => r.json())
+    apiFetch<any>("/retention", { tenant: namespace })
       .then(data => {
         setRetention(data);
         setRetainDays(data.retain_days || 30);
@@ -64,9 +61,7 @@ export default function ExportRetentionDialog({ open, onClose, namespace }: Prop
       if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
       if (dateTo) params.set("date_to", new Date(dateTo).toISOString());
 
-      const res = await fetch(`${BASE}/export/traces?${params}`, { headers: th });
-      if (!res.ok) throw new Error("Export failed");
-
+      const res = await apiFetch<Response>(`/export/traces?${params}`, { tenant: namespace, raw: true });
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -83,51 +78,35 @@ export default function ExportRetentionDialog({ open, onClose, namespace }: Prop
   };
 
   const saveRetention = async () => {
-    await fetch(`${BASE}/retention`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...th },
-      body: JSON.stringify({ retain_days: retainDays, retain_min_count: retainMin, auto_cleanup: autoCleanup }),
+    await apiFetch("/retention", {
+      method: "PUT", tenant: namespace,
+      body: { retain_days: retainDays, retain_min_count: retainMin, auto_cleanup: autoCleanup },
     });
     // Refresh
-    const res = await fetch(`${BASE}/retention`, { headers: th });
-    if (res.ok) setRetention(await res.json());
+    try { setRetention(await apiFetch<any>("/retention", { tenant: namespace })); } catch {}
   };
 
   const runCleanup = async () => {
     setCleaning(true);
     setCleanResult("");
     try {
-      const res = await fetch(`${BASE}/retention/cleanup`, { method: "POST", headers: th });
-      if (res.ok) {
-        const data = await res.json();
-        setCleanResult(`Deleted ${data.deleted} tasks. ${data.remaining} remaining.`);
-        // Refresh retention info
-        const r2 = await fetch(`${BASE}/retention`, { headers: th });
-        if (r2.ok) setRetention(await r2.json());
-      }
+      const data = await apiFetch<any>("/retention/cleanup", { method: "POST", tenant: namespace });
+      setCleanResult(`Deleted ${data.deleted} tasks. ${data.remaining} remaining.`);
+      // Refresh retention info
+      try { setRetention(await apiFetch<any>("/retention", { tenant: namespace })); } catch {}
     } catch {
       setCleanResult("Cleanup failed");
     }
     setCleaning(false);
   };
 
-  if (!open) return null;
-
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 "
-      onClick={onClose}
+    <Modal
+      open={open}
+      onClose={onClose}
+      backdropClassName="z-50 bg-black/50"
+      className="bg-[#0f0f1c] border border-white/[0.08] rounded-xl w-[460px] max-h-[80vh] overflow-hidden"
     >
-      <motion.div
-        initial={{ scale: 0.95, y: 10 }}
-        animate={{ scale: 1, y: 0 }}
-        exit={{ scale: 0.95 }}
-        className="bg-[#0f0f1c] border border-white/[0.08] rounded-xl w-[460px] max-h-[80vh] overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.04]">
           <div className="flex items-center gap-2">
@@ -224,7 +203,7 @@ export default function ExportRetentionDialog({ open, onClose, namespace }: Prop
                 disabled={exporting}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40"
               >
-                {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                {exporting ? <Spinner className="w-3 h-3" /> : <Download className="w-3 h-3" />}
                 {exporting ? "Exporting..." : "Download Export"}
               </button>
             </div>
@@ -294,7 +273,7 @@ export default function ExportRetentionDialog({ open, onClose, namespace }: Prop
                   disabled={cleaning || (retention?.deletable ?? 0) === 0}
                   className="flex items-center gap-1.5 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-300 rounded-md text-xs font-medium transition-colors disabled:opacity-40"
                 >
-                  {cleaning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                  {cleaning ? <Spinner className="w-3 h-3" /> : <Trash2 className="w-3 h-3" />}
                   Cleanup Now
                 </button>
               </div>
@@ -312,7 +291,6 @@ export default function ExportRetentionDialog({ open, onClose, namespace }: Prop
             </div>
           )}
         </div>
-      </motion.div>
-    </motion.div>
+    </Modal>
   );
 }

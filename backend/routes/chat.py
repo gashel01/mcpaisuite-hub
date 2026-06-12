@@ -304,7 +304,12 @@ async def stream_task(conversation_id: str, task_id: str, x_tenant_id: str = Hea
                 question = task.metadata.get("elicitation_question", "")
                 yield f"data: {json.dumps({'type': 'elicitation', 'task_id': task_id, 'question': question})}\n\n"
 
-            if task.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled):
+            # Only finalize when the status is terminal AND the execution coroutine has actually
+            # returned. In hybrid mode an LTP attempt can set a terminal status (e.g. failed)
+            # transiently before falling back to ReAct — gating on task_runner keeps the stream
+            # (and the chat UI's "running" state + live logs) alive until the run is truly done,
+            # matching what observability's event-bus stream already shows.
+            if task.status in (TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled) and not task_runner.is_running(task_id):
                 answer = extract_answer(task)
                 yield f"data: {json.dumps({'type': 'done', 'status': task.status.value, 'answer': answer, 'total_tokens': task.total_tokens, 'total_cost': task.total_cost, 'total_turns': task.total_turns, 'turns': turns, 'bootstrap_sources': task.metadata.get('bootstrap_sources', [])}, default=str)}\n\n"
                 break

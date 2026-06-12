@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "framer-motion";
 import {
   LayoutList,
   Play,
@@ -10,7 +9,6 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import type { SchedulerStats } from "@/types/scheduler";
-import AnimatedCounter from "@/components/scheduler/AnimatedCounter";
 
 interface SchedulerHeroProps {
   stats: SchedulerStats | null;
@@ -138,24 +136,16 @@ export default function SchedulerHero({
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        {cards.map((card, i) => {
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 animate-fade-in">
+        {cards.map((card) => {
           const value = card.getValue(s);
           const color = card.getColor(s);
           const Icon = card.icon;
           const isActive = activeFilter === card.filterStatus && card.filterStatus !== null;
 
           return (
-            <motion.button
+            <button
               key={card.key}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{
-                delay: i * 0.06,
-                type: "spring",
-                stiffness: 300,
-                damping: 30,
-              }}
               onClick={() =>
                 onFilterClick(isActive ? null : card.filterStatus)
               }
@@ -174,30 +164,23 @@ export default function SchedulerHero({
                   {card.label}
                 </span>
               </div>
-              <AnimatedCounter value={value} className={`text-xl font-bold ${color}`} />
-            </motion.button>
+              <span className={`text-xl font-bold tabular-nums ${color}`}>{value.toLocaleString()}</span>
+            </button>
           );
         })}
       </div>
 
       {/* Segmented bar below hero */}
       {!allZero && (
-        <motion.div
-          initial={{ opacity: 0, scaleX: 0 }}
-          animate={{ opacity: 1, scaleX: 1 }}
-          transition={{ delay: 0.4, type: "spring", stiffness: 300, damping: 30 }}
-          className="h-1 rounded-full overflow-hidden flex origin-left"
-        >
+        <div className="h-1 rounded-full overflow-hidden flex animate-fade-in">
           {segments.map((seg) => (
-            <motion.div
+            <div
               key={seg.key}
-              className={`h-full ${seg.color}`}
-              initial={{ width: 0 }}
-              animate={{ width: `${seg.pct}%` }}
-              transition={{ delay: 0.5, type: "spring", stiffness: 300, damping: 30 }}
+              className={`h-full ${seg.color} transition-[width] duration-500`}
+              style={{ width: `${seg.pct}%` }}
             />
           ))}
-        </motion.div>
+        </div>
       )}
 
       {allZero && (

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch } from '@/lib/api';
 import { stripTaskforcePrefix } from '@/lib/taskforce';
 import {
   Search, X, Clock, AlertCircle, Coins, Hash, Zap,
@@ -55,7 +55,6 @@ const SORT_OPTIONS = [
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function SearchPanel({ onSelectTrace, namespace }: SearchPanelProps) {
-  const API = getApiUrl();
   const [query, setQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<QuickFilterId>>(new Set());
   const [sort, setSort] = useState('newest');
@@ -86,13 +85,7 @@ export function SearchPanel({ onSelectTrace, namespace }: SearchPanelProps) {
       setLoading(true);
       try {
         const params = buildSearchParams(append && cursor ? cursor : undefined);
-        const res = await fetch(`${API}/traces/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...params, namespace }),
-        });
-        if (!res.ok) throw new Error('Search failed');
-        const data = await res.json();
+        const data = await apiFetch<any>('/traces/search', { method: 'POST', body: { ...params, namespace } });
         const items: SearchResult[] = data.results || data.traces || [];
         setResults(prev => append ? [...prev, ...items] : items);
         setTotalCount(data.total_count ?? data.total ?? items.length);

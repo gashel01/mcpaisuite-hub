@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch } from '@/lib/api';
 import {
   AlertTriangle,
   Activity,
@@ -60,7 +60,6 @@ function healthColor(rate: number): string {
 }
 
 export function RegressionPanel({ namespace }: RegressionPanelProps) {
-  const API = getApiUrl();
   const [baselines, setBaselines] = useState<Baseline[]>([]);
   const [regressions, setRegressions] = useState<Regression[]>([]);
   const [sortBy, setSortBy] = useState<SortKey>('samples');
@@ -68,12 +67,12 @@ export function RegressionPanel({ namespace }: RegressionPanelProps) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [blRes, regRes] = await Promise.all([
-        fetch(`${API}/regression/baselines?namespace=${namespace}`),
-        fetch(`${API}/regression/active?namespace=${namespace}`),
+      const [bl, reg] = await Promise.all([
+        apiFetch<any>(`/regression/baselines?namespace=${namespace}`).catch(() => null),
+        apiFetch<any>(`/regression/active?namespace=${namespace}`).catch(() => null),
       ]);
-      if (blRes.ok) setBaselines(await blRes.json());
-      if (regRes.ok) setRegressions(await regRes.json());
+      if (bl) setBaselines(bl);
+      if (reg) setRegressions(reg);
     } catch {
       // silent
     } finally {

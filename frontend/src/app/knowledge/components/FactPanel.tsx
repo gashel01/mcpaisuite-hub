@@ -6,6 +6,7 @@ import {
   BarChart3, Eye, Hash, Shield,
 } from "lucide-react";
 import type { KnowledgeFact, FactSort, UnifiedNode } from "../types";
+import ConfirmDialog from "@/components/ui/confirm";
 
 interface FactPanelProps {
   facts: KnowledgeFact[];
@@ -17,7 +18,7 @@ export function FactPanel({ facts, onDelete, onSelect }: FactPanelProps) {
   const [sort, setSort] = useState<FactSort>("importance");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<KnowledgeFact | null>(null);
 
   const factTypes = useMemo(() => [...new Set(facts.map(f => f.fact_type).filter(Boolean))], [facts]);
 
@@ -38,16 +39,6 @@ export function FactPanel({ facts, onDelete, onSelect }: FactPanelProps) {
     }
     return list;
   }, [facts, sort, search, typeFilter]);
-
-  const handleDelete = (id: string) => {
-    if (confirmDelete === id) {
-      onDelete(id);
-      setConfirmDelete(null);
-    } else {
-      setConfirmDelete(id);
-      setTimeout(() => setConfirmDelete(null), 3000);
-    }
-  };
 
   return (
     <div className="flex flex-col min-h-0 h-full">
@@ -101,8 +92,7 @@ export function FactPanel({ facts, onDelete, onSelect }: FactPanelProps) {
           <FactItem
             key={f.id}
             fact={f}
-            isConfirmingDelete={confirmDelete === f.id}
-            onDelete={() => handleDelete(f.id)}
+            onDelete={() => setPendingDelete(f)}
             onClick={() => onSelect({
               id: `fact_${f.id}`, name: f.content.slice(0, 35), type: "Fact",
               category: "fact", content: f.content, importance: f.importance, tags: f.tags,
@@ -110,15 +100,22 @@ export function FactPanel({ facts, onDelete, onSelect }: FactPanelProps) {
           />
         ))}
       </div>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete fact"
+        message={pendingDelete ? `"${pendingDelete.content.slice(0, 80)}${pendingDelete.content.length > 80 ? "…" : ""}" will be permanently removed from memory.` : ""}
+        onConfirm={() => { if (pendingDelete) onDelete(pendingDelete.id); setPendingDelete(null); }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
 
 // ── Fact Item ────────────────────────────────────────────────────────────
 
-function FactItem({ fact, isConfirmingDelete, onDelete, onClick }: {
+function FactItem({ fact, onDelete, onClick }: {
   fact: KnowledgeFact;
-  isConfirmingDelete: boolean;
   onDelete: () => void;
   onClick: () => void;
 }) {
@@ -163,12 +160,8 @@ function FactItem({ fact, isConfirmingDelete, onDelete, onClick }: {
       {/* Actions */}
       <button
         onClick={e => { e.stopPropagation(); onDelete(); }}
-        className={`shrink-0 p-0.5 transition-all ${
-          isConfirmingDelete
-            ? "opacity-100 text-red-400"
-            : "opacity-0 group-hover:opacity-100 text-slate-700 hover:text-red-400"
-        }`}
-        title={isConfirmingDelete ? "Click again to confirm" : "Delete fact"}
+        className="shrink-0 p-0.5 transition-all opacity-0 group-hover:opacity-100 text-slate-700 hover:text-red-400"
+        title="Delete fact"
       >
         <Trash2 className="h-2.5 w-2.5" />
       </button>

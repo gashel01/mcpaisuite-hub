@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Clock, Cpu, Wrench, Users, Link2, Database, Loader2 } from 'lucide-react';
 
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch } from '@/lib/api';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -55,7 +55,6 @@ const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 // ── Component ────────────────────────────────────────────────────────────
 
 export function LatencyAnalytics({ namespace, window: externalWindow, onSelectWindow }: Props) {
-  const API = getApiUrl();
   const [win, setWin] = useState(externalWindow || '24h');
   const [data, setData] = useState<LatencyData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,10 +65,7 @@ export function LatencyAnalytics({ namespace, window: externalWindow, onSelectWi
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/analytics/latency?window=${activeWindow}&group_by=${groupBy}`, {
-        headers: { 'X-Tenant-Id': namespace },
-      });
-      if (res.ok) setData(await res.json());
+      setData(await apiFetch<any>(`/analytics/latency?window=${activeWindow}&group_by=${groupBy}`, { tenant: namespace }));
     } catch { /* ignore */ }
     setLoading(false);
   }, [activeWindow, groupBy, namespace]);

@@ -19,7 +19,7 @@ import {
   Monitor,
 } from "lucide-react";
 import CreateAlertDialog from "./CreateAlertDialog";
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch } from '@/lib/api';
 
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -126,7 +126,6 @@ function relativeTime(ts: string): string {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function AlertsPanel({ onClose }: AlertsPanelProps) {
-  const API = getApiUrl();
   const [tab, setTab] = useState<"rules" | "history">("rules");
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [history, setHistory] = useState<AlertHistoryEntry[]>([]);
@@ -138,9 +137,7 @@ export default function AlertsPanel({ onClose }: AlertsPanelProps) {
 
   const fetchRules = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/alerts/rules`);
-      if (!res.ok) throw new Error(`Failed to fetch rules: ${res.status}`);
-      const data = await res.json();
+      const data = await apiFetch<any>("/alerts/rules");
       setRules(Array.isArray(data) ? data : data.rules || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to fetch rules");
@@ -149,9 +146,7 @@ export default function AlertsPanel({ onClose }: AlertsPanelProps) {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/alerts/history`);
-      if (!res.ok) throw new Error(`Failed to fetch history: ${res.status}`);
-      const data = await res.json();
+      const data = await apiFetch<any>("/alerts/history");
       setHistory(Array.isArray(data) ? data : data.history || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to fetch history");
@@ -168,12 +163,7 @@ export default function AlertsPanel({ onClose }: AlertsPanelProps) {
 
   async function toggleRule(ruleId: string, enabled: boolean) {
     try {
-      const res = await fetch(`${API}/alerts/rules/${ruleId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error("Toggle failed");
+      await apiFetch(`/alerts/rules/${ruleId}`, { method: "PATCH", body: { enabled } });
       setRules((prev) => prev.map((r) => (r.id === ruleId ? { ...r, enabled } : r)));
     } catch {
       // Revert optimistic update on failure
@@ -185,8 +175,7 @@ export default function AlertsPanel({ onClose }: AlertsPanelProps) {
     const prev = rules;
     setRules((r) => r.filter((rule) => rule.id !== ruleId));
     try {
-      const res = await fetch(`${API}/alerts/rules/${ruleId}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Delete failed");
+      await apiFetch(`/alerts/rules/${ruleId}`, { method: "DELETE" });
     } catch {
       setRules(prev);
     }
@@ -194,8 +183,7 @@ export default function AlertsPanel({ onClose }: AlertsPanelProps) {
 
   async function acknowledgeAlert(alertId: string) {
     try {
-      const res = await fetch(`${API}/alerts/history/${alertId}/acknowledge`, { method: "POST" });
-      if (!res.ok) throw new Error("Acknowledge failed");
+      await apiFetch(`/alerts/history/${alertId}/acknowledge`, { method: "POST" });
       setHistory((prev) =>
         prev.map((h) =>
           h.id === alertId ? { ...h, acknowledged: true, acknowledged_at: new Date().toISOString() } : h

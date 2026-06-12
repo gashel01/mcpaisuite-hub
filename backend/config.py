@@ -22,6 +22,9 @@ PROVIDER_DEFAULT_MODELS = {
 
 DEFAULT_SETTINGS = {
     "max_turns": 10, "max_tokens": 50000, "execution_mode": "hybrid",
+    # Engine context window per LLM call (≠ total budget; never exceeds it) + externalized
+    # kernel state (postgres:// → cross-instance task resume, empty = local SQLite).
+    "context_window_tokens": 40000, "kernel_checkpoint_url": "",
     # Multi-agent graph (TaskForce) loop bounds — conservative defaults; raise for deeper
     # iterative flows at the cost of more steps/tokens.
     "graph_max_self_refines": 1, "graph_max_feedback_runs": 1, "graph_max_total_steps": 30,
@@ -35,6 +38,10 @@ DEFAULT_SETTINGS = {
     "rag_embedding_model": "BAAI/bge-base-en-v1.5",
     # Infrastructure backends
     "memory_backend": "sqlite", "memory_semantic_backend": "chroma", "memory_redis_url": "", "memory_decay_mode": "exponential",
+    "memory_hotcache_backend": "", "memory_graph_backend": "",
+    "memory_enable_rerank": False, "memory_rerank_model": "",
+    "memory_enable_query_expansion": False, "memory_query_expansion_threshold": 0.5,
+    "memory_qdrant_url": "http://host.docker.internal:6333", "memory_qdrant_collection": "memorymcp_facts",
     "memory_neo4j_uri": "", "memory_neo4j_user": "neo4j", "memory_neo4j_password": "",
     "rag_vectorstore": "qdrant", "rag_vectorstore_url": "", "rag_vectorstore_api_key": "",
     "rag_graph_backend": "networkx",

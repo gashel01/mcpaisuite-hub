@@ -1,5 +1,5 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch, apiUrl } from "@/lib/api";
 
 import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from "react";
 
@@ -32,7 +32,6 @@ const CodeRunnerContext = createContext<CodeRunnerCtx>({
 });
 
 export function CodeRunnerProvider({ children }: { children: ReactNode }) {
-  const BASE = getApiUrl();
   const [results, setResults] = useState<Record<string, RunResult>>({});
   const [editorRequest, setEditorRequest] = useState<{ code: string; language: string; autoRun?: boolean } | null>(null);
   const esRefs = useRef<Record<string, EventSource>>({});
@@ -50,12 +49,10 @@ export function CodeRunnerProvider({ children }: { children: ReactNode }) {
       delete esRefs.current[blockId];
     }
 
-    fetch(`${BASE}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Tenant-Id": tenant },
-      body: JSON.stringify({ message, conversation_id: convId, execution_mode: "react" }),
+    apiFetch<any>("/chat", {
+      method: "POST", tenant,
+      body: { message, conversation_id: convId, execution_mode: "react" },
     })
-      .then(r => r.json())
       .then(data => {
         const taskId = data.task_id;
         if (!taskId) {
@@ -68,7 +65,7 @@ export function CodeRunnerProvider({ children }: { children: ReactNode }) {
         const artifacts: string[] = [];
         const startTime = Date.now();
 
-        const es = new EventSource(`${BASE}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(taskId)}`);
+        const es = new EventSource(apiUrl(`/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(taskId)}`));
         esRefs.current[blockId] = es;
 
         es.onmessage = (event) => {

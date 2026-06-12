@@ -55,12 +55,19 @@ export function StatCard({ label, value, unit, trend, sparkline, icon, color = '
       {/* Bottom: trend + sparkline */}
       <div className="flex items-end justify-between">
         <div>
-          {trend != null && trend !== 0 && (
+          {trend != null && trend !== 0 ? (
             <div className="flex items-center gap-1">
               <span className={`text-[11px] sm:text-xs font-medium ${isGood ? 'text-[#10b981]' : 'text-[#f43f5e]'}`}>
                 {trend > 0 ? '↑' : '↓'}{Math.abs(trend).toFixed(1)}%
               </span>
               <span className="text-[#8b8ba8] text-[9px] sm:text-[10px]">vs previous</span>
+            </div>
+          ) : (
+            // No comparison available (e.g. nothing in the previous period yet) — show a
+            // neutral placeholder so the card never looks half-empty.
+            <div className="flex items-center gap-1">
+              <span className="text-[#8b8ba8]/70 text-[11px] sm:text-xs font-medium">—</span>
+              <span className="text-[#8b8ba8]/70 text-[9px] sm:text-[10px]">vs previous</span>
             </div>
           )}
         </div>

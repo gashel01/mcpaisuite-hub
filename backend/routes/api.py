@@ -76,12 +76,22 @@ async def call_tool(body: ToolCallRequest, x_tenant_id: str = Header(default="")
         top_models = audit_collector.top_models(limit=5)
         stats_data["top_tools"] = top_tools
         stats_data["top_models"] = top_models
-        total_tasks = stats_data["tasks_completed"] + stats_data["tasks_failed"]
-        stats_data["avg_tokens_per_task"] = (
-            stats_data["total_tokens"] / max(total_tasks, 1)
-        )
-        # Compute avg duration from actual tasks
+        # Derive task counts/totals from the persistent, namespace-scoped task store so this
+        # Overview matches /metrics/summary and the avg-duration figure below. The in-memory
+        # _stats counters reset on restart and only track chat-route runs, which left these at 0
+        # even though tasks clearly ran (non-zero duration + recorded tool calls).
         all_tasks = [t for t in k._tasks.values() if t.namespace == namespace or t.namespace.startswith(f"{namespace}__")]
+
+        def _status(t):
+            s = getattr(t, "status", None)
+            return getattr(s, "value", s)
+
+        stats_data["tasks_completed"] = sum(1 for t in all_tasks if _status(t) == "completed")
+        stats_data["tasks_failed"] = sum(1 for t in all_tasks if _status(t) == "failed")
+        stats_data["total_tokens"] = sum(int(getattr(t, "total_tokens", 0) or 0) for t in all_tasks)
+        stats_data["total_cost"] = round(sum(float(getattr(t, "total_cost", 0.0) or 0.0) for t in all_tasks), 6)
+        total_tasks = stats_data["tasks_completed"] + stats_data["tasks_failed"]
+        stats_data["avg_tokens_per_task"] = stats_data["total_tokens"] / max(total_tasks, 1)
         durations = [t.duration_ms for t in all_tasks if hasattr(t, "duration_ms") and t.duration_ms and t.duration_ms > 0]
         stats_data["avg_duration_ms"] = round(sum(durations) / max(len(durations), 1)) if durations else 0
         return {"result": stats_data}
@@ -1206,9 +1216,13 @@ async def list_schedules(x_tenant_id: str = Header(default=""), status: str = ""
     try:
         tenant_ns = ns(x_tenant_id)
         all_jobs = await sched.list_jobs(namespace=tenant_ns)
-        # Fallback: if no jobs found for this namespace, try without namespace filter
-        if not all_jobs:
-            all_jobs = await sched.list_jobs(namespace="")
+        # Legacy jobs created before namespacing (empty namespace) belong to the default tenant
+        # (demo) — surface them there, never to other tenants. (The old code fell back to ALL
+        # jobs when a tenant had none, which leaked every tenant's schedules.)
+        if tenant_ns == ns(None):
+            seen = {getattr(j, "id", None) for j in all_jobs}
+            all_jobs = all_jobs + [j for j in await sched.list_jobs(namespace="")
+                                   if not getattr(j, "namespace", "") and getattr(j, "id", None) not in seen]
         if status:
             all_jobs = [j for j in all_jobs if (getattr(j, "status", "").value if hasattr(getattr(j, "status", ""), "value") else str(getattr(j, "status", ""))) == status]
 
@@ -1954,7 +1968,7 @@ async def publish_deployment(body: dict, x_tenant_id: str = Header(default="")):
 
 
 @router.get("/deployments")
-async def list_deployments():
+async def list_deployments(x_tenant_id: str = Header(default="")):
     _ensure_ticker()
     os.makedirs(_DEPLOY_DIR, exist_ok=True)
     out = []
@@ -1963,6 +1977,9 @@ async def list_deployments():
             continue
         try:
             d = json.load(open(os.path.join(_DEPLOY_DIR, f), encoding="utf-8"))
+            # Tenant binding — hide other tenants' deployments. Legacy untagged → default (demo).
+            if x_tenant_id and (d.get("tenant") or ns(None)) != x_tenant_id:
+                continue
             out.append({**_public_deploy(d), "endpoint": f"/deployments/{d['id']}/run"})
         except Exception:
             pass
@@ -2034,15 +2051,13 @@ async def set_deployment_status(did: str, body: dict, x_tenant_id: str = Header(
 
 @router.get("/deployments/{did}/metrics")
 async def deployment_metrics(did: str, x_tenant_id: str = Header(default="")):
-    """Owner-only per-deployment metrics, aggregated from its run history:
-    success rate, token/cost totals + averages, latency percentiles, a daily
-    call timeline, and a source (api vs test) breakdown."""
+    """Per-deployment metrics, aggregated from its run history: success rate, token/cost
+    totals + averages, latency percentiles, a daily call timeline, and a source (api vs test)
+    breakdown. Read-only — visible from the global Fleet ops view regardless of owner."""
     import datetime as _dt
     dep = _load_deploy(did)
     if not dep:
         raise HTTPException(404, "deployment not found")
-    if x_tenant_id != dep.get("tenant", ""):
-        raise HTTPException(403, "not the owner of this deployment")
 
     rdir = os.path.join(_DEPLOY_DIR, did, "runs")
     runs = []
@@ -2265,8 +2280,8 @@ async def list_deployment_triggers(did: str, x_tenant_id: str = Header(default="
     dep = _load_deploy(did)
     if not dep:
         raise HTTPException(404, "deployment not found")
-    if x_tenant_id != dep.get("tenant", ""):
-        raise HTTPException(403, "not the owner of this deployment")
+    # Read-only: triggers are visible from the global Fleet view (webhook secrets are stripped
+    # by _public_trigger). Creating/deleting triggers stays owner-only.
     _ensure_ticker()
     return {"triggers": [_public_trigger(t, did) for t in sorted(_triggers_for(did), key=lambda x: x.get("created_at", 0), reverse=True)]}
 
@@ -2311,7 +2326,9 @@ def _trig_label(t: dict) -> str:
 
 @router.get("/control-plane")
 async def control_plane():
-    """Fleet snapshot for mission control: deployments, triggers, and today's activity."""
+    """Fleet snapshot for mission control: deployments, triggers, and today's activity.
+    Intentionally GLOBAL (cross-tenant) — this is the instance-wide ops view; each deployment
+    carries a `tenant` badge. The per-tenant 'my deployments' list lives at GET /deployments."""
     import datetime as _dt
     _ensure_ticker()
     deps = []
@@ -2324,6 +2341,7 @@ async def control_plane():
                 deps.append({"id": d["id"], "name": d.get("name"), "status": d.get("status", "live"),
                              "runs": d.get("runs", 0), "triggers": len(_triggers_for(d["id"])),
                              "version": d.get("version", 1), "workflowId": d.get("workflowId"),
+                             "tenant": d.get("tenant") or ns(None),  # ownership badge for the global fleet view
                              "endpoint": f"/deployments/{d['id']}/run"})
             except Exception:
                 pass

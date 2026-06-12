@@ -1,9 +1,11 @@
 "use client";
 
 import {
-  Upload, FileText, Loader2, Trash2, Eye, ChevronRight, ChevronDown, Layers,
+  Upload, FileText, Trash2, Eye, ChevronRight, ChevronDown, Layers,
 } from "lucide-react";
 import { useState } from "react";
+import { Spinner } from "@/components/ui/Spinner";
+import ConfirmDialog from "@/components/ui/confirm";
 import type { SourceInfo, DocChunk, UnifiedNode } from "../types";
 
 interface DocumentPanelProps {
@@ -17,7 +19,7 @@ interface DocumentPanelProps {
 
 export function DocumentPanel({ sources, sourceChunks, onUploadClick, onLoadChunks, onDeleteSource, onSelectNode }: DocumentPanelProps) {
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ source: string; sourceId?: string; name: string } | null>(null);
 
   const toggleExpand = (source: string, sourceId?: string) => {
     if (expandedSource === source) {
@@ -25,16 +27,6 @@ export function DocumentPanel({ sources, sourceChunks, onUploadClick, onLoadChun
     } else {
       setExpandedSource(source);
       onLoadChunks(source, sourceId);
-    }
-  };
-
-  const handleDelete = (source: string, sourceId?: string) => {
-    if (confirmDelete === source) {
-      onDeleteSource(source, sourceId);
-      setConfirmDelete(null);
-    } else {
-      setConfirmDelete(source);
-      setTimeout(() => setConfirmDelete(null), 3000);
     }
   };
 
@@ -57,7 +49,6 @@ export function DocumentPanel({ sources, sourceChunks, onUploadClick, onLoadChun
         const name = (s.source || "").split(/[/\\]/).pop() || s.source;
         const cc = s.chunks || s.chunk_count || 0;
         const isExpanded = expandedSource === s.source;
-        const isConfirming = confirmDelete === s.source;
 
         return (
           <div key={i} className="rounded-xl border border-white/[0.06] bg-white/[0.015] overflow-hidden hover:border-white/[0.1] transition-all">
@@ -80,11 +71,9 @@ export function DocumentPanel({ sources, sourceChunks, onUploadClick, onLoadChun
                 <Eye className="h-2.5 w-2.5" />
               </button>
               <button
-                onClick={() => handleDelete(s.source, s.source_id)}
-                className={`p-0.5 transition-all ${
-                  isConfirming ? "opacity-100 text-red-400" : "opacity-0 group-hover:opacity-100 text-slate-700 hover:text-red-400"
-                }`}
-                title={isConfirming ? "Click again to confirm deletion" : "Delete source"}
+                onClick={() => setPendingDelete({ source: s.source, sourceId: s.source_id, name })}
+                className="p-0.5 transition-all opacity-0 group-hover:opacity-100 text-slate-700 hover:text-red-400"
+                title="Delete source"
               >
                 <Trash2 className="h-2.5 w-2.5" />
               </button>
@@ -93,7 +82,7 @@ export function DocumentPanel({ sources, sourceChunks, onUploadClick, onLoadChun
             {isExpanded && (
               <div className="border-t border-white/[0.04] px-3 py-2 space-y-1.5 max-h-60 overflow-y-auto bg-black/20 animate-fade-in">
                 {!sourceChunks[s.source] && (
-                  <div className="py-3 text-center"><Loader2 className="h-3 w-3 text-slate-600 animate-spin mx-auto" /></div>
+                  <div className="py-3 text-center"><Spinner className="h-3 w-3 text-slate-600 mx-auto" /></div>
                 )}
                 {(sourceChunks[s.source] || []).map((chunk, ci) => (
                   <div key={ci} className="text-[9px] text-slate-500 leading-relaxed border-l-2 border-emerald-500/20 pl-2 py-0.5 hover:border-emerald-500/40 transition-colors">
@@ -109,6 +98,14 @@ export function DocumentPanel({ sources, sourceChunks, onUploadClick, onLoadChun
           </div>
         );
       })}
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete document"
+        message={pendingDelete ? `"${pendingDelete.name}" and all its chunks will be permanently removed.` : ""}
+        onConfirm={() => { if (pendingDelete) onDeleteSource(pendingDelete.source, pendingDelete.sourceId); setPendingDelete(null); }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

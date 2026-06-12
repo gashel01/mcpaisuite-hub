@@ -1,5 +1,5 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
@@ -575,8 +575,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
   const [toolSearch, setToolSearch] = useState("");
   const [toolCat, setToolCat] = useState<"all" | "built-in" | "mcp" | "langchain">("all");
   useEffect(() => {
-    const BASE = getApiUrl();
-    fetch(`${BASE}/tools`).then(r => r.json()).then(data => {
+    apiFetch<any>("/tools").then(data => {
       const tools: {name: string; description: string; category: string}[] = [];
       (data.built_in?.tools || []).forEach((t: any) => tools.push({ name: t.name, description: t.description, category: "built-in" }));
       (data.mcp_external?.tools || []).forEach((t: any) => tools.push({ name: t.name, description: t.description, category: "mcp" }));
@@ -588,8 +587,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
   // Load saved LLM connections so each node can pick its own model (else uses global default)
   const [connections, setConnections] = useState<{id: string; name: string; provider: string; model: string}[]>([]);
   useEffect(() => {
-    const BASE = getApiUrl();
-    fetch(`${BASE}/llm/connections`).then(r => r.json()).then(d => setConnections(d.connections || [])).catch(() => {});
+    apiFetch<any>("/llm/connections").then(d => setConnections(d.connections || [])).catch(() => {});
   }, []);
 
   // Load saved workflows (templates) for reuse as nodes

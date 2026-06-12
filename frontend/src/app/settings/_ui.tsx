@@ -5,7 +5,8 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Loader2, Plug, CircleCheck, CircleX, AlertTriangle, ChevronDown, Wrench } from "lucide-react";
+import { Plug, CircleCheck, CircleX, AlertTriangle, ChevronDown, Wrench } from "lucide-react";
+import { Spinner } from "@/components/ui/Spinner";
 
 export function TestBtn({ service, testing, result, onClick }: { service: string; testing: string | null; result: { service: string; ok: boolean; detail: string } | null; onClick: () => void }) {
   const isThis = testing === service;
@@ -17,7 +18,7 @@ export function TestBtn({ service, testing, result, onClick }: { service: string
         disabled={!!testing}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all bg-slate-800 hover:bg-slate-700 hover:scale-[1.02] active:scale-[0.98] text-slate-300 border border-slate-700/60 disabled:opacity-50"
       >
-        {isThis ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plug className="h-3.5 w-3.5" />}
+        {isThis ? <Spinner className="h-3.5 w-3.5" /> : <Plug className="h-3.5 w-3.5" />}
         {isThis ? "Testing..." : `Test ${service}`}
       </button>
       {hasResult && (

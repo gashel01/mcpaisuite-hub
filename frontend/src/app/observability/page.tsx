@@ -1,13 +1,14 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 import { stripTaskforcePrefix } from "@/lib/taskforce";
 
 import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Activity, RefreshCw, Download, ArrowLeft, PanelRightOpen, PanelRightClose,
-  History, X, Menu,
+  Activity, Download, ArrowLeft, PanelRightOpen, PanelRightClose,
+  History, X, Menu, Copy, Check,
 } from "lucide-react";
+import { RefreshButton } from "@/components/ui/RefreshButton";
 import { useSearchParams } from "next/navigation";
 
 import MetricsBar from "@/components/execution/MetricsBar";
@@ -66,7 +67,6 @@ export default function ObservabilityPage() {
 // ── Inner Component ────────────────────────────────────────────────────────
 
 function ObservabilityInner() {
-  const BASE = getApiUrl();
   const searchParams = useSearchParams();
   const { tenant } = useTenant();
   // Memoize so `th` keeps a stable identity across renders. Otherwise every render makes a
@@ -132,6 +132,7 @@ function ObservabilityInner() {
 
   // ── Trace mode: right panel sub-tab ────────────────────────────────────
   const [traceSub, setTraceSub] = useState<"events" | "spans" | "stats">("events");
+  const [copiedTrace, setCopiedTrace] = useState(false);
 
   // ── Dashboard mode: right panel sub-tab ────────────────────────────────
   const [dashSub, setDashSub] = useState<"alerts" | "queue" | "insights">("alerts");
@@ -165,9 +166,9 @@ function ObservabilityInner() {
     setAnalyticsLoading(true);
     try {
       const [analyticsRes, statsRes, tasksRes] = await Promise.all([
-        fetch(`${BASE}/api/tool`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ tool: "get_analytics", args: {} }) }).then(r => r.json()).catch(() => null),
-        fetch(`${BASE}/stats`, { headers: th }).then(r => r.json()).catch(() => null),
-        fetch(`${BASE}/api/tool`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ tool: "list_tasks", args: {} }) }).then(r => r.json()).catch(() => null),
+        apiFetch<any>("/api/tool", { method: "POST", headers: th, body: { tool: "get_analytics", args: {} } }).catch(() => null),
+        apiFetch<any>("/stats", { headers: th }).catch(() => null),
+        apiFetch<any>("/api/tool", { method: "POST", headers: th, body: { tool: "list_tasks", args: {} } }).catch(() => null),
       ]);
       if (analyticsRes?.result) setAnalytics(analyticsRes.result);
       if (statsRes) setStats(statsRes);
@@ -244,9 +245,7 @@ function ObservabilityInner() {
     pollRef.current = setInterval(async () => {
       if (done) return;
       try {
-        const res = await fetch(`${BASE}/tasks/${id}`, { headers: th });
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await apiFetch<any>(`/tasks/${id}`, { headers: th });
         const s = useExecutionStore.getState();
         const currentTurns = s.events.filter(e => e.type === "tool_call" || e.type === "turn_complete").length;
         const remoteTurns = data.total_turns || 0;
@@ -259,8 +258,7 @@ function ObservabilityInner() {
         if (data.status === "completed" || data.status === "failed" || data.status === "cancelled") {
           done = true;
           if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-          const traceRes = await fetch(`${BASE}/api/tool`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ tool: "get_trace", args: { task_id: id } }) }).catch(() => null);
-          const traceData = traceRes ? await traceRes.json() : null;
+          const traceData = await apiFetch<any>("/api/tool", { method: "POST", headers: th, body: { tool: "get_trace", args: { task_id: id } } }).catch(() => null);
           const turns = traceData?.result?.turns ?? data.turns ?? [];
           s.loadTrace(id, turns, data.total_tokens, data.total_cost, data.status, data.duration_ms);
         }
@@ -275,8 +273,7 @@ function ObservabilityInner() {
     try {
       // Remote scope: show one connected kernel's ingested runs (already terminal).
       if (scope !== "local") {
-        const r = await fetch(`${BASE}/hub/instances/${scope}/runs`, { headers: th });
-        const res = await r.json();
+        const res = await apiFetch<any>(`/hub/instances/${scope}/runs`, { headers: th });
         setTasks((res.runs || []).map((t: any) => ({
           id: t.id,
           goal: t.goal || t.id.slice(0, 12),
@@ -287,11 +284,10 @@ function ObservabilityInner() {
         return; // no live auto-switch for remote runs — they arrive already finished
       }
 
-      const r = await fetch(`${BASE}/api/tool`, {
-        method: "POST", headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({ tool: "list_tasks", args: { limit: TASK_PAGE_SIZE, offset: taskPage * TASK_PAGE_SIZE } }),
+      const res = await apiFetch<any>("/api/tool", {
+        method: "POST", headers: th,
+        body: { tool: "list_tasks", args: { limit: TASK_PAGE_SIZE, offset: taskPage * TASK_PAGE_SIZE } },
       });
-      const res = await r.json();
       if (!res?.result?.tasks) return;
       setTaskTotal(res.result.total ?? res.result.tasks.length);
       const mapped = res.result.tasks.map((t: any) => {
@@ -333,8 +329,7 @@ function ObservabilityInner() {
   // Connected kernels feed the scope selector (poll so live/offline stays current).
   const loadKernels = useCallback(async () => {
     try {
-      const r = await fetch(`${BASE}/hub/instances`, { headers: th });
-      const d = await r.json();
+      const d = await apiFetch<any>("/hub/instances", { headers: th });
       setKernels(d.instances || []);
     } catch { /* ignore */ }
   }, [th]);
@@ -348,11 +343,10 @@ function ObservabilityInner() {
     if (!goal.trim()) return;
     setLaunching(true);
     try {
-      const res = await fetch(`${BASE}/chat`, {
-        method: "POST", headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({ message: goal.trim(), mode: "kernel" }),
+      const data = await apiFetch<any>("/chat", {
+        method: "POST", headers: th,
+        body: { message: goal.trim(), mode: "kernel" },
       });
-      const data = await res.json();
       const id = data.task_id || data.id;
       if (id) {
         await new Promise(r => setTimeout(r, 500));
@@ -390,14 +384,12 @@ function ObservabilityInner() {
     setTraceSub("events");
     if (isMobile) setMobilePanel("none");
     try {
-      const res = await fetch(`${BASE}/api/tool`, {
-        method: "POST", headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({ tool: "get_trace", args: { task_id: id } }),
+      const json = await apiFetch<any>("/api/tool", {
+        method: "POST", headers: th,
+        body: { tool: "get_trace", args: { task_id: id } },
       });
-      const json = await res.json();
       const turns = json.result?.turns ?? json.turns ?? [];
-      const taskRes = await fetch(`${BASE}/tasks/${id}`, { headers: th });
-      const taskData = taskRes.ok ? await taskRes.json() : null;
+      const taskData = await apiFetch<any>(`/tasks/${id}`, { headers: th }).catch(() => null);
       const store = useExecutionStore.getState();
       store.loadTrace(id, turns, taskData?.total_tokens, taskData?.total_cost, taskData?.status, taskData?.duration_ms);
       store.setViewState("reviewing");
@@ -416,6 +408,22 @@ function ObservabilityInner() {
   const toggleMobileRight = () => {
     setMobilePanel(p => p === "right" ? "none" : "right");
   };
+
+  // Copy the current trace (task id, goal, metrics, full event log) to the clipboard as JSON.
+  const copyTrace = useCallback(() => {
+    const st = useExecutionStore.getState();
+    const payload = {
+      taskId,
+      goal: stripTaskforcePrefix(goal) || undefined,
+      status: st.viewState,
+      metrics: { turns: st.turns, tokens: st.tokens, cost: st.cost, elapsedMs: st.elapsed },
+      events: st.events.map(e => ({ type: e.type, message: e.message, data: e.data, timestamp: e.timestamp })),
+      exportedAt: new Date().toISOString(),
+    };
+    navigator.clipboard?.writeText(JSON.stringify(payload, null, 2))
+      .then(() => { setCopiedTrace(true); setTimeout(() => setCopiedTrace(false), 1500); })
+      .catch(() => {});
+  }, [taskId, goal]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -496,9 +504,7 @@ function ObservabilityInner() {
           <button onClick={() => setShowExport(true)} className="p-1.5 text-slate-500 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all touch-target hidden sm:flex" title="Export">
             <Download className="h-3.5 w-3.5" />
           </button>
-          <button onClick={loadAnalytics} className="p-1.5 text-slate-500 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all touch-target hidden sm:flex" title="Refresh">
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+          <RefreshButton onRefresh={loadAnalytics} className="p-1.5 text-slate-500 hover:text-slate-300 rounded-lg hover:bg-white/[0.04] transition-all touch-target hidden sm:flex" />
 
           {!isMobile && (
             <button
@@ -611,6 +617,14 @@ function ObservabilityInner() {
                                 {t === "events" ? "Events" : t === "spans" ? "Spans" : "Stats"}
                               </button>
                             ))}
+                            <button
+                              onClick={copyTrace}
+                              data-tooltip="Copy trace as JSON"
+                              className="flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors text-[9px] sm:text-[10px] touch-target bg-white/[0.06] hover:bg-white/[0.1]"
+                            >
+                              {copiedTrace ? <Check className="h-2.5 w-2.5 text-emerald-400" /> : <Copy className="h-2.5 w-2.5" />}
+                              <span className="hidden sm:inline">{copiedTrace ? "Copied" : "Copy"}</span>
+                            </button>
                           </div>
                         </motion.div>
                       )}

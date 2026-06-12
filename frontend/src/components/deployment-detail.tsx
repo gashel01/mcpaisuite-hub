@@ -1,16 +1,19 @@
 "use client";
+import { apiFetch, ApiError } from "@/lib/api";
 import { getApiUrl } from "@/lib/api-url";
+import { useApi } from "@/hooks/useApi";
 
 import { useState, useEffect, useCallback } from "react";
 import {
   RefreshCw, Globe, Trash, Copy, CheckCheck, Terminal,
-  KeyRound, Plus, Loader2, Play, CheckCircle2, XCircle,
+  KeyRound, Plus, Play, CheckCircle2, XCircle,
   Power, PlayCircle, Clock, Repeat, Link2, ChevronRight, Activity,
   FolderOpen, UserCheck,
 } from "lucide-react";
-import { useTenant, tenantHeaders } from "@/context/tenant";
+import { useTenant } from "@/context/tenant";
 import { renderMarkdown } from "@/components/markdown";
 import ExecutionsFeed from "@/components/executions-feed";
+import { Spinner } from "@/components/ui/Spinner";
 
 const INTERVAL_PRESETS = [
   { label: "5m", s: 300 }, { label: "15m", s: 900 }, { label: "30m", s: 1800 },
@@ -39,6 +42,7 @@ export interface Deployment {
   release_notes?: string;
   version?: number;
   status?: string;
+  tenant?: string;        // owner tenant (Fleet is a global view across tenants)
   inputs?: string[];
   config?: { goal?: string; pattern?: string; agents?: { type?: string; role?: string; instructions?: string }[] };
 }
@@ -72,12 +76,13 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
   onDeleted?: (id: string) => void;
   onViewRuns?: (name: string) => void;
 }) {
-  const BASE = getApiUrl();
-  const apiOrigin = BASE.replace(/\/$/, "");
+  const apiOrigin = getApiUrl().replace(/\/$/, "");
   const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
 
   const [selected, setSelected] = useState<Deployment>(dep);
+  // Fleet is a global view across tenants — only the owner can mutate the deployment (pause,
+  // rotate token, manage triggers). Reads (metrics, triggers, runs) are open to everyone.
+  const isOwner = (selected.tenant || dep.tenant) === tenant;
   const [tab, setTab] = useState<"overview" | "runs" | "triggers" | "api">("overview");
   const [copied, setCopied] = useState("");
   const [openAgent, setOpenAgent] = useState<number | null>(null);
@@ -86,8 +91,6 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
   const [testResult, setTestResult] = useState<{ success: boolean; output: string } | null>(null);
   const [rotating, setRotating] = useState(false);
   const [rotatedToken, setRotatedToken] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<any | null>(null);
-  const [triggers, setTriggers] = useState<any[]>([]);
   const [trigType, setTrigType] = useState<"interval" | "cron" | "webhook">("interval");
   const [trigInterval, setTrigInterval] = useState(3600);
   const [trigCron, setTrigCron] = useState("0 9 * * *");
@@ -96,24 +99,29 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
   const [trigError, setTrigError] = useState("");
   const [statusBusy, setStatusBusy] = useState(false);
 
-  const loadMetrics = useCallback(async (id: string) => {
-    try { const r = await fetch(`${BASE}/deployments/${id}/metrics`, { headers: th }); setMetrics(r.ok ? await r.json() : null); }
-    catch { setMetrics(null); }
-  }, [BASE, th]);
-  const loadTriggers = useCallback(async (id: string) => {
-    try { const r = await fetch(`${BASE}/deployments/${id}/triggers`, { headers: th }); const d = await r.json(); setTriggers(d.triggers || []); }
-    catch { setTriggers([]); }
-  }, [BASE, th]);
+  const { data: metrics, refresh: refreshMetrics } = useApi<any>(
+    () => apiFetch(`/deployments/${dep.id}/metrics`, { tenant }),
+    { deps: [dep.id, tenant], initialData: null }
+  );
+  const { data: triggersData, refresh: refreshTriggers } = useApi<{ triggers: any[] }>(
+    () => apiFetch(`/deployments/${dep.id}/triggers`, { tenant }),
+    { deps: [dep.id, tenant], initialData: { triggers: [] } }
+  );
+  const triggers = triggersData?.triggers ?? [];
 
+  // Reset transient UI + load the full deployment record when the selected deployment changes.
+  // (Fleet also remounts this panel via `key`, so this mainly guards any non-keyed usage.)
   useEffect(() => {
     setSelected(dep); setTab("overview"); setOpenAgent(null); setTestInputs({}); setTestResult(null); setTesting(false);
-    setRotatedToken(null); setMetrics(null); setTriggers([]); setTrigError(""); setTrigInputs({});
-    loadMetrics(dep.id); loadTriggers(dep.id);
+    setRotatedToken(null); setTrigError(""); setTrigInputs({});
     (async () => {
-      try { const r = await fetch(`${BASE}/deployments/${dep.id}`, { headers: th }); setSelected(await r.json()); }
+      try { setSelected(await apiFetch<Deployment>(`/deployments/${dep.id}`, { tenant })); }
       catch { /* keep summary */ }
     })();
   }, [dep.id]); // eslint-disable-line
+
+  const errDetail = (err: unknown) =>
+    err instanceof ApiError ? ((err.body as any)?.detail || `Error ${err.status}`) : String((err as any)?.message || err);
 
   const addTrigger = useCallback(async () => {
     setAddingTrigger(true); setTrigError("");
@@ -121,52 +129,47 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
     if (trigType === "interval") body.seconds = trigInterval;
     if (trigType === "cron") body.cron = trigCron.trim();
     try {
-      const r = await fetch(`${BASE}/deployments/${selected.id}/triggers`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify(body) });
-      if (r.ok) { setTrigInputs({}); loadTriggers(selected.id); }
-      else { const e = await r.json().catch(() => ({})); setTrigError(e.detail || `Error ${r.status}`); }
-    } catch (e: any) { setTrigError(String(e?.message || e)); }
+      await apiFetch(`/deployments/${selected.id}/triggers`, { method: "POST", tenant, body });
+      setTrigInputs({}); refreshTriggers();
+    } catch (e) { setTrigError(errDetail(e)); }
     finally { setAddingTrigger(false); }
-  }, [BASE, th, trigType, trigInterval, trigCron, trigInputs, selected.id, loadTriggers]);
+  }, [trigType, trigInterval, trigCron, trigInputs, selected.id, tenant, refreshTriggers]);
 
   const deleteTrigger = useCallback(async (tid: string) => {
-    try { await fetch(`${BASE}/deployments/triggers/${tid}`, { method: "DELETE", headers: th }); } catch {}
-    loadTriggers(selected.id);
-  }, [BASE, th, selected.id, loadTriggers]);
+    try { await apiFetch(`/deployments/triggers/${tid}`, { method: "DELETE", tenant }); } catch {}
+    refreshTriggers();
+  }, [tenant, refreshTriggers]);
 
   const runTest = useCallback(async () => {
     setTab("overview"); setTesting(true); setTestResult(null);
     try {
-      const r = await fetch(`${BASE}/deployments/${selected.id}/test`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ inputs: testInputs }) });
-      const d = await r.json();
-      if (!r.ok) setTestResult({ success: false, output: d.detail || `Error ${r.status}` });
-      else {
-        setTestResult({ success: d.success !== false, output: d.final_output || d.error || "(no output)" });
-        setSelected(s => ({ ...s, runs: (s.runs ?? 0) + 1, run_count: (s.run_count ?? 0) + 1 }));
-        loadMetrics(selected.id);
-      }
-    } catch (e: any) { setTestResult({ success: false, output: String(e?.message || e) }); }
+      const d = await apiFetch<any>(`/deployments/${selected.id}/test`, { method: "POST", tenant, body: { inputs: testInputs } });
+      setTestResult({ success: d.success !== false, output: d.final_output || d.error || "(no output)" });
+      setSelected(s => ({ ...s, runs: (s.runs ?? 0) + 1, run_count: (s.run_count ?? 0) + 1 }));
+      refreshMetrics();
+    } catch (e) { setTestResult({ success: false, output: errDetail(e) }); }
     finally { setTesting(false); }
-  }, [BASE, th, testInputs, selected.id, loadMetrics]);
+  }, [testInputs, selected.id, tenant, refreshMetrics]);
 
   const remove = useCallback(async () => {
-    try { await fetch(`${BASE}/deployments/${selected.id}`, { method: "DELETE", headers: th }); } catch {}
+    try { await apiFetch(`/deployments/${selected.id}`, { method: "DELETE", tenant }); } catch {}
     onDeleted?.(selected.id);
-  }, [BASE, th, selected.id, onDeleted]);
+  }, [selected.id, tenant, onDeleted]);
 
   const toggleStatus = useCallback(async () => {
     const next = selected.status === "paused" ? "live" : "paused";
     setStatusBusy(true);
     try {
-      const r = await fetch(`${BASE}/deployments/${selected.id}/status`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ status: next }) });
-      if (r.ok) { setSelected(s => ({ ...s, status: next })); onChanged?.({ id: selected.id, status: next } as any); }
+      await apiFetch(`/deployments/${selected.id}/status`, { method: "POST", tenant, body: { status: next } });
+      setSelected(s => ({ ...s, status: next })); onChanged?.({ id: selected.id, status: next } as any);
     } catch {} finally { setStatusBusy(false); }
-  }, [BASE, th, selected.id, selected.status, onChanged]);
+  }, [selected.id, selected.status, tenant, onChanged]);
 
   const rotateToken = useCallback(async () => {
     setRotating(true);
-    try { const r = await fetch(`${BASE}/deployments/${selected.id}/rotate-token`, { method: "POST", headers: th }); const d = await r.json(); if (r.ok && d.token) setRotatedToken(d.token); }
+    try { const d = await apiFetch<any>(`/deployments/${selected.id}/rotate-token`, { method: "POST", tenant }); if (d.token) setRotatedToken(d.token); }
     catch {} finally { setRotating(false); }
-  }, [BASE, th, selected.id]);
+  }, [selected.id, tenant]);
 
   const copy = useCallback((text: string, key: string) => {
     navigator.clipboard?.writeText(text).then(() => { setCopied(key); setTimeout(() => setCopied(""), 1500); }).catch(() => {});
@@ -208,17 +211,19 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
           </span>
           <span className="text-[9px] text-slate-500 bg-white/[0.04] px-1.5 py-0.5 rounded shrink-0">v{selected.version || 1}</span>
         </div>
-        <button onClick={runTest} disabled={testing || (hasInputs && !inputsReady)}
+        <button onClick={runTest} disabled={testing || !isOwner || (hasInputs && !inputsReady)}
           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-[12px] font-semibold text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 transition-all shrink-0"
-          data-tooltip={hasInputs && !inputsReady ? "Fill the inputs in Overview first" : "Run this deployment now"}>
-          {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Run
+          data-tooltip={!isOwner ? "Owner only" : hasInputs && !inputsReady ? "Fill the inputs in Overview first" : "Run this deployment now"}>
+          {testing ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />} Run
         </button>
+        {isOwner && (
         <button onClick={toggleStatus} disabled={statusBusy}
-          className={`p-1.5 rounded-lg transition-all shrink-0 ${paused ? "text-emerald-300 hover:bg-emerald-500/10" : "text-amber-300 hover:bg-amber-500/10"}`}
+          className={`p-1.5 rounded-lg transition-all shrink-0 disabled:opacity-40 ${paused ? "text-emerald-300 hover:bg-emerald-500/10" : "text-amber-300 hover:bg-amber-500/10"}`}
           data-tooltip={paused ? "Bring online" : "Take offline"}>
-          {statusBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : paused ? <PlayCircle className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
+          {statusBusy ? <Spinner className="h-3.5 w-3.5" /> : paused ? <PlayCircle className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
         </button>
-        <button onClick={remove} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0" data-tooltip="Delete deployment"><Trash className="h-3.5 w-3.5" /></button>
+        )}
+        {isOwner && <button onClick={remove} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0" data-tooltip="Delete deployment"><Trash className="h-3.5 w-3.5" /></button>}
       </div>
 
       {/* Tabs */}
@@ -243,7 +248,7 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
             {/* Metric cards */}
             <div>
               {!metrics ? (
-                <div className="flex items-center gap-2 text-[11px] text-slate-600 py-2"><Loader2 className="h-3 w-3 animate-spin" /> Loading metrics…</div>
+                <div className="flex items-center gap-2 text-[11px] text-slate-600 py-2"><Spinner className="h-3 w-3" /> Loading metrics…</div>
               ) : metrics.totalCalls === 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <StatCard label="Calls" value="0" />
@@ -336,7 +341,7 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
                 </div>
               )}
               <button onClick={runTest} disabled={testing || (hasInputs && !inputsReady)} className="w-full flex items-center justify-center gap-1.5 py-2 text-[12px] font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-lg transition-all">
-                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} {testing ? "Running…" : "Run test"}
+                {testing ? <Spinner className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />} {testing ? "Running…" : "Run test"}
               </button>
               {testResult && (
                 <div className="mt-2.5 animate-fade-in">
@@ -376,7 +381,7 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
                         </div>
                       )}
                     </div>
-                    <button onClick={() => deleteTrigger(t.id)} className="text-slate-500 hover:text-red-400 shrink-0"><Trash className="h-3 w-3" /></button>
+                    {isOwner && <button onClick={() => deleteTrigger(t.id)} className="text-slate-500 hover:text-red-400 shrink-0"><Trash className="h-3 w-3" /></button>}
                   </div>
                 ))}
               </div>
@@ -414,8 +419,8 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
                 </div>
               )}
               {trigError && <p className="text-[10px] text-red-400 mb-1.5">{trigError}</p>}
-              <button onClick={addTrigger} disabled={addingTrigger} className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-violet-200 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/25 rounded-lg transition-all disabled:opacity-40">
-                {addingTrigger ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />} Add {trigType} trigger
+              <button onClick={addTrigger} disabled={addingTrigger || !isOwner} data-tooltip={!isOwner ? "Owner only" : undefined} className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-violet-200 bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/25 rounded-lg transition-all disabled:opacity-40">
+                {addingTrigger ? <Spinner className="h-3 w-3" /> : <Plus className="h-3 w-3" />} {isOwner ? `Add ${trigType} trigger` : "Owner only"}
               </button>
             </div>
           </div>
@@ -445,8 +450,8 @@ export default function DeploymentDetail({ dep, onChanged, onDeleted }: {
               <div className="flex items-start gap-2">
                 <KeyRound className="h-3.5 w-3.5 text-amber-400 mt-0.5 shrink-0" />
                 <p className="flex-1 text-[10.5px] text-slate-400 leading-relaxed">Calls require the <span className="text-amber-300">bearer token</span> shown once at publish. Lost it? Rotate to issue a new one (the old token stops working).</p>
-                <button onClick={rotateToken} disabled={rotating} className="shrink-0 flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded transition-all disabled:opacity-40">
-                  {rotating ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <RefreshCw className="h-2.5 w-2.5" />} Rotate
+                <button onClick={rotateToken} disabled={rotating || !isOwner} data-tooltip={!isOwner ? "Owner only" : undefined} className="shrink-0 flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 rounded transition-all disabled:opacity-40">
+                  {rotating ? <Spinner className="h-2.5 w-2.5" /> : <RefreshCw className="h-2.5 w-2.5" />} Rotate
                 </button>
               </div>
               {rotatedToken && (

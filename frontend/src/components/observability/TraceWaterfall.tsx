@@ -1,5 +1,5 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -43,7 +43,6 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; ic
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function TraceWaterfall({ taskId, namespace }: Props) {
-  const BASE = getApiUrl();
   const [spans, setSpans] = useState<Span[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -55,11 +54,7 @@ export default function TraceWaterfall({ taskId, namespace }: Props) {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${BASE}/tasks/${taskId}/spans`, {
-        headers: { "x-tenant-id": namespace },
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const data = await res.json();
+      const data = await apiFetch<any>(`/tasks/${taskId}/spans`, { tenant: namespace });
       setSpans(data.spans || []);
       // Auto-expand root spans
       const rootIds = new Set<string>((data.spans || []).map((s: Span) => s.id));

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { BASE_URL } from "@/types";
+import { apiFetch } from "@/lib/api";
 import type {
   KnowledgeFact, MemoryStats, SourceInfo, UploadEntry,
   SearchResult, SelfRagResult, DocChunk, IngestionStatus,
@@ -35,8 +35,8 @@ export function useKnowledgeData(hdr: Record<string, string>) {
 
   const loadStats = useCallback(async () => {
     const [mem, src] = await Promise.all([
-      fetch(`${BASE_URL}/rag/memory/stats`, { headers: hdr }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${BASE_URL}/rag/sources`).then(r => r.json()).catch(() => ({ sources: [] })),
+      apiFetch<any>("/rag/memory/stats", { headers: hdr }).catch(() => null),
+      apiFetch<any>("/rag/sources").catch(() => ({ sources: [] })),
     ]);
     if (mem) {
       const s = mem.output || mem;
@@ -56,8 +56,7 @@ export function useKnowledgeData(hdr: Record<string, string>) {
     loadingRef.current = true;
     try {
       // Use dedicated /memory/facts endpoint (lists all, no semantic filter)
-      const r = await fetch(`${BASE_URL}/rag/memory/facts`, { headers: hdr });
-      const d = await r.json();
+      const d = await apiFetch<any>("/rag/memory/facts", { headers: hdr });
       const output = d.output || d;
       let facts: KnowledgeFact[] = [];
       if (Array.isArray(output)) {
@@ -72,8 +71,7 @@ export function useKnowledgeData(hdr: Record<string, string>) {
 
   const loadGraph = useCallback(async () => {
     try {
-      const r = await fetch(`${BASE_URL}/rag/graph/data`, { headers: hdr });
-      const d = await r.json();
+      const d = await apiFetch<any>("/rag/graph/data", { headers: hdr });
       setEntityNodes(d.nodes || []);
       setEntityEdges(d.edges || []);
     } catch { /* ignore */ }
@@ -84,8 +82,7 @@ export function useKnowledgeData(hdr: Record<string, string>) {
 
   const checkGraphStatus = useCallback(async () => {
     try {
-      const r = await fetch(`${BASE_URL}/rag/graph/status`, { headers: hdr });
-      if (r.ok) setGraphStatus(await r.json());
+      setGraphStatus(await apiFetch<GraphStatus>("/rag/graph/status", { headers: hdr }));
     } catch { /* ignore */ }
   }, [hdr]);
 
@@ -93,12 +90,9 @@ export function useKnowledgeData(hdr: Record<string, string>) {
     setGraphExtracting(true);
     setExtractProgress(null);
     try {
-      const url = `${BASE_URL}/rag/graph/extract-all${force ? "?force=true" : ""}`;
-      const r = await fetch(url, { method: "POST", headers: hdr });
-      if (!r.ok) {
-        console.error("Graph extract failed:", r.status, await r.text().catch(() => ""));
-        throw new Error("Extract failed");
-      }
+      const path = `/rag/graph/extract-all${force ? "?force=true" : ""}`;
+      // raw: get the Response so we can read the SSE stream; apiFetch still throws on non-2xx.
+      const r = await apiFetch<Response>(path, { method: "POST", headers: hdr, raw: true });
 
       const contentType = r.headers.get("content-type") || "";
       if (contentType.includes("text/event-stream") && r.body) {
@@ -147,7 +141,7 @@ export function useKnowledgeData(hdr: Record<string, string>) {
 
   const deleteFact = useCallback(async (id: string) => {
     try {
-      await fetch(`${BASE_URL}/rag/memory/facts/${encodeURIComponent(id)}`, { method: "DELETE", headers: hdr });
+      await apiFetch(`/rag/fact/${encodeURIComponent(id)}`, { method: "DELETE", headers: hdr });
       setAllFacts(prev => prev.filter(f => f.id !== id));
     } catch { /* ignore */ }
   }, [hdr]);
@@ -156,7 +150,7 @@ export function useKnowledgeData(hdr: Record<string, string>) {
     // Use source_id for deletion if available (Qdrant uses source_ids internally)
     const deleteKey = sourceId || source;
     try {
-      await fetch(`${BASE_URL}/rag/source?source=${encodeURIComponent(deleteKey)}`, { method: "DELETE", headers: hdr });
+      await apiFetch(`/rag/source?source=${encodeURIComponent(deleteKey)}`, { method: "DELETE", headers: hdr });
       setSources(prev => prev.filter(s => s.source !== source));
       loadStats();
     } catch { /* ignore */ }
@@ -197,13 +191,12 @@ export function useSearch(hdr: Record<string, string>) {
     // Advanced RAG modes — use /rag/ask endpoint
     if (scope === "self_rag" || scope === "react") {
       try {
-        const res = await fetch(`${BASE_URL}/rag/ask`, {
+        const data = await apiFetch<any>("/rag/ask", {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...hdr },
-          body: JSON.stringify({ question: query.trim(), mode: scope === "self_rag" ? "self_rag" : "react" }),
+          headers: hdr,
+          body: { question: query.trim(), mode: scope === "self_rag" ? "self_rag" : "react" },
           signal: controller.signal,
         });
-        const data = await res.json();
         if (data.answer) {
           setSelfRagResult({
             answer: data.answer,
@@ -226,13 +219,12 @@ export function useSearch(hdr: Record<string, string>) {
 
     if (scope !== "documents") {
       promises.push(
-        fetch(`${BASE_URL}/rag/memory/search`, {
+        apiFetch<any>("/rag/memory/search", {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...hdr },
-          body: JSON.stringify({ topic: query.trim(), top_k: 10 }),
+          headers: hdr,
+          body: { topic: query.trim(), top_k: 10 },
           signal: controller.signal,
         })
-          .then(r => r.json())
           .then(d => {
             const o = d.output || d;
             setSearchFacts(Array.isArray(o) ? o : o.facts || []);
@@ -243,13 +235,12 @@ export function useSearch(hdr: Record<string, string>) {
 
     if (scope !== "facts") {
       promises.push(
-        fetch(`${BASE_URL}/rag/search/advanced`, {
+        apiFetch<any>("/rag/search/advanced", {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...hdr },
-          body: JSON.stringify({ query: query.trim(), top_k: 10, mode: "self_rag" }),
+          headers: hdr,
+          body: { query: query.trim(), top_k: 10, mode: "self_rag" },
           signal: controller.signal,
         })
-          .then(r => r.json())
           .then(data => {
             if (data.output) {
               const out = typeof data.output === "string" ? JSON.parse(data.output) : data.output;
@@ -292,14 +283,10 @@ export function useUpload(hdr: Record<string, string>, onComplete: () => void) {
       setUploads(prev => prev.map(u => u.id === id ? { ...u, status } : u));
     };
 
-    // Start actual upload immediately
-    const uploadPromise = (async () => {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(`${BASE_URL}/rag/upload`, { method: "POST", body: form, headers: hdr });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    })();
+    // Start actual upload immediately (apiFetch leaves FormData untouched + throws on non-2xx)
+    const form = new FormData();
+    form.append("file", file);
+    const uploadPromise = apiFetch<any>("/rag/upload", { method: "POST", headers: hdr, body: form });
 
     // Simulate intermediate steps with timing
     const stepTimers = [
@@ -347,8 +334,7 @@ export function useChunks(hdr: Record<string, string>) {
       if (sourceId) params.set("source_id", sourceId);
       else params.set("source", source);
 
-      const r = await fetch(`${BASE_URL}/rag/chunks?${params}`, { headers: hdr });
-      const d = await r.json();
+      const d = await apiFetch<any>(`/rag/chunks?${params}`, { headers: hdr });
       setSourceChunks(prev => ({ ...prev, [source]: d.chunks || [] }));
     } catch {
       setSourceChunks(prev => ({ ...prev, [source]: [] }));

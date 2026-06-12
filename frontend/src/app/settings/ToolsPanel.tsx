@@ -2,11 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Wrench, Search, Plug, Loader2 } from "lucide-react";
-import { getApiUrl } from "@/lib/api-url";
+import { Wrench, Search, Plug } from "lucide-react";
+import { apiFetch, ApiError } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
 import { Field, TextInput, SelectInput, SectionHeader, AdvancedDisclosure } from "./_ui";
-
-const BASE_URL = getApiUrl();
 
 export default function ToolsPanel() {
   const [tools, setTools] = useState<any>(null);
@@ -19,10 +18,7 @@ export default function ToolsPanel() {
 
   const loadTools = async () => {
     setLoading(true);
-    try {
-      const r = await fetch(`${BASE_URL}/tools`);
-      if (r.ok) setTools(await r.json());
-    } catch {}
+    try { setTools(await apiFetch<any>("/tools")); } catch {}
     setLoading(false);
   };
 
@@ -32,11 +28,7 @@ export default function ToolsPanel() {
     if (!connectForm) return;
     setActionLoading(true);
     try {
-      const r = await fetch(`${BASE_URL}/tools/mcp/connect`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(connectForm),
-      });
-      if (!r.ok) throw new Error(await r.text());
+      await apiFetch("/tools/mcp/connect", { method: "POST", body: connectForm });
       setConnectForm(null);
       loadTools();
     } catch (e) { alert(String(e)); }
@@ -44,18 +36,14 @@ export default function ToolsPanel() {
   };
 
   const disconnectMCP = async (name: string) => {
-    try { await fetch(`${BASE_URL}/tools/mcp/${encodeURIComponent(name)}`, { method: "DELETE" }); loadTools(); } catch {}
+    try { await apiFetch(`/tools/mcp/${encodeURIComponent(name)}`, { method: "DELETE" }); loadTools(); } catch {}
   };
 
   const registerLC = async () => {
     if (!lcForm) return;
     setActionLoading(true);
     try {
-      const r = await fetch(`${BASE_URL}/tools/langchain/register`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ module: lcForm.module, "class": lcForm.className }),
-      });
-      if (!r.ok) throw new Error(await r.text());
+      await apiFetch("/tools/langchain/register", { method: "POST", body: { module: lcForm.module, "class": lcForm.className } });
       setLcForm(null);
       loadTools();
     } catch (e) { alert(String(e)); }
@@ -63,7 +51,7 @@ export default function ToolsPanel() {
   };
 
   const unregisterLC = async (name: string) => {
-    try { await fetch(`${BASE_URL}/tools/langchain/${encodeURIComponent(name)}`, { method: "DELETE" }); loadTools(); } catch {}
+    try { await apiFetch(`/tools/langchain/${encodeURIComponent(name)}`, { method: "DELETE" }); loadTools(); } catch {}
   };
 
   if (loading) return <div className="space-y-3">{Array.from({length:3}).map((_,i) => <div key={i} className="h-16 rounded-xl bg-slate-800/40 animate-pulse" />)}</div>;
@@ -263,12 +251,10 @@ function MarketplaceSection({ onInstalled, installedMcp, installedLc }: { onInst
     const key = itemKey(item);
     setInstallState(s => ({ ...s, [key]: "installing" }));
     try {
-      const r = item.type === "mcp"
-        ? await fetch(`${BASE_URL}/tools/mcp/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: item.name, transport: item.transport || "stdio", command: item.command || "", url: "" }) })
-        : await fetch(`${BASE_URL}/tools/langchain/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: item.module, "class": item.class_name }) });
-      if (!r.ok) {
-        const body = await r.json().catch(() => null);
-        throw new Error(body?.detail || `HTTP ${r.status}`);
+      if (item.type === "mcp") {
+        await apiFetch("/tools/mcp/connect", { method: "POST", body: { name: item.name, transport: item.transport || "stdio", command: item.command || "", url: "" } });
+      } else {
+        await apiFetch("/tools/langchain/register", { method: "POST", body: { module: item.module, "class": item.class_name } });
       }
       const missing = requiredEnv(item).some(e => !keys.has(e));
       setInstallState(s => ({ ...s, [key]: missing ? "needs-token" : "done" }));
@@ -276,7 +262,8 @@ function MarketplaceSection({ onInstalled, installedMcp, installedLc }: { onInst
       onInstalled?.();
     } catch (e: any) {
       setInstallState(s => ({ ...s, [key]: "error" }));
-      setInstallError(s => ({ ...s, [key]: String(e?.message || e).slice(0, 240) }));
+      const msg = e instanceof ApiError ? ((e.body as any)?.detail || `HTTP ${e.status}`) : String(e?.message || e);
+      setInstallError(s => ({ ...s, [key]: msg.slice(0, 240) }));
     }
   };
 
@@ -299,7 +286,7 @@ function MarketplaceSection({ onInstalled, installedMcp, installedLc }: { onInst
       const val = (pending.inputs[v] || "").trim();
       if (!val) continue;
       try {
-        await fetch(`${BASE_URL}/env`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: v, value: val, secret: true }) });
+        await apiFetch("/env", { method: "POST", body: { key: v, value: val, secret: true } });
         next.add(v);
       } catch {}
     }
@@ -310,20 +297,17 @@ function MarketplaceSection({ onInstalled, installedMcp, installedLc }: { onInst
 
   // Load featured + existing env-var keys on mount
   useEffect(() => {
-    fetch(`${BASE_URL}/marketplace/featured`).then(r => r.json()).then(setFeatured).catch(() => {});
-    fetch(`${BASE_URL}/marketplace/categories`).then(r => r.json()).then(d => setCategories(d.categories || [])).catch(() => {});
-    fetch(`${BASE_URL}/env`).then(r => r.json()).then(d => setEnvKeys(new Set((d.vars || []).map((v: any) => v.key)))).catch(() => {});
+    apiFetch<any>("/marketplace/featured").then(setFeatured).catch(() => {});
+    apiFetch<any>("/marketplace/categories").then(d => setCategories(d.categories || [])).catch(() => {});
+    apiFetch<any>("/env").then(d => setEnvKeys(new Set((d.vars || []).map((v: any) => v.key)))).catch(() => {});
   }, []);
 
   const search = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ q: query, category });
-      const res = await fetch(`${BASE_URL}/marketplace/search?${params}`);
-      if (res.ok) {
-        const data = await res.json();
-        setResults(data.results || []);
-      }
+      const data = await apiFetch<any>(`/marketplace/search?${params}`);
+      setResults(data.results || []);
     } catch {}
     setLoading(false);
   }, [query, category]);
@@ -415,7 +399,7 @@ function MarketplaceSection({ onInstalled, installedMcp, installedLc }: { onInst
                   const base = "shrink-0 px-2 py-1 text-[9px] font-medium rounded-md border transition-all";
                   if (st === "done") return <span className={`${base} text-emerald-400 bg-emerald-500/5 border-emerald-500/15`}>Connected ✓</span>;
                   if (st === "needs-token") return <span title={`Installed, but needs ${requiredEnv(item).join(", ")} to work`} className={`${base} text-amber-400 bg-amber-500/5 border-amber-500/20`}>Needs {requiredEnv(item).filter(e => !envKeys.has(e))[0] || "config"}</span>;
-                  if (st === "installing") return <span className={`${base} text-slate-400 bg-white/[0.03] border-white/[0.08] flex items-center gap-1`}><Loader2 className="h-2.5 w-2.5 animate-spin" /> Installing…</span>;
+                  if (st === "installing") return <span className={`${base} text-slate-400 bg-white/[0.03] border-white/[0.08] flex items-center gap-1`}><Spinner className="h-2.5 w-2.5" /> Installing…</span>;
                   return (
                     <button onClick={() => install(item)} className={`${base} ${st === "error" ? "text-amber-400 bg-amber-500/5 border-amber-500/20" : "text-cyan-400 bg-cyan-500/5 border-cyan-500/15 hover:bg-cyan-500/10"}`}>
                       {st === "error" ? "Failed — retry" : "Install"}
@@ -460,7 +444,7 @@ function MarketplaceSection({ onInstalled, installedMcp, installedLc }: { onInst
 
         {loading && (
           <div className="flex justify-center py-4">
-            <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
+            <Spinner className="h-4 w-4 text-slate-500" />
           </div>
         )}
 

@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { MetricsChart } from './MetricsChart';
 import { DateRangePicker } from './DateRangePicker';
 import { StatCard } from './StatCard';
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch } from '@/lib/api';
 
 interface ChartGridProps {
   namespace: string;
@@ -33,7 +33,6 @@ interface SummaryData {
 const METRICS = ['latency', 'cost', 'success_rate', 'throughput'] as const;
 
 export function ChartGrid({ namespace }: ChartGridProps) {
-  const API = getApiUrl();
   const [window, setWindow] = useState('24h');
   const [chartData, setChartData] = useState<Record<string, TimeseriesPoint[]>>({});
   const [chartLoading, setChartLoading] = useState<Record<string, boolean>>({});
@@ -43,13 +42,8 @@ export function ChartGrid({ namespace }: ChartGridProps) {
   const fetchMetric = useCallback(async (metric: string) => {
     setChartLoading(prev => ({ ...prev, [metric]: true }));
     try {
-      const res = await fetch(`${API}/metrics/timeseries?metric=${metric}&window=${window}`, {
-        headers: { 'X-Tenant-Id': namespace },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setChartData(prev => ({ ...prev, [metric]: Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [] }));
-      }
+      const data = await apiFetch<any>(`/metrics/timeseries?metric=${metric}&window=${window}`, { tenant: namespace });
+      setChartData(prev => ({ ...prev, [metric]: Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [] }));
     } catch {
       // silently fail per chart
     } finally {
@@ -59,11 +53,8 @@ export function ChartGrid({ namespace }: ChartGridProps) {
 
   const fetchSummary = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/metrics/summary?window=${window}`, {
-        headers: { 'X-Tenant-Id': namespace },
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await apiFetch<any>(`/metrics/summary?window=${window}`, { tenant: namespace });
+      {
         setSummary({
           total_tasks: data.total_tasks ?? 0,
           total_cost: data.total_cost ?? 0,

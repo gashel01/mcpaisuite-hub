@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter as useNextRouter } from "next/navigation";
 import {
-  Bot, Play, Loader2, CheckCircle2, XCircle,
+  Bot, Play, CheckCircle2, XCircle,
   Plus, Zap, DollarSign, RotateCw, Square, Activity,
   Settings, ChevronRight, Save, Download, Globe,
   X, Clock, AlertCircle, MessageSquare, Sparkles,
@@ -19,10 +19,12 @@ import { useAgentSessionStore, type TeamAgent, type LiveAgentEvent, type AgentSe
 import FlowEditor from "@/components/flow-editor";
 
 // Extracted modules
-import { BASE_URL, AGENT_META, TEMPLATES, PATTERNS, newId, sseRefs, type Pattern, type AgentInfo, type Template } from "./constants";
+import { AGENT_META, TEMPLATES, PATTERNS, newId, sseRefs, type Pattern, type AgentInfo, type Template } from "./constants";
+import { apiFetch, apiUrl } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
+import { Modal } from "@/components/ui/Modal";
 import ConnectionPicker from "@/components/connection-picker";
 import TemplateSelector from "./template-selector";
-import AgentEventItem from "./agent-event-item";
 import CompareView, { CompareTray, type CompareItem } from "./compare-view";
 import OutputPanel from "./output-panel";
 import { useWorkflowStore } from "@/stores/workflow-store";
@@ -46,8 +48,14 @@ function AgentsPageInner() {
   const { tenant } = useTenant();
   const th = tenantHeaders(tenant);
 
-  const store = useAgentSessionStore();
-  const { sessions, activeId, history } = store;
+  // Selectors (not the whole store) so the page does NOT re-render on every streaming token.
+  // streamingText now lives in its own store map, read only by the StreamingText leaf.
+  const sessions = useAgentSessionStore(s => s.sessions);
+  const activeId = useAgentSessionStore(s => s.activeId);
+  const history = useAgentSessionStore(s => s.history);
+  // Actions are stable references — grab them non-reactively. Inside callbacks, read fresh
+  // state via useAgentSessionStore.getState() rather than this snapshot.
+  const store = useAgentSessionStore.getState();
   const wfStore = useWorkflowStore();
 
   const [agentInfos, setAgentInfos] = useState<AgentInfo[]>([]);
@@ -112,12 +120,26 @@ function AgentsPageInner() {
 
   // Load data on mount
   useEffect(() => {
-    fetch(`${BASE_URL}/agents`).then(r => r.json()).then(d => setAgentInfos(d.agents || [])).catch(() => {}).finally(() => setLoadingInfos(false));
+    apiFetch<any>(`/agents`).then(r => r.json()).then(d => setAgentInfos(d.agents || [])).catch(() => {}).finally(() => setLoadingInfos(false));
     wfStore.load(th);
     wfStore.loadSchedules(th);
     loadDeployments();
     store.loadHistory();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tenant]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On tenant switch, reload the library then close only the sessions tied to a SAVED workflow
+  // that isn't in this tenant (keep unsaved drafts + other tabs). "Reset only if not found."
+  // Skip the first run so the URL-restored session on mount isn't touched.
+  const agentsTenantRef = useRef(true);
+  useEffect(() => {
+    if (agentsTenantRef.current) { agentsTenantRef.current = false; return; }
+    wfStore.load(th).then(() => {
+      const st = useAgentSessionStore.getState();
+      const ids = new Set(useWorkflowStore.getState().workflows.map(w => w.id));
+      st.sessions.filter(s => s.workflowId && !ids.has(s.workflowId)).forEach(s => st.removeSession(s.id));
+      if (useAgentSessionStore.getState().sessions.length === 0) st.createSession();
+    });
+  }, [tenant]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load saved templates from localStorage (legacy compat)
   useEffect(() => {
@@ -128,8 +150,7 @@ function AgentsPageInner() {
   // (run.answer === null). The backend still holds it in the task result while the task
   // is loaded; fetch it and patch the session + run record so reopening isn't blank.
   const recoverFailedOutput = useCallback((sessionId: string, wfId: string, runId: string, taskId: string) => {
-    fetch(`${BASE_URL}/agents/taskforce/${taskId}`, { headers: th })
-      .then(r => (r.ok ? r.json() : null))
+    apiFetch<any>(`/agents/taskforce/${taskId}`, { headers: th })
       .then(resp => {
         const res = resp?.result;
         const recovered: string = res?.final_output || res?.error || "";
@@ -191,8 +212,8 @@ function AgentsPageInner() {
     if (existing) { store.setActive(existing.id); return; }
     (async () => {
       try {
-        const r = await fetch(`${BASE_URL}/runs/${runId}`, { headers: th });
-        const run = await r.json();
+        const r = await apiFetch<any>(`/runs/${runId}`, { headers: th });
+        const run = r;
         if (run && run.graph) {
           const newSess = store.createSession();
           useAgentSessionStore.setState(s => ({
@@ -371,12 +392,12 @@ function AgentsPageInner() {
     const archIdx = buildChat.length + 1; // index of the architect message we'll stream into
 
     // Current workflow snapshot for refinement context (agents + trigger + workspace + gates).
-    const curCfg = store.sessions.find(s => s.id === aid)?.config;
+    const curCfg = useAgentSessionStore.getState().sessions.find(s => s.id === aid)?.config;
     const curAgents = curCfg?.agents || [];
 
     try {
-      const res = await fetch(`${BASE_URL}/agents/architect`, {
-        method: "POST", headers: { "Content-Type": "application/json", ...th },
+      const res = await apiFetch<Response>(`/agents/architect`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...th }, raw: true,
         body: JSON.stringify({
           message: msg, history,
           current: {
@@ -407,7 +428,7 @@ function AgentsPageInner() {
             setBuildChat(c => c.map((m, i) => i === archIdx ? { ...m, text: m.text + ev.text } : m));
           } else if (ev.type === "team") {
             // Diff onto canvas: keep ids of agents whose role is unchanged so they don't flash.
-            const existing = (store.sessions.find(s => s.id === aid)?.config.agents) || [];
+            const existing = (useAgentSessionStore.getState().sessions.find(s => s.id === aid)?.config.agents) || [];
             const used = new Set<string>();
             const next = (ev.agents || []).map((a: any) => {
               const match = existing.find(e => e.role && e.role === a.role && !used.has(e.id));
@@ -511,7 +532,7 @@ function AgentsPageInner() {
     const oldEs = sseRefs[sessionId];
     if (oldEs) { oldEs.close(); delete sseRefs[sessionId]; }
 
-    const sess = store.sessions?.find(s => s.id === sessionId);
+    const sess = useAgentSessionStore.getState().sessions?.find(s => s.id === sessionId);
 
     // Snapshot the current graph layout
     const { nodes: snapNodes, edges: snapEdges } = flowGraphRef.current;
@@ -575,10 +596,10 @@ function AgentsPageInner() {
       } : sess2),
     }));
 
-    const currentAgents = store.sessions?.find(s => s.id === sessionId)?.config.agents || agents;
-    const currentGoal = store.sessions?.find(s => s.id === sessionId)?.config.goal || goal;
-    const currentPattern = store.sessions?.find(s => s.id === sessionId)?.config.pattern || pattern;
-    const currentConstitution = store.sessions?.find(s => s.id === sessionId)?.config.constitution || teamConstitution;
+    const currentAgents = useAgentSessionStore.getState().sessions?.find(s => s.id === sessionId)?.config.agents || agents;
+    const currentGoal = useAgentSessionStore.getState().sessions?.find(s => s.id === sessionId)?.config.goal || goal;
+    const currentPattern = useAgentSessionStore.getState().sessions?.find(s => s.id === sessionId)?.config.pattern || pattern;
+    const currentConstitution = useAgentSessionStore.getState().sessions?.find(s => s.id === sessionId)?.config.constitution || teamConstitution;
 
     const startTime = Date.now();
     const { nodes: checkNodes } = flowGraphRef.current;
@@ -627,12 +648,12 @@ function AgentsPageInner() {
         }
 
         // Launch taskforce (async — returns task_id immediately)
-        const res = await fetch(`${BASE_URL}/agents/taskforce`, {
+        const res = await apiFetch<any>(`/agents/taskforce`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...th },
           body: JSON.stringify(config),
         });
-        const launch = await res.json();
+        const launch = res;
 
         if (!launch.task_id) {
           // Fallback: blocking response (old format)
@@ -652,7 +673,7 @@ function AgentsPageInner() {
             wfStore.updateRun(currentWorkflowId, currentRunId, { taskId }, th);
           }
 
-          const es = new EventSource(`${BASE_URL}/api/stream/${taskId}?tenant=${encodeURIComponent(tenant)}`);
+          const es = new EventSource(apiUrl(`/api/stream/${taskId}?tenant=${encodeURIComponent(tenant)}`));
           (es as any)._currentAgentIdx = 0; // Track active agent locally in closure
           sseRefs[sessionId] = es;
 
@@ -914,9 +935,8 @@ function AgentsPageInner() {
 
                 // Fetch final result (small delay to let backend store metadata after event emit)
                 const fetchResult = (retries = 3) => {
-                  fetch(`${BASE_URL}/agents/taskforce/${taskId}`, { headers: th })
-                    .then(r => r.json())
-                    .then(resp => {
+                  apiFetch<any>(`/agents/taskforce/${taskId}`, { headers: th })
+                                        .then(resp => {
                       const data = resp.result || {};
                       const duration = Date.now() - startTime;
                       const answer = data.final_output || data.error || "";
@@ -967,12 +987,11 @@ function AgentsPageInner() {
             es.close();
             delete sseRefs[sessionId];
             // Check if we already got a result
-            const sess = store.sessions.find(s => s.id === sessionId);
+            const sess = useAgentSessionStore.getState().sessions.find(s => s.id === sessionId);
             if (sess && sess.status === "running") {
               // SSE dropped — try fetching result
-              fetch(`${BASE_URL}/agents/taskforce/${taskId}`, { headers: th })
-                .then(r => r.json())
-                .then(resp => {
+              apiFetch<any>(`/agents/taskforce/${taskId}`, { headers: th })
+                                .then(resp => {
                   const data = resp.result;
                   if (data) {
                     const answer = data.final_output || "Completed";
@@ -991,7 +1010,7 @@ function AgentsPageInner() {
         const agent = currentAgents[0];
 
         // Execute agent directly
-        const res = await fetch(`${BASE_URL}/agents/spawn`, {
+        const res = await apiFetch<any>(`/agents/spawn`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...th },
           body: JSON.stringify({
@@ -1002,7 +1021,7 @@ function AgentsPageInner() {
             ...(agent.tools?.length ? { tools: agent.tools } : {}),
           }),
         });
-        const data = await res.json();
+        const data = res;
         const duration = Date.now() - startTime;
 
         // Store task_id if returned by spawn
@@ -1038,7 +1057,7 @@ function AgentsPageInner() {
     const es = sseRefs[activeId];
     if (es) { es.close(); delete sseRefs[activeId]; }
     const sess = sessions.find(s => s.id === activeId);
-    if (sess?.taskId) fetch(`${BASE_URL}/tasks/${sess.taskId}`, { method: "DELETE", headers: th }).catch(() => {});
+    if (sess?.taskId) apiFetch<any>(`/tasks/${sess.taskId}`, { method: "DELETE", headers: th }).catch(() => {});
     store.setStatus(activeId, "failed");
     store.setResult(activeId, "Cancelled.", { tokens: 0, cost: 0, turns: 0, duration: 0 });
     // Update the run in workflow store
@@ -1054,7 +1073,7 @@ function AgentsPageInner() {
     if (!activeId) return;
     const sess = sessions.find(s => s.id === activeId);
     if (sess?.taskId) {
-      fetch(`${BASE_URL}/tasks/${sess.taskId}/pause`, { method: "POST", headers: th }).catch(() => {});
+      apiFetch<any>(`/tasks/${sess.taskId}/pause`, { method: "POST", headers: th }).catch(() => {});
       setPaused(true);
       store.addLiveEvent(activeId, {
         agentIndex: sess.activeAgentIndex, agentType: "system", agentRole: "system",
@@ -1067,7 +1086,7 @@ function AgentsPageInner() {
     if (!activeId) return;
     const sess = sessions.find(s => s.id === activeId);
     if (sess?.taskId) {
-      fetch(`${BASE_URL}/tasks/${sess.taskId}/resume`, {
+      apiFetch<any>(`/tasks/${sess.taskId}/resume`, {
         method: "POST", headers: { "Content-Type": "application/json", ...th },
         body: JSON.stringify({ modified_output: modifiedOutput || undefined }),
       }).catch(() => {});
@@ -1194,8 +1213,8 @@ function AgentsPageInner() {
 
   const loadDeployments = useCallback(async () => {
     try {
-      const r = await fetch(`${BASE_URL}/deployments`, { headers: th });
-      const d = await r.json();
+      const r = await apiFetch<any>(`/deployments`, { headers: th });
+      const d = r;
       setDeployments(d.deployments || []);
     } catch { /* ignore */ }
   }, [th]);
@@ -1214,9 +1233,9 @@ function AgentsPageInner() {
     setPublishLog([]);
     setPublishResult(null);
     try {
-      const res = await fetch(`${BASE_URL}/deployments/publish`, {
+      const res = await apiFetch<Response>(`/deployments/publish`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...th },
+        headers: { "Content-Type": "application/json", ...th }, raw: true,
         body: JSON.stringify({ name: publishName.trim() || "My automation", release_notes: publishNotes, config: buildDeployConfig(),
           workflow_id: session?.workflowId, version_id: session?.versionId }),
       });
@@ -1248,7 +1267,7 @@ function AgentsPageInner() {
   }, [publishing, publishName, publishNotes, buildDeployConfig, th, loadDeployments, session?.workflowId, session?.versionId]);
 
   const deleteDeployment = useCallback(async (id: string) => {
-    try { await fetch(`${BASE_URL}/deployments/${id}`, { method: "DELETE", headers: th }); } catch { /* ignore */ }
+    try { await apiFetch<any>(`/deployments/${id}`, { method: "DELETE", headers: th }); } catch { /* ignore */ }
     loadDeployments();
   }, [th, loadDeployments]);
 
@@ -1256,7 +1275,7 @@ function AgentsPageInner() {
     navigator.clipboard?.writeText(text).then(() => { setCopied(key); setTimeout(() => setCopied(""), 1500); }).catch(() => {});
   }, []);
 
-  const apiOrigin = typeof window !== "undefined" ? BASE_URL.replace(/\/$/, "") : "";
+  const apiOrigin = typeof window !== "undefined" ? apiUrl("").replace(/\/$/, "") : "";
   const curlExample = publishResult
     ? `curl -X POST ${apiOrigin}${publishResult.endpoint} \\\n  -H "Authorization: Bearer ${publishResult.token}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"inputs": {}}'`
     : "";
@@ -1323,7 +1342,7 @@ function AgentsPageInner() {
       onDeleteWorkflow={(id) => wfStore.deleteWorkflow(id, th)}
       onActivateVersion={(wid, vid) => wfStore.activateVersion(wid, vid, th)}
       onDeleteSchedule={(id) => {
-        fetch(`${BASE_URL}/agents/taskforce/schedules/${id}`, { method: "DELETE", headers: th }).catch(() => {});
+        apiFetch<any>(`/agents/taskforce/schedules/${id}`, { method: "DELETE", headers: th }).catch(() => {});
         wfStore.loadSchedules(th);
       }}
       compareItems={compareItems}
@@ -1352,9 +1371,12 @@ function AgentsPageInner() {
       )}
 
       {/* Run parameters (modal) — fill {placeholders} + preview before running */}
-      {runParamsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setRunParamsOpen(false)}>
-          <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50 animate-scale-in" onClick={e => e.stopPropagation()}>
+      <Modal
+        open={runParamsOpen}
+        onClose={() => setRunParamsOpen(false)}
+        backdropClassName="z-50 bg-black/60 backdrop-blur-sm"
+        className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50"
+      >
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06]">
               <div className="flex items-center gap-2"><Settings className="h-4 w-4 text-violet-400" /><h3 className="text-sm font-semibold text-slate-200">Run parameters</h3></div>
               <button onClick={() => setRunParamsOpen(false)}><X className="h-4 w-4 text-slate-500 hover:text-slate-300" /></button>
@@ -1395,14 +1417,15 @@ function AgentsPageInner() {
                 <Play className="h-3.5 w-3.5" /> Run
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* ── Publish → deploy modal (workflow as a callable API) ───────────── */}
-      {publishOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => !publishing && setPublishOpen(false)}>
-          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50 animate-scale-in max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <Modal
+        open={publishOpen}
+        onClose={() => !publishing && setPublishOpen(false)}
+        backdropClassName="z-50 bg-black/60 backdrop-blur-sm"
+        className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50 max-h-[88vh] flex flex-col"
+      >
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
               <div className="flex items-center gap-2">
                 <Rocket className="h-4 w-4 text-sky-400" />
@@ -1457,7 +1480,7 @@ function AgentsPageInner() {
                       <span className="text-[11px] text-slate-300">{s.text}</span>
                     </div>
                   ))}
-                  {publishing && <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-1"><Loader2 className="h-3 w-3 animate-spin" /> Deploying…</div>}
+                  {publishing && <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-1"><Spinner className="h-3 w-3" /> Deploying…</div>}
                 </div>
               ) : (
                 /* Publish form */
@@ -1505,19 +1528,19 @@ function AgentsPageInner() {
               )}
               {!publishResult && (
                 <button onClick={doPublish} disabled={publishing || !publishName.trim()} className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-medium text-white bg-sky-600 hover:bg-sky-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-lg transition-all">
-                  {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Rocket className="h-3.5 w-3.5" />} {publishing ? "Deploying…" : "Deploy"}
+                  {publishing ? <Spinner className="h-3.5 w-3.5" /> : <Rocket className="h-3.5 w-3.5" />} {publishing ? "Deploying…" : "Deploy"}
                 </button>
               )}
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {/* Save dialog (modal overlay) */}
-      {showSaveDialog && (
-        <>
-          <div className="fixed inset-0 z-40 bg-black/40 " onClick={() => setShowSaveDialog(false)} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-[#0c0c14] border border-white/[0.08] rounded-2xl p-5 w-80 shadow-2xl shadow-black/40 animate-scale-in">
+      <Modal
+        open={showSaveDialog}
+        onClose={() => setShowSaveDialog(false)}
+        backdropClassName="z-50 bg-black/40"
+        className="bg-[#0c0c14] border border-white/[0.08] rounded-2xl p-5 w-80 shadow-2xl shadow-black/40"
+      >
             <div className="flex items-center gap-2 mb-3">
               <Save className="h-4 w-4 text-violet-400" />
               <span className="text-sm font-semibold text-slate-200">Save Workflow</span>
@@ -1534,9 +1557,7 @@ function AgentsPageInner() {
               <button onClick={() => setShowSaveDialog(false)}
                 className="px-4 py-2 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 text-xs font-medium rounded-lg border border-white/[0.06] transition-all">Cancel</button>
             </div>
-          </div>
-        </>
-      )}
+      </Modal>
 
       {/* Header */}
       <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 shrink-0 border-b border-white/[0.04]">
@@ -1692,7 +1713,7 @@ function AgentsPageInner() {
                     disabled={!goal.trim() || isRunning || building || isDone || isReadOnly}
                     className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-violet-400 hover:text-violet-300 bg-violet-500/8 border border-violet-500/15 rounded-lg transition-all disabled:opacity-30"
                   >
-                    {building ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} {building ? "Building…" : "Build with AI"}
+                    {building ? <Spinner className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />} {building ? "Building…" : "Build with AI"}
                   </button>
                   <TemplateSelector templates={TEMPLATES} onSelect={applyTemplate} />
                 </div>
@@ -1772,7 +1793,7 @@ function AgentsPageInner() {
                       disabled={!buildInput.trim() || building}
                       className="p-1.5 rounded-lg bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 disabled:opacity-30 transition-all"
                     >
-                      {building ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
+                      {building ? <Spinner className="h-3 w-3" /> : <ArrowRight className="h-3 w-3" />}
                     </button>
                   </div>
                 </div>
@@ -1872,7 +1893,7 @@ function AgentsPageInner() {
             {building && (
               <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0a0a10]/55 backdrop-blur-[2px] cursor-wait animate-fade-in">
                 <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-violet-500/12 border border-violet-500/25 shadow-xl">
-                  <Loader2 className="h-4 w-4 text-violet-400 animate-spin" />
+                  <Spinner className="h-4 w-4 text-violet-400" />
                   <span className="text-[13px] font-medium text-violet-200">AI is building your workflow&hellip;</span>
                 </div>
               </div>

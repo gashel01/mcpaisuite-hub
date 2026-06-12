@@ -3,12 +3,12 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import {
-  Upload, Brain, Network, Sparkles, Loader2, MessageSquare,
+  Upload, Brain, Network, Sparkles, MessageSquare,
   PanelRightClose, Activity, FileText, Lightbulb, Menu,
 } from "lucide-react";
 import Link from "next/link";
 import { useTenant, tenantHeaders } from "@/context/tenant";
-import { BASE_URL } from "@/types";
+import { Spinner } from "@/components/ui/Spinner";
 import type { SearchMode, GraphMode, SideTab, UnifiedNode, GraphData, GraphNode, GraphLink } from "./types";
 import { getTypeColor } from "./types";
 import { useKnowledgeData, useSearch, useUpload, useChunks } from "./hooks";
@@ -68,7 +68,9 @@ export default function KnowledgePage() {
 
   // ── Init ──────────────────────────────────────────────────────────────
 
-  useEffect(() => { data.loadAll().finally(() => setInitialLoading(false)); }, []); // eslint-disable-line
+  // Reload everything when the tenant changes (not just on mount) so the knowledge base
+  // reflects the selected tenant — same behaviour as observability/fleet/security.
+  useEffect(() => { data.loadAll().finally(() => setInitialLoading(false)); }, [tenant]); // eslint-disable-line
 
   useEffect(() => {
     const el = graphContainerRef.current;
@@ -653,7 +655,7 @@ export default function KnowledgePage() {
             /* First load — calm loader instead of flashing the empty/placeholder state */
             <div className="flex items-center justify-center h-full">
               <div className="flex flex-col items-center gap-3 text-slate-600">
-                <Loader2 className="h-6 w-6 animate-spin text-violet-500/50" />
+                <Spinner className="h-6 w-6 text-violet-500/50" />
                 <span className="text-[11px] tracking-wide">Loading knowledge…</span>
               </div>
             </div>
@@ -805,7 +807,7 @@ export default function KnowledgePage() {
                 <Network className="h-10 w-10 text-slate-800 mx-auto" />
                 <p className="text-xs text-slate-500">Click &ldquo;Build&rdquo; to extract entities &amp; discover connections</p>
                 <button onClick={() => data.extractGraph(false)} disabled={data.graphExtracting} className="inline-flex items-center gap-2 px-5 py-2.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-2xl text-xs font-medium shadow-xl shadow-violet-500/25 active:scale-95 transition-all">
-                  {data.graphExtracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Build Graph
+                  {data.graphExtracting ? <Spinner className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />} Build Graph
                 </button>
               </div>
             </div>

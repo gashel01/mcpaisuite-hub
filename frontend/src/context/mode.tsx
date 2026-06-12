@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 
 export type DemoMode = "kernel" | "memory" | "rag" | "planning" | "sandbox" | "workspace" | "scheduler";
 
@@ -38,12 +38,13 @@ const ModeContext = createContext<ModeCtx>({
 });
 
 export function ModeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<DemoMode>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("kernelmcp_mode") as DemoMode) || "kernel";
-    }
-    return "kernel";
-  });
+  // SSR-safe: default on the initial render, restore from localStorage after mount (below) so
+  // the server and client first render match (avoids hydration mismatch).
+  const [mode, setModeState] = useState<DemoMode>("kernel");
+  useEffect(() => {
+    const stored = localStorage.getItem("kernelmcp_mode") as DemoMode | null;
+    if (stored && stored !== "kernel") setModeState(stored);
+  }, []);
 
   const setMode = (m: DemoMode) => {
     setModeState(m);

@@ -1,16 +1,18 @@
 "use client";
+import { apiFetch } from "@/lib/api";
 import { getApiUrl } from "@/lib/api-url";
+import { useApi } from "@/hooks/useApi";
+import { usePolling } from "@/hooks/usePolling";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import {
-  Cpu, RefreshCw, Plus, Copy, CheckCheck, Trash, Loader2, Server, KeyRound,
+  Cpu, RefreshCw, Plus, Copy, CheckCheck, Trash, Server, KeyRound,
   ChevronRight, ChevronDown, Activity, ArrowUpRight, Play, Zap, Lock,
   CheckCircle2, XCircle,
 } from "lucide-react";
-import { useTenant, tenantHeaders } from "@/context/tenant";
-
-const BASE = getApiUrl();
+import { useTenant } from "@/context/tenant";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface Instance { instance_id: string; name: string; project: string; host?: string; pid?: number; last_seen?: number; registered_at?: number; tasks_ingested?: number; allow_control?: boolean; live: boolean; }
 interface KeyRow { key_preview: string; label: string; project: string; created_at?: number; }
@@ -29,15 +31,9 @@ function ago(ms?: number) {
  * key + the connect snippet. Read-only telemetry (Phase 1: monitor).
  */
 export default function ConnectedKernels() {
-  const apiOrigin = BASE.replace(/\/$/, "");
+  const apiOrigin = getApiUrl().replace(/\/$/, "");
   const { tenant } = useTenant();
-  // Memoize so the fetch callbacks (and their effects) don't get a new identity every
-  // render — otherwise the load/poll effects re-fire on each render (infinite loop).
-  const th = useMemo(() => tenantHeaders(tenant), [tenant]);
 
-  const [instances, setInstances] = useState<Instance[]>([]);
-  const [keys, setKeys] = useState<KeyRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, any[]>>({});
   const [commands, setCommands] = useState<Record<string, any[]>>({});
@@ -49,67 +45,61 @@ export default function ConnectedKernels() {
   const [minting, setMinting] = useState(false);
   const [freshKey, setFreshKey] = useState<{ key: string; project: string } | null>(null);
 
-  const load = useCallback(async () => {
-    try {
+  const { data, loading, refresh } = useApi<{ instances: Instance[]; keys: KeyRow[] }>(
+    async () => {
+      // Per-endpoint catch keeps the panel partially alive if one call fails.
       const [ri, rk] = await Promise.all([
-        fetch(`${BASE}/hub/instances`, { headers: th }).then(r => r.json()).catch(() => ({ instances: [] })),
-        fetch(`${BASE}/hub/keys`, { headers: th }).then(r => r.json()).catch(() => ({ keys: [] })),
+        apiFetch<{ instances?: Instance[] }>("/hub/instances", { tenant }).catch(() => ({ instances: [] })),
+        apiFetch<{ keys?: KeyRow[] }>("/hub/keys", { tenant }).catch(() => ({ keys: [] })),
       ]);
-      setInstances(ri.instances || []);
-      setKeys(rk.keys || []);
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
-  }, [th]);
-
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+      return { instances: ri.instances || [], keys: rk.keys || [] };
+    },
+    { poll: 10000, deps: [tenant], initialData: { instances: [], keys: [] } }
+  );
+  const instances = data?.instances ?? [];
+  const keys = data?.keys ?? [];
 
   const loadRuns = useCallback(async (id: string) => {
-    try { const d = await fetch(`${BASE}/hub/instances/${id}/runs`, { headers: th }).then(r => r.json()); setRuns(p => ({ ...p, [id]: d.runs || [] })); }
+    try { const d = await apiFetch<{ runs?: any[] }>(`/hub/instances/${id}/runs`, { tenant }); setRuns(p => ({ ...p, [id]: d.runs || [] })); }
     catch { /* ignore */ }
-  }, [th]);
+  }, [tenant]);
 
   const loadCommands = useCallback(async (id: string) => {
-    try { const d = await fetch(`${BASE}/hub/instances/${id}/commands`, { headers: th }).then(r => r.json()); setCommands(p => ({ ...p, [id]: d.commands || [] })); }
+    try { const d = await apiFetch<{ commands?: any[] }>(`/hub/instances/${id}/commands`, { tenant }); setCommands(p => ({ ...p, [id]: d.commands || [] })); }
     catch { /* ignore */ }
-  }, [th]);
+  }, [tenant]);
 
   const sendCmd = useCallback(async (id: string, type: string, args: any = {}) => {
     setCmdBusy(true);
     try {
-      await fetch(`${BASE}/hub/instances/${id}/commands`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ type, args }) });
+      await apiFetch(`/hub/instances/${id}/commands`, { method: "POST", tenant, body: { type, args } });
       await loadCommands(id); // show it as pending; the expanded poll updates status + new runs
     } catch {} finally { setCmdBusy(false); }
-  }, [th, loadCommands]);
+  }, [tenant, loadCommands]);
 
-  const toggle = useCallback(async (id: string) => {
-    if (expanded === id) { setExpanded(null); return; }
-    setExpanded(id);
-    loadRuns(id);
-    loadCommands(id);
-  }, [expanded, loadRuns, loadCommands]);
+  const toggle = useCallback((id: string) => {
+    setExpanded(prev => (prev === id ? null : id));
+  }, []);
 
-  // Keep the expanded instance's runs + command statuses fresh without a hard refresh.
-  useEffect(() => {
-    if (!expanded) return;
-    const id = expanded;
-    const t = setInterval(() => { loadRuns(id); loadCommands(id); }, 3000);
-    return () => clearInterval(t);
-  }, [expanded, loadRuns, loadCommands]);
+  // Poll the expanded instance's runs + command statuses (fires immediately on expand,
+  // pauses while the tab is hidden, stops entirely when nothing is expanded).
+  usePolling(() => {
+    if (expanded) { loadRuns(expanded); loadCommands(expanded); }
+  }, expanded ? 5000 : null, [expanded]);
 
   const mintKey = useCallback(async () => {
     setMinting(true); setFreshKey(null);
     try {
-      const r = await fetch(`${BASE}/hub/keys`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ label: newLabel.trim() || "kernel", project: newProject.trim() || "default" }) });
-      const d = await r.json();
-      if (d.key) { setFreshKey({ key: d.key, project: d.project }); load(); }
+      const d = await apiFetch<{ key?: string; project: string }>("/hub/keys", { method: "POST", tenant, body: { label: newLabel.trim() || "kernel", project: newProject.trim() || "default" } });
+      if (d.key) { setFreshKey({ key: d.key, project: d.project }); refresh(); }
     } catch {} finally { setMinting(false); }
-  }, [newLabel, newProject, th, load]);
+  }, [newLabel, newProject, tenant, refresh]);
 
   const deleteKey = useCallback(async (preview: string) => {
     const prefix = preview.split("…")[0];
-    try { await fetch(`${BASE}/hub/keys/${encodeURIComponent(prefix)}`, { method: "DELETE", headers: th }); } catch {}
-    load();
-  }, [th, load]);
+    try { await apiFetch(`/hub/keys/${encodeURIComponent(prefix)}`, { method: "DELETE", tenant }); } catch {}
+    refresh();
+  }, [tenant, refresh]);
 
   const copy = (text: string, k: string) => { navigator.clipboard?.writeText(text).then(() => { setCopied(k); setTimeout(() => setCopied(""), 1500); }).catch(() => {}); };
 
@@ -124,7 +114,7 @@ export default function ConnectedKernels() {
         <Server className="h-4 w-4 text-violet-400" />
         <h3 className="text-sm font-semibold text-slate-200">Connected kernels</h3>
         <span className="text-[10px] text-slate-500">{liveCount} live · {instances.length} total</span>
-        <button onClick={load} className="ml-auto p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /></button>
+        <button onClick={refresh} className="ml-auto p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]"><Spinner icon={RefreshCw} spinning={loading} className="h-3.5 w-3.5" /></button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
@@ -136,7 +126,7 @@ export default function ConnectedKernels() {
         <div>
           <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Instances</div>
           {loading && instances.length === 0 ? (
-            <div className="flex items-center gap-2 text-[11px] text-slate-600 py-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</div>
+            <div className="flex items-center gap-2 text-[11px] text-slate-600 py-2"><Spinner className="h-3.5 w-3.5" /> Loading…</div>
           ) : instances.length === 0 ? (
             <p className="text-[11px] text-slate-600 py-2">No kernels connected yet. Mint a key below and call <code className="text-violet-300">connect_hub()</code> from your app.</p>
           ) : (
@@ -179,7 +169,7 @@ export default function ConnectedKernels() {
                               <button onClick={() => sendCmd(inst.instance_id, "stats")} disabled={cmdBusy} className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg border border-white/[0.07] bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] disabled:opacity-40"><Activity className="h-3 w-3" /> Stats</button>
                               <div className="flex items-center gap-1 flex-1 min-w-[160px]">
                                 <input value={runGoal} onChange={e => setRunGoal(e.target.value)} placeholder="goal for a smoke test…" className="flex-1 !py-1 !px-2 !text-[10.5px] !bg-[#08080f] !border-white/[0.06]" />
-                                <button onClick={() => { if (runGoal.trim()) { sendCmd(inst.instance_id, "run", { goal: runGoal.trim() }); setRunGoal(""); } }} disabled={cmdBusy || !runGoal.trim()} title="Fires a one-off goal to verify the kernel actually executes (LLM key, engine, tools). Not how you drive production runs — use the embedding app or a Deployment for that." className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600">{cmdBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Test run</button>
+                                <button onClick={() => { if (runGoal.trim()) { sendCmd(inst.instance_id, "run", { goal: runGoal.trim() }); setRunGoal(""); } }} disabled={cmdBusy || !runGoal.trim()} title="Fires a one-off goal to verify the kernel actually executes (LLM key, engine, tools). Not how you drive production runs — use the embedding app or a Deployment for that." className="flex items-center gap-1 px-2 py-1 text-[10px] rounded-lg font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600">{cmdBusy ? <Spinner className="h-3 w-3" /> : <Play className="h-3 w-3" />} Test run</button>
                               </div>
                             </div>
                             <p className="text-[9px] text-slate-600 mt-1.5">A smoke test — proves the kernel is truly operational. Production runs are driven by the embedding app or a Deployment.</p>
@@ -187,7 +177,7 @@ export default function ConnectedKernels() {
                               <div className="mt-2 space-y-1">
                                 {(commands[inst.instance_id] || []).slice(0, 6).map((c: any) => (
                                   <div key={c.id} className="flex items-start gap-1.5 text-[10px]">
-                                    {c.status === "done" ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0 mt-0.5" /> : c.status === "failed" ? <XCircle className="h-3 w-3 text-red-400 shrink-0 mt-0.5" /> : <Loader2 className="h-3 w-3 text-slate-500 animate-spin shrink-0 mt-0.5" />}
+                                    {c.status === "done" ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0 mt-0.5" /> : c.status === "failed" ? <XCircle className="h-3 w-3 text-red-400 shrink-0 mt-0.5" /> : <Spinner className="h-3 w-3 text-slate-500 shrink-0 mt-0.5" />}
                                     <span className="text-slate-400 shrink-0">{c.type}</span>
                                     <span className="text-slate-600 truncate flex-1">{c.error || (c.result ? JSON.stringify(c.result).slice(0, 80) : c.status)}</span>
                                   </div>
@@ -212,7 +202,7 @@ export default function ConnectedKernels() {
             <input value={newLabel} onChange={e => setNewLabel(e.target.value)} placeholder="Label (e.g. my-app)" className="flex-1 !py-1.5 !px-2.5 !text-[12px]" />
             <input value={newProject} onChange={e => setNewProject(e.target.value)} placeholder="project" className="w-28 !py-1.5 !px-2.5 !text-[12px]" />
             <button onClick={mintKey} disabled={minting} className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 rounded-lg transition-all shrink-0">
-              {minting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Mint key
+              {minting ? <Spinner className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />} Mint key
             </button>
           </div>
 

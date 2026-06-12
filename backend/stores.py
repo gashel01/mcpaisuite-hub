@@ -165,6 +165,13 @@ class TaskRunner:
             return True
         return False
 
+    def is_running(self, task_id: str) -> bool:
+        """Whether the task's execution coroutine is still in flight. This is the authoritative
+        'not yet finished' signal — unlike task.status, which can flip to a terminal value
+        transiently mid-run (e.g. an LTP attempt failing before the hybrid ReAct fallback)."""
+        future = self._futures.get(task_id)
+        return future is not None and not future.done()
+
     def _cleanup(self) -> None:
         done = [tid for tid, f in self._futures.items() if f.done()]
         for tid in done:

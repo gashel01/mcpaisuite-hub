@@ -1,5 +1,5 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 
 import { useState } from "react";
 import { motion } from "framer-motion";
@@ -74,7 +74,6 @@ function MiniStat({ icon: Icon, color, label, value }: {
 // ── Main component ──────────────────────────────────────────────────────────
 
 export default function ImprovePanel({ analytics, onAnalyze, onApply, tenantHeaders }: ImprovePanelProps) {
-  const BASE = getApiUrl();
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -85,12 +84,10 @@ export default function ImprovePanel({ analytics, onAnalyze, onApply, tenantHead
     setAnalyzing(true);
     setApplyResult(null);
     try {
-      const res = await fetch(`${BASE}/api/tool`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(tenantHeaders ?? {}) },
-        body: JSON.stringify({ tool: "improve", args: { dry_run: true } }),
+      const data = await apiFetch<any>("/api/tool", {
+        method: "POST", headers: tenantHeaders ?? {},
+        body: { tool: "improve", args: { dry_run: true } },
       });
-      const data = await res.json();
       setAnalysis(data);
       // Pre-select all suggestions
       if (data.suggestions?.length) {
@@ -108,12 +105,10 @@ export default function ImprovePanel({ analytics, onAnalyze, onApply, tenantHead
     if (!analysis || selectedSuggestions.size === 0) return;
     setApplying(true);
     try {
-      const res = await fetch(`${BASE}/api/tool`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(tenantHeaders ?? {}) },
-        body: JSON.stringify({ tool: "improve", args: { dry_run: false } }),
+      const data = await apiFetch<any>("/api/tool", {
+        method: "POST", headers: tenantHeaders ?? {},
+        body: { tool: "improve", args: { dry_run: false } },
       });
-      const data = await res.json();
       setApplyResult(data);
       onApply?.();
     } catch {

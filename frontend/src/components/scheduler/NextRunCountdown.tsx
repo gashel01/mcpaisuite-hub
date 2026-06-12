@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 
 interface NextRunCountdownProps {
   nextRun: string | null;
@@ -32,37 +31,17 @@ function pad(n: number): string {
   return n.toString().padStart(2, "0");
 }
 
-function DigitBox({ value, color }: { value: string; color: string }) {
+// Plain text digit — no per-digit framer-motion popLayout/spring (those forced a layout
+// measurement every second, per countdown, which was a major perf cost on the scheduler page).
+function DigitBox({ value, color, compact }: { value: string; color: string; compact?: boolean }) {
   return (
-    <AnimatePresence mode="popLayout">
-      <motion.span
-        key={value}
-        initial={{ y: -8, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 8, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 300, damping: 25 }}
-        className={`inline-block bg-white/[0.03] rounded-md px-2 py-1 font-mono font-bold text-sm ${color}`}
-      >
-        {value}
-      </motion.span>
-    </AnimatePresence>
-  );
-}
-
-function CompactDigitBox({ value, color }: { value: string; color: string }) {
-  return (
-    <AnimatePresence mode="popLayout">
-      <motion.span
-        key={value}
-        initial={{ y: -4, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 4, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 300, damping: 25 }}
-        className={`inline-block bg-white/[0.03] rounded px-1.5 py-0.5 font-mono font-medium text-xs ${color}`}
-      >
-        {value}
-      </motion.span>
-    </AnimatePresence>
+    <span
+      className={`inline-block bg-white/[0.03] font-mono ${color} ${
+        compact ? "rounded px-1.5 py-0.5 font-medium text-xs" : "rounded-md px-2 py-1 font-bold text-sm"
+      }`}
+    >
+      {value}
+    </span>
   );
 }
 
@@ -99,15 +78,11 @@ export default function NextRunCountdown({ nextRun, compact = false }: NextRunCo
   // Overdue state
   if (remaining.total_ms < 0) {
     return (
-      <motion.div
-        animate={{ opacity: [1, 0.5, 1] }}
-        transition={{ repeat: Infinity, duration: 1.2 }}
-        className="flex items-center gap-1"
-      >
-        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/20">
+      <div className="flex items-center gap-1">
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/20 animate-pulse">
           OVERDUE
         </span>
-      </motion.div>
+      </div>
     );
   }
 
@@ -120,7 +95,6 @@ export default function NextRunCountdown({ nextRun, compact = false }: NextRunCo
         ? "text-amber-400"
         : "text-slate-200";
 
-  const Box = compact ? CompactDigitBox : DigitBox;
   const separator = <span className={`${color} font-mono text-xs opacity-50`}>:</span>;
 
   return (
@@ -128,20 +102,17 @@ export default function NextRunCountdown({ nextRun, compact = false }: NextRunCo
       <div className="flex items-center gap-0.5">
         {remaining.days > 0 && (
           <>
-            <Box value={pad(remaining.days)} color={color} />
+            <DigitBox value={pad(remaining.days)} color={color} compact={compact} />
             {separator}
           </>
         )}
-        <Box value={pad(remaining.hours)} color={color} />
+        <DigitBox value={pad(remaining.hours)} color={color} compact={compact} />
         {separator}
-        <Box value={pad(remaining.minutes)} color={color} />
+        <DigitBox value={pad(remaining.minutes)} color={color} compact={compact} />
         {separator}
-        <motion.span
-          animate={totalSeconds < 10 ? { opacity: [1, 0.4, 1] } : {}}
-          transition={totalSeconds < 10 ? { repeat: Infinity, duration: 0.8 } : {}}
-        >
-          <Box value={pad(remaining.seconds)} color={color} />
-        </motion.span>
+        <span className={totalSeconds < 10 ? "animate-pulse" : ""}>
+          <DigitBox value={pad(remaining.seconds)} color={color} compact={compact} />
+        </span>
       </div>
       {!compact && (
         <span className="text-[10px] text-slate-500">until next execution</span>

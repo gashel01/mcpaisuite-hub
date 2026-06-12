@@ -1,36 +1,37 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { AnimatePresence } from "framer-motion";
+import dynamic from "next/dynamic";
 import { Clock, RefreshCw, Menu } from "lucide-react";
-import { useTenant, tenantHeaders } from "@/context/tenant";
+import { useTenant } from "@/context/tenant";
+import { useApi } from "@/hooks/useApi";
+import { Spinner } from "@/components/ui/Spinner";
 import type { ScheduledJob, SchedulerStats } from "@/types/scheduler";
 
 import SchedulerHero from "@/components/scheduler/SchedulerHero";
 import SchedulerGrid from "@/components/scheduler/SchedulerGrid";
-import JobDetailPanel from "@/components/scheduler/JobDetailPanel";
+// Lazy-loaded: the detail panel (with its run-history timeline + live countdown) is not visible
+// on initial load, so keep it out of the first mount/bundle.
+const JobDetailPanel = dynamic(() => import("@/components/scheduler/JobDetailPanel"), { ssr: false });
 
 
 /* ── Page ──────────────────────────────────────────────────────── */
 
 export default function SchedulerPage() {
-  const BASE = getApiUrl();
   const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
 
-  const [jobs, setJobs] = useState<ScheduledJob[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
 
   /* ── Data fetching ───────────────────────────────────────────── */
 
-  const fetchData = useCallback(async () => {
-    try {
+  const { data, loading, refresh } = useApi<ScheduledJob[]>(
+    async () => {
       const [schedulesRes, taskforceRes] = await Promise.all([
-        fetch(`${BASE}/schedules`, { headers: th }).then((r) => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${BASE}/agents/taskforce/schedules`, { headers: th }).then((r) => r.ok ? r.json() : null).catch(() => null),
+        apiFetch<{ jobs?: ScheduledJob[] }>("/schedules", { tenant }).catch(() => null),
+        apiFetch<{ schedules?: any[] }>("/agents/taskforce/schedules", { tenant }).catch(() => null),
       ]);
 
       // Merge scheduler jobs
@@ -73,23 +74,11 @@ export default function SchedulerPage() {
         workflow_id: s.workflow_id ?? s.id,
       }));
 
-      setJobs([...schedulerJobs, ...taskforceJobs]);
-    } catch {
-      /* silent — keep previous state */
-    } finally {
-      setLoading(false);
-    }
-  }, [tenant]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
-    const id = setInterval(fetchData, 30_000);
-    return () => clearInterval(id);
-  }, [fetchData]);
+      return [...schedulerJobs, ...taskforceJobs];
+    },
+    { deps: [tenant], poll: 30_000, initialData: [] }
+  );
+  const jobs = data ?? [];
 
   /* ── Actions ─────────────────────────────────────────────────── */
 
@@ -99,24 +88,16 @@ export default function SchedulerPage() {
 
     try {
       if (job.source === "taskforce" && action === "cancel") {
-        await fetch(`${BASE}/agents/taskforce/schedules/${jobId}`, {
-          method: "DELETE",
-          headers: th,
-        });
+        await apiFetch(`/agents/taskforce/schedules/${jobId}`, { method: "DELETE", tenant });
       } else {
-        await fetch(`${BASE}/schedules/${jobId}/action`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...th },
-          body: JSON.stringify({ action }),
-        });
+        await apiFetch(`/schedules/${jobId}/action`, { method: "POST", tenant, body: { action } });
       }
     } catch {
       /* silent */
     }
 
-    // Refresh after action
-    setTimeout(fetchData, 300);
-  }, [jobs, th, fetchData]);
+    refresh();
+  }, [jobs, tenant, refresh]);
 
   /* ── Derived ─────────────────────────────────────────────────── */
 
@@ -179,11 +160,11 @@ export default function SchedulerPage() {
           <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden sm:block">Monitor and manage your scheduled agent tasks</p>
         </div>
         <button
-          onClick={fetchData}
+          onClick={refresh}
           disabled={loading}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 hover:text-slate-200 border border-white/[0.06] transition-all touch-target shrink-0 disabled:opacity-40"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          <Spinner icon={RefreshCw} spinning={loading} className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Refresh</span>
         </button>
       </div>

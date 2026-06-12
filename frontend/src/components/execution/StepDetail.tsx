@@ -3,6 +3,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Clock, Zap, Wrench, CheckCircle2, AlertCircle } from "lucide-react";
 import { useExecutionStore, type StreamEvent } from "@/stores/execution";
+import { useShallow } from "zustand/react/shallow";
 
 function DataRow({ label, value }: { label: string; value: string | number | boolean | undefined | null }) {
   if (value === undefined || value === null) return null;
@@ -41,7 +42,9 @@ function DataObject({ data }: { data: Record<string, unknown> }) {
 }
 
 export default function StepDetail() {
-  const { events, activeEventId, setActiveEvent } = useExecutionStore();
+  const { events, activeEventId, setActiveEvent } = useExecutionStore(
+    useShallow(s => ({ events: s.events, activeEventId: s.activeEventId, setActiveEvent: s.setActiveEvent }))
+  );
   const activeEvent = events.find((e) => e.id === activeEventId) || null;
 
   return (

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { Clock, ChevronDown, ChevronUp } from "lucide-react";
 import type { JobResult } from "@/types/scheduler";
 
@@ -29,19 +28,14 @@ function formatDuration(ms: number): string {
   return `${(ms / 60000).toFixed(1)}m`;
 }
 
-function RunItem({ result, index }: { result: JobResult; index: number }) {
+function RunItem({ result }: { result: JobResult }) {
   const [expanded, setExpanded] = useState(false);
   const content = result.success ? result.output : result.error;
   const isLong = content.length > 100;
   const displayContent = expanded ? content : content.slice(0, 100);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.04, type: "spring", stiffness: 300, damping: 30 }}
-      className="flex gap-3"
-    >
+    <div className="flex gap-3 animate-fade-in">
       {/* Left: dot + line */}
       <div className="flex flex-col items-center">
         <div
@@ -102,7 +96,7 @@ function RunItem({ result, index }: { result: JobResult; index: number }) {
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -129,11 +123,9 @@ export default function RunHistoryTimeline({
 
   return (
     <div className="max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
-      <AnimatePresence>
-        {sorted.map((result, i) => (
-          <RunItem key={result.run_id} result={result} index={i} />
-        ))}
-      </AnimatePresence>
+      {sorted.map((result) => (
+        <RunItem key={result.run_id} result={result} />
+      ))}
     </div>
   );
 }

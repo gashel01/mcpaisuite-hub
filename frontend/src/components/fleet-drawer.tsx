@@ -6,10 +6,8 @@ import {
   Gauge, X, Rocket, Power, PlayCircle, Loader2, Activity, DollarSign,
   Repeat, ArrowUpRight,
 } from "lucide-react";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 import { useTenant, tenantHeaders } from "@/context/tenant";
-
-const BASE = getApiUrl();
 
 export default function FleetDrawer() {
   const { tenant } = useTenant();
@@ -21,7 +19,7 @@ export default function FleetDrawer() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { const r = await fetch(`${BASE}/control-plane`, { headers: th }); setData(await r.json()); }
+    try { setData(await apiFetch<any>("/control-plane", { headers: th })); }
     catch { setData(null); }
     finally { setLoading(false); }
   }, [th]);
@@ -32,7 +30,7 @@ export default function FleetDrawer() {
     const next = dep.status === "paused" ? "live" : "paused";
     setBusy(dep.id);
     try {
-      await fetch(`${BASE}/deployments/${dep.id}/status`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ status: next }) });
+      await apiFetch(`/deployments/${dep.id}/status`, { method: "POST", headers: th, body: { status: next } });
       load();
     } catch {} finally { setBusy(""); }
   }, [th, load]);

@@ -2,9 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FolderOpen, ChevronDown, ExternalLink } from "lucide-react";
-import { getApiUrl } from "@/lib/api-url";
-
-const BASE = getApiUrl();
+import { apiFetch } from "@/lib/api";
 
 interface Ws {
   namespace: string;
@@ -39,8 +37,7 @@ export default function RunWorkspacesButton({ taskId }: { taskId: string }) {
     setOpen(false);
     if (!taskId) return;
     let cancelled = false;
-    fetch(`${BASE}/tasks/${encodeURIComponent(taskId)}/workspaces`)
-      .then((r) => (r.ok ? r.json() : null))
+    apiFetch<any>(`/tasks/${encodeURIComponent(taskId)}/workspaces`)
       .then((d) => { if (!cancelled && Array.isArray(d?.workspaces)) setItems(d.workspaces); })
       .catch(() => {});
     return () => { cancelled = true; };

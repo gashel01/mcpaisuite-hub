@@ -1,11 +1,13 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
+import { RefreshButton } from "@/components/ui/RefreshButton";
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ClipboardList, RefreshCw, Check, Trash2, Star, Tag, MessageSquare,
-  Loader2, AlertTriangle, ChevronDown, Zap,
+  AlertTriangle, ChevronDown, Zap,
 } from "lucide-react";
 
 
@@ -46,7 +48,6 @@ const LABEL_COLORS: Record<string, string> = {
 };
 
 export default function ReviewQueue({ namespace, onSelectTask }: Props) {
-  const BASE = getApiUrl();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [stats, setStats] = useState<ReviewStats | null>(null);
   const [labels, setLabels] = useState<Label[]>([]);
@@ -59,14 +60,12 @@ export default function ReviewQueue({ namespace, onSelectTask }: Props) {
   const [selectedLabels, setSelectedLabels] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState("");
 
-  const th = { "X-Tenant-Id": namespace };
-
   const fetchAll = useCallback(async () => {
     setLoading(true);
     const [qRes, sRes, lRes] = await Promise.all([
-      fetch(`${BASE}/review/queue?status=${filter}`, { headers: th }).then(r => r.json()).catch(() => ({ items: [] })),
-      fetch(`${BASE}/review/stats`, { headers: th }).then(r => r.json()).catch(() => null),
-      fetch(`${BASE}/review/labels`, { headers: th }).then(r => r.json()).catch(() => ({ labels: [] })),
+      apiFetch<any>(`/review/queue?status=${filter}`, { tenant: namespace }).catch(() => ({ items: [] })),
+      apiFetch<any>("/review/stats", { tenant: namespace }).catch(() => null),
+      apiFetch<any>("/review/labels", { tenant: namespace }).catch(() => ({ labels: [] })),
     ]);
     setItems(qRes.items || []);
     setStats(sRes);
@@ -77,29 +76,28 @@ export default function ReviewQueue({ namespace, onSelectTask }: Props) {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const autoQueue = async () => {
-    await fetch(`${BASE}/review/auto-queue`, { method: "POST", headers: th });
+    await apiFetch("/review/auto-queue", { method: "POST", tenant: namespace });
     fetchAll();
   };
 
   const markReviewed = async (itemId: string) => {
-    await fetch(`${BASE}/review/queue/${itemId}/review`, { method: "POST", headers: th });
+    await apiFetch(`/review/queue/${itemId}/review`, { method: "POST", tenant: namespace });
     setItems(prev => prev.filter(i => i.id !== itemId && i.task_id !== itemId));
   };
 
   const removeFromQueue = async (itemId: string) => {
-    await fetch(`${BASE}/review/queue/${itemId}`, { method: "DELETE", headers: th });
+    await apiFetch(`/review/queue/${itemId}`, { method: "DELETE", tenant: namespace });
     setItems(prev => prev.filter(i => i.id !== itemId && i.task_id !== itemId));
   };
 
   const submitAnnotation = async (taskId: string) => {
-    await fetch(`${BASE}/traces/${taskId}/annotate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...th },
-      body: JSON.stringify({
+    await apiFetch(`/traces/${taskId}/annotate`, {
+      method: "POST", tenant: namespace,
+      body: {
         rating,
         labels: Array.from(selectedLabels),
         feedback,
-      }),
+      },
     });
     setAnnotating(null);
     setRating(0);
@@ -129,9 +127,7 @@ export default function ReviewQueue({ namespace, onSelectTask }: Props) {
           >
             <Zap className="w-2.5 h-2.5" /> Auto
           </button>
-          <button onClick={fetchAll} className="p-1 text-slate-500 hover:text-slate-300 transition-colors">
-            <RefreshCw className={`w-2.5 h-2.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
+          <RefreshButton onRefresh={fetchAll} iconClassName="w-2.5 h-2.5" className="p-1 text-slate-500 hover:text-slate-300 transition-colors" />
         </div>
       </div>
 
@@ -169,7 +165,7 @@ export default function ReviewQueue({ namespace, onSelectTask }: Props) {
       <div className="flex-1 overflow-y-auto">
         {loading && (
           <div className="flex justify-center py-6">
-            <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+            <Spinner className="w-4 h-4 text-slate-500" />
           </div>
         )}
 

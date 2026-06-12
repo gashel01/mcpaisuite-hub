@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import { Send, Square, Paperclip } from "lucide-react";
-import { BASE_URL } from "@/types";
+import { apiFetch } from "@/lib/api";
 
 interface ChatInputProps {
   input: string;
@@ -75,7 +75,7 @@ export default function ChatInput({ input, setInput, loading, execMode, setExecM
             {(["react", "ltp", "hybrid"] as const).map(m => (
               <button
                 key={m}
-                onClick={() => { setExecMode(m); fetch(`${BASE_URL}/mode?mode=${m}`, { method: "POST" }); }}
+                onClick={() => { setExecMode(m); apiFetch(`/mode?mode=${m}`, { method: "POST" }).catch(() => {}); }}
                 className={`px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide transition-all ${execMode === m ? "bg-violet-600 text-white" : "text-slate-500 hover:text-slate-300"}`}
               >
                 {m}

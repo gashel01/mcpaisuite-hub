@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BASE_URL } from "./constants";
+import { apiFetch } from "@/lib/api";
 
 // Inline approve / deny / request-revision / edit-output controls shown under a paused
 // human-gate node in the run output. Posts the human's decision to the gate endpoint.
@@ -13,9 +13,8 @@ export default function HumanGateActions({ taskId, nodeId, tenant, currentOutput
   const send = (action: string, modifiedOutput?: string) => {
     const body: any = { action };
     if (modifiedOutput) body.modified_output = modifiedOutput;
-    fetch(`${BASE_URL}/tasks/${taskId}/human-gate/${nodeId}/approve`, {
-      method: "POST", headers: { "Content-Type": "application/json", ...(tenant ? { "x-tenant-id": tenant } : {}) },
-      body: JSON.stringify(body),
+    apiFetch(`/tasks/${taskId}/human-gate/${nodeId}/approve`, {
+      method: "POST", tenant: tenant || undefined, body,
     }).catch(() => {});
     setSubmitted(true);
   };

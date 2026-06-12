@@ -164,11 +164,24 @@ main {
 }
 .animate-stagger { animation: stagger-in 0.25s ease-out backwards; }
 
+/* Glow pulse — the shadow is painted once onto a pseudo-element layer and only its
+   opacity animates (GPU-composited), instead of animating box-shadow itself (repaints
+   the element every frame). */
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(139, 92, 246, 0); }
-  50% { box-shadow: 0 0 16px rgba(139, 92, 246, 0.15); }
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
-.animate-glow { animation: glow-pulse 2s ease-in-out infinite; }
+.animate-glow { position: relative; }
+.animate-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.15);
+  opacity: 0;
+  pointer-events: none;
+  animation: glow-pulse 2s ease-in-out infinite;
+}
 
 @keyframes tab-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -176,17 +189,25 @@ main {
 }
 .animate-tab-in { animation: tab-in 0.25s ease-out; }
 
-/* Skeleton loading shimmer */
+/* Skeleton loading shimmer — composited (transform) instead of animating
+   background-position, which repaints the element every frame. */
 .skeleton {
-  background: linear-gradient(90deg, #1e1e2e 25%, #2a2a3a 50%, #1e1e2e 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  position: relative;
+  overflow: hidden;
+  background: #1e1e2e;
   border-radius: 8px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 25%, rgba(255, 255, 255, 0.05) 50%, transparent 75%);
+  transform: translateX(-100%);
+  animation: shimmer 1.5s infinite;
 }
 
 @keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  100% { transform: translateX(100%); }
 }
 
 /* Glow effect for active elements */
@@ -258,9 +279,12 @@ main {
 }
 
 /* ── Status dot pulse ─────────────────────────────────────────────── */
+/* Live status dot — opacity-only blink (composited). The old keyframe also animated
+   box-shadow (a ring expanding to transparent), which repainted every frame for ~no
+   visible gain. */
 @keyframes status-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
-  50% { opacity: 0.7; box-shadow: 0 0 0 4px transparent; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 .status-dot-live {
   animation: status-pulse 2s ease-in-out infinite;

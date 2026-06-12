@@ -1,9 +1,10 @@
 "use client";
 
 import {
-  FileSearch, Layers, Brain, Database, CheckCircle2, AlertCircle, FileText, Loader2,
+  FileSearch, Layers, Brain, Database, CheckCircle2, AlertCircle, FileText,
 } from "lucide-react";
 import type { UploadEntry } from "../types";
+import { Spinner } from "@/components/ui/Spinner";
 
 const PIPELINE_STEPS = [
   { id: "parsing", label: "Parse", icon: FileSearch, color: "text-blue-400" },
@@ -32,7 +33,7 @@ export function IngestionStepper({ entry }: { entry: UploadEntry }) {
         {entry.status === "done" ? (
           <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
         ) : (
-          <Loader2 className="h-3 w-3 text-violet-400 animate-spin shrink-0" />
+          <Spinner className="h-3 w-3 text-violet-400 shrink-0" />
         )}
         <span className="text-[10px] text-slate-300 truncate flex-1">{entry.name}</span>
         <span className="text-[8px] text-slate-600">{(entry.size / 1024).toFixed(0)} KB</span>

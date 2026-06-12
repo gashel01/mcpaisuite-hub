@@ -1,5 +1,5 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch, apiUrl } from "@/lib/api";
 
 import { useEffect, useRef } from "react";
 import { useExecutionStore, type StreamEvent } from "@/stores/execution";
@@ -110,8 +110,7 @@ export function useTaskStream(taskId: string | null, tenant: string = "demo") {
     const store = useExecutionStore.getState();
     store.startStream(taskId);
 
-    const API = getApiUrl();
-    const url = `${API}/api/stream/${taskId}?tenant=${encodeURIComponent(tenant)}`;
+    const url = apiUrl(`/api/stream/${taskId}?tenant=${encodeURIComponent(tenant)}`);
     console.log("[useTaskStream] Connecting to:", url);
 
     const es = new EventSource(url);
@@ -182,10 +181,7 @@ export function useTaskStream(taskId: string | null, tenant: string = "demo") {
       } else {
         // Genuine connection failure — try polling for result
         console.warn("[useTaskStream] SSE connection failed, falling back to polling");
-        fetch(`${getApiUrl()}/agents/taskforce/${taskIdRef.current}`, {
-          headers: { "X-Tenant-ID": tenantRef.current },
-        })
-          .then(r => r.json())
+        apiFetch<any>(`/agents/taskforce/${taskIdRef.current}`, { tenant: tenantRef.current })
           .then(resp => {
             const data = resp.result || {};
             if (data.final_output || data.success !== undefined) {

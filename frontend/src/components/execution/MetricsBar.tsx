@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { Clock, Zap, DollarSign, RotateCw } from "lucide-react";
 import { useExecutionStore } from "@/stores/execution";
+import { useShallow } from "zustand/react/shallow";
 
 function formatElapsed(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -23,7 +24,9 @@ interface MetricsBarProps {
 }
 
 export default function MetricsBar({ compact }: MetricsBarProps) {
-  const { turns, tokens, cost, elapsed, status } = useExecutionStore();
+  const { turns, tokens, cost, elapsed, status } = useExecutionStore(
+    useShallow(s => ({ turns: s.turns, tokens: s.tokens, cost: s.cost, elapsed: s.elapsed, status: s.status }))
+  );
 
   const metrics = [
     { icon: RotateCw, label: "Turns", value: turns.toString(), color: "text-violet-400" },

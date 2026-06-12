@@ -1,7 +1,5 @@
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 import { create } from "zustand";
-
-const BASE_URL = getApiUrl();
 
 // ── Data Model ────────────────────────────────────────────────────────────
 
@@ -84,8 +82,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   load: async (headers) => {
     try {
-      const res = await fetch(`${BASE_URL}/workflows`, { headers });
-      const data = await res.json();
+      const data = await apiFetch<any>("/workflows", { headers });
       set({ workflows: data.workflows || [], loaded: true });
     } catch {
       set({ loaded: true });
@@ -101,12 +98,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   createWorkflow: async (name, versionData, headers) => {
     try {
-      const res = await fetch(`${BASE_URL}/workflows`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ name, version: versionData }),
+      const data = await apiFetch<any>("/workflows", {
+        method: "POST", headers,
+        body: { name, version: versionData },
       });
-      const data = await res.json();
       if (data.workflow) {
         set(s => ({ workflows: [...s.workflows, data.workflow] }));
         return data.workflow;
@@ -117,12 +112,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   addVersion: async (workflowId, versionData, headers) => {
     try {
-      const res = await fetch(`${BASE_URL}/workflows/${workflowId}/versions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify(versionData),
+      const data = await apiFetch<any>(`/workflows/${workflowId}/versions`, {
+        method: "POST", headers,
+        body: versionData,
       });
-      const data = await res.json();
       if (data.version) {
         set(s => ({
           workflows: s.workflows.map(w => w.id === workflowId
@@ -138,7 +131,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   activateVersion: async (workflowId, versionId, headers) => {
     try {
-      await fetch(`${BASE_URL}/workflows/${workflowId}/activate/${versionId}`, { method: "POST", headers });
+      await apiFetch(`/workflows/${workflowId}/activate/${versionId}`, { method: "POST", headers });
       set(s => ({
         workflows: s.workflows.map(w => w.id === workflowId ? { ...w, activeVersionId: versionId } : w),
       }));
@@ -147,12 +140,10 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   addRun: async (workflowId, versionId, run, headers) => {
     try {
-      const res = await fetch(`${BASE_URL}/workflows/${workflowId}/versions/${versionId}/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify(run),
+      const data = await apiFetch<any>(`/workflows/${workflowId}/versions/${versionId}/runs`, {
+        method: "POST", headers,
+        body: run,
       });
-      const data = await res.json();
       if (data.run) {
         set(s => ({
           workflows: s.workflows.map(w => w.id === workflowId
@@ -167,10 +158,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   updateRun: async (workflowId, runId, update, headers) => {
     try {
-      await fetch(`${BASE_URL}/runs/${runId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify(update),
+      await apiFetch(`/runs/${runId}`, {
+        method: "PUT", headers,
+        body: update,
       });
       set(s => ({
         workflows: s.workflows.map(w => w.id === workflowId
@@ -182,15 +172,14 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   deleteWorkflow: async (id, headers) => {
     try {
-      await fetch(`${BASE_URL}/workflows/${id}`, { method: "DELETE", headers });
+      await apiFetch(`/workflows/${id}`, { method: "DELETE", headers });
       set(s => ({ workflows: s.workflows.filter(w => w.id !== id) }));
     } catch {}
   },
 
   loadSchedules: async (headers) => {
     try {
-      const res = await fetch(`${BASE_URL}/agents/taskforce/schedules`, { headers });
-      const data = await res.json();
+      const data = await apiFetch<any>("/agents/taskforce/schedules", { headers });
       set({ schedules: data.schedules || [] });
     } catch {}
   },

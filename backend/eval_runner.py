@@ -12,6 +12,8 @@ from uuid import uuid4
 
 import structlog
 
+from config import DEFAULT_NAMESPACE
+
 logger = structlog.get_logger()
 
 _EVAL_DIR = os.path.join(os.path.dirname(__file__), "data", "eval")
@@ -33,12 +35,13 @@ def _now_iso() -> str:
 
 # ── Dataset CRUD ─────────────────────────────────────────────────────────────
 
-def create_dataset(name: str, description: str = "", cases: list[dict] | None = None, tags: list[str] | None = None) -> dict:
+def create_dataset(name: str, description: str = "", cases: list[dict] | None = None, tags: list[str] | None = None, namespace: str = "default") -> dict:
     ds_id = _uuid()
     dataset = {
         "id": ds_id,
         "name": name,
         "description": description,
+        "namespace": namespace,  # tenant the dataset belongs to
         "tags": tags or [],
         "cases": [],
         "created_at": _now_iso(),
@@ -59,6 +62,7 @@ def get_dataset(ds_id: str) -> dict | None:
 
 
 def list_datasets() -> list[dict]:
+    # Eval is a shared, instance-wide quality workbench — datasets are GLOBAL, not tenant-scoped.
     datasets = []
     for fname in os.listdir(_DATASETS_DIR):
         if not fname.endswith(".json"):
@@ -70,6 +74,7 @@ def list_datasets() -> list[dict]:
                 "id": ds["id"],
                 "name": ds["name"],
                 "description": ds.get("description", ""),
+                "namespace": ds.get("namespace") or DEFAULT_NAMESPACE,
                 "tags": ds.get("tags", []),
                 "case_count": len(ds.get("cases", [])),
                 "created_at": ds.get("created_at", ""),
@@ -385,6 +390,9 @@ def get_run(run_id: str) -> dict | None:
 
 
 def list_runs(dataset_id: str | None = None) -> list[dict]:
+    # Runs are GLOBAL too, but each carries the tenant it ran under (provenance badge), since a
+    # run executes in that tenant's context (memory/tools/constitution). "eval" was the
+    # pre-tenanting default → shown as the default tenant (demo).
     runs = []
     for fname in os.listdir(_RUNS_DIR):
         if not fname.endswith(".json"):
@@ -394,10 +402,14 @@ def list_runs(dataset_id: str | None = None) -> list[dict]:
                 run = json.load(f)
             if dataset_id and run.get("dataset_id") != dataset_id:
                 continue
+            run_ns = run.get("namespace") or DEFAULT_NAMESPACE
+            if run_ns == "eval":
+                run_ns = DEFAULT_NAMESPACE
             runs.append({
                 "id": run["id"],
                 "dataset_id": run.get("dataset_id", ""),
                 "dataset_name": run.get("dataset_name", ""),
+                "namespace": run_ns,
                 "status": run.get("status", "unknown"),
                 "started_at": run.get("started_at", ""),
                 "completed_at": run.get("completed_at"),

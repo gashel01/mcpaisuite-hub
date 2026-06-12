@@ -6,6 +6,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
+from config import ns
+
 router = APIRouter(prefix="/eval", tags=["eval"])
 
 # Cancellation set — run IDs that should stop
@@ -49,9 +51,9 @@ async def list_datasets():
 
 
 @router.post("/datasets")
-async def create_dataset(body: DatasetCreate):
+async def create_dataset(body: DatasetCreate, x_tenant_id: str = Header(default="")):
     from eval_runner import create_dataset
-    ds = create_dataset(body.name, body.description, body.cases, body.tags)
+    ds = create_dataset(body.name, body.description, body.cases, body.tags, namespace=ns(x_tenant_id))
     return ds
 
 
@@ -97,7 +99,7 @@ async def add_cases(ds_id: str, body: dict):
 # ── Import/Export ────────────────────────────────────────────────────────────
 
 @router.post("/datasets/import")
-async def import_dataset(body: dict):
+async def import_dataset(body: dict, x_tenant_id: str = Header(default="")):
     """Import a dataset from JSON (full dataset object or array of cases)."""
     from eval_runner import create_dataset
     if isinstance(body.get("cases"), list):
@@ -106,6 +108,7 @@ async def import_dataset(body: dict):
             description=body.get("description", ""),
             cases=body["cases"],
             tags=body.get("tags", []),
+            namespace=ns(x_tenant_id),
         )
         return ds
     raise HTTPException(400, "Expected 'cases' array in body")

@@ -1,5 +1,8 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch, apiUrl } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
+import { RefreshButton } from "@/components/ui/RefreshButton";
+import ConfirmDialog from "@/components/ui/confirm";
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
@@ -17,7 +20,6 @@ import {
   Edit3,
   Clock,
   Database,
-  Loader2,
   Search,
   Eye,
   ArrowLeft,
@@ -108,7 +110,6 @@ function fileName(path: string): string {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function WorkspacePage() {
-  const BASE = getApiUrl();
   const [files, setFiles] = useState<WsFile[]>([]);
   const [currentPath, setCurrentPath] = useState("");
   const [stats, setStats] = useState<WsStats | null>(null);
@@ -136,7 +137,7 @@ export default function WorkspacePage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -146,20 +147,14 @@ export default function WorkspacePage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const headers: Record<string, string> = effectiveTenant
-    ? { "X-Tenant-Id": effectiveTenant }
-    : {};
-
   // ── Data fetching ─────────────────────────────────────────────────────────
 
   const loadFiles = useCallback(async () => {
     try {
-      const res = await fetch(
-        `${BASE}/workspace/files?path=${encodeURIComponent(currentPath)}&recursive=false`,
-        { headers }
+      const data = await apiFetch<any>(
+        `/workspace/files?path=${encodeURIComponent(currentPath)}&recursive=false`,
+        { tenant: effectiveTenant }
       );
-      if (!res.ok) throw new Error();
-      const data = await res.json();
       // Sort: dirs first, then alphabetical
       const sorted = (data.files || []).sort((a: WsFile, b: WsFile) => {
         if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
@@ -174,9 +169,7 @@ export default function WorkspacePage() {
 
   const loadStats = useCallback(async () => {
     try {
-      const res = await fetch(`${BASE}/workspace/stats`, { headers });
-      const data = await res.json();
-      setStats(data);
+      setStats(await apiFetch<WsStats>("/workspace/stats", { tenant: effectiveTenant }));
     } catch (_e) {
       setStats(null);
     }
@@ -184,8 +177,7 @@ export default function WorkspacePage() {
 
   const loadCheckpoints = useCallback(async () => {
     try {
-      const res = await fetch(`${BASE}/workspace/checkpoints`, { headers });
-      const data = await res.json();
+      const data = await apiFetch<any>("/workspace/checkpoints", { tenant: effectiveTenant });
       setCheckpoints(data.checkpoints || []);
     } catch (_e) {
       setCheckpoints([]);
@@ -213,12 +205,7 @@ export default function WorkspacePage() {
 
   const openFile = async (path: string) => {
     try {
-      const res = await fetch(
-        `${BASE}/workspace/file?path=${encodeURIComponent(path)}`,
-        { headers }
-      );
-      if (!res.ok) throw new Error();
-      const data = await res.json();
+      const data = await apiFetch<FileContent>(`/workspace/file?path=${encodeURIComponent(path)}`, { tenant: effectiveTenant });
       setSelectedFile(data);
       setEditMode(false);
       setEditContent(data.content || "");
@@ -231,13 +218,10 @@ export default function WorkspacePage() {
     if (!selectedFile) return;
     setSaving(true);
     try {
-      const res = await fetch(`${BASE}/workspace/file`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ path: selectedFile.path, content: editContent }),
+      const data = await apiFetch<any>("/workspace/file", {
+        method: "POST", tenant: effectiveTenant,
+        body: { path: selectedFile.path, content: editContent },
       });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
       setSelectedFile({ ...selectedFile, content: editContent, size: data.size });
       setEditMode(false);
       loadFiles();
@@ -255,11 +239,7 @@ export default function WorkspacePage() {
     if (!name) return;
     const fullPath = currentPath ? `${currentPath}/${name}` : name;
     try {
-      await fetch(`${BASE}/workspace/folder`, {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ name: fullPath }),
-      });
+      await apiFetch("/workspace/folder", { method: "POST", tenant: effectiveTenant, body: { name: fullPath } });
       setNewFolderName("");
       setShowNewFolder(false);
       loadFiles();
@@ -269,12 +249,8 @@ export default function WorkspacePage() {
 
   const deleteFile = async (path: string) => {
     try {
-      await fetch(`${BASE}/workspace/file?path=${encodeURIComponent(path)}`, {
-        method: "DELETE",
-        headers,
-      });
+      await apiFetch(`/workspace/file?path=${encodeURIComponent(path)}`, { method: "DELETE", tenant: effectiveTenant });
       if (selectedFile?.path === path) setSelectedFile(null);
-      setDeleteConfirm(null);
       loadFiles();
       loadStats();
       showToast("File deleted");
@@ -287,9 +263,9 @@ export default function WorkspacePage() {
     try {
       if (isDir) {
         // Download folder as ZIP
-        const res = await fetch(
-          `${BASE}/workspace/download-folder?path=${encodeURIComponent(path)}`,
-          { headers }
+        const res = await apiFetch<Response>(
+          `/workspace/download-folder?path=${encodeURIComponent(path)}`,
+          { tenant: effectiveTenant, raw: true }
         );
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -299,11 +275,7 @@ export default function WorkspacePage() {
         a.click();
         URL.revokeObjectURL(url);
       } else {
-        const res = await fetch(
-          `${BASE}/workspace/file?path=${encodeURIComponent(path)}`,
-          { headers }
-        );
-        const data = await res.json();
+        const data = await apiFetch<any>(`/workspace/file?path=${encodeURIComponent(path)}`, { tenant: effectiveTenant });
         const blob = new Blob([data.content || ""], { type: "text/plain" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -326,12 +298,7 @@ export default function WorkspacePage() {
       try {
         const form = new FormData();
         form.append("file", file);
-        const res = await fetch(`${BASE}/workspace/upload`, {
-          method: "POST",
-          headers,
-          body: form,
-        });
-        if (!res.ok) throw new Error(await res.text());
+        await apiFetch("/workspace/upload", { method: "POST", tenant: effectiveTenant, body: form });
         setUploads((prev) =>
           prev.map((u) => (u.name === file.name ? { ...u, status: "done" } : u))
         );
@@ -348,7 +315,7 @@ export default function WorkspacePage() {
         setUploading(false);
       }
     },
-    [headers, loadFiles, loadStats]
+    [effectiveTenant, loadFiles, loadStats]
   );
 
   const handleDrop = useCallback(
@@ -370,12 +337,7 @@ export default function WorkspacePage() {
 
   const restoreCheckpoint = async (id: string) => {
     try {
-      const res = await fetch(`${BASE}/workspace/checkpoints/${id}/restore`, {
-        method: "POST",
-        headers,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json().catch(() => ({} as any));
+      const data = await apiFetch<any>(`/workspace/checkpoints/${id}/restore`, { method: "POST", tenant: effectiveTenant });
       // Return to root: the current folder may have been emptied/removed by the
       // restore, and restored files often live in subfolders.
       setSelectedFile(null);
@@ -419,6 +381,14 @@ export default function WorkspacePage() {
           toast.type === "success" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-red-500/10 border-red-500/20 text-red-300"
         }`}>{toast.message}</div>
       )}
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete file"
+        message={pendingDelete ? `"${fileName(pendingDelete)}" will be permanently deleted.` : ""}
+        onConfirm={() => { if (pendingDelete) deleteFile(pendingDelete); setPendingDelete(null); }}
+        onCancel={() => setPendingDelete(null)}
+      />
 
       {/* Drag overlay */}
       {dragOver && (
@@ -476,9 +446,7 @@ export default function WorkspacePage() {
         <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 px-2 py-1.5 text-[10px] sm:text-[11px] font-medium text-slate-400 hover:text-violet-300 bg-white/[0.03] hover:bg-violet-500/8 border border-white/[0.06] rounded-lg transition-all touch-target">
           <Upload className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Upload</span>
         </button>
-        <button onClick={() => { loadFiles(); loadStats(); loadCheckpoints(); }} className="p-1.5 text-slate-600 hover:text-slate-300 transition-colors">
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-        </button>
+        <RefreshButton onRefresh={() => Promise.all([loadFiles(), loadStats(), loadCheckpoints()])} className="p-1.5 text-slate-600 hover:text-slate-300 transition-colors" />
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => { Array.from(e.target.files || []).forEach(f => uploadFile(f)); if (fileRef.current) fileRef.current.value = ""; }} />
       </div>
 
@@ -521,7 +489,7 @@ export default function WorkspacePage() {
               <FileText className="h-3 w-3 text-slate-500 shrink-0" />
               <span className="text-slate-300 flex-1 truncate">{u.name}</span>
               <span className="text-slate-600">{formatSize(u.size)}</span>
-              {u.status === "uploading" && <Loader2 className="h-3 w-3 text-violet-400 animate-spin" />}
+              {u.status === "uploading" && <Spinner className="h-3 w-3 text-violet-400" />}
               {u.status === "done" && <span className="text-emerald-400">Done</span>}
               {u.status === "error" && <span className="text-red-400">Failed</span>}
             </div>
@@ -574,7 +542,7 @@ export default function WorkspacePage() {
         <div className={`border-r border-white/[0.04] overflow-y-auto transition-all ${selectedFile ? "hidden md:block md:w-1/2" : "flex-1"}`}>
           {loading ? (
             <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-6 w-6 text-violet-400 animate-spin" />
+              <Spinner className="h-6 w-6 text-violet-400" />
             </div>
           ) : filteredFiles.length === 0 ? (
             <EmptyState icon={FolderOpen} title="No files yet" description="Files created by the agent (code, reports, exports) appear here automatically." action={{ label: "Open Chat", href: "/chat" }} />
@@ -661,32 +629,16 @@ export default function WorkspacePage() {
                               >
                                 <Download size={14} />
                               </button>
-                              {deleteConfirm === f.path ? (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteFile(f.path);
-                                  }}
-                                  className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white text-xs transition-colors"
-                                >
-                                  Confirm
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setDeleteConfirm(f.path);
-                                    setTimeout(
-                                      () => setDeleteConfirm(null),
-                                      3000
-                                    );
-                                  }}
-                                  className="p-1 rounded hover:bg-[#2a2a3a] text-slate-500 hover:text-red-400 transition-colors"
-                                  title="Delete"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPendingDelete(f.path);
+                                }}
+                                className="p-1 rounded hover:bg-[#2a2a3a] text-slate-500 hover:text-red-400 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 size={14} />
+                              </button>
                             </div>
                           )}
                         </td>
@@ -748,17 +700,9 @@ export default function WorkspacePage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (deleteConfirm === f.path) deleteFile(f.path);
-                            else {
-                              setDeleteConfirm(f.path);
-                              setTimeout(() => setDeleteConfirm(null), 3000);
-                            }
+                            setPendingDelete(f.path);
                           }}
-                          className={`p-1.5 rounded hover:bg-[#2a2a3a] transition-colors ${
-                            deleteConfirm === f.path
-                              ? "text-red-400"
-                              : "text-slate-500"
-                          }`}
+                          className="p-1.5 rounded hover:bg-[#2a2a3a] text-slate-500 hover:text-red-400 transition-colors"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -796,7 +740,7 @@ export default function WorkspacePage() {
                       className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 text-sm transition-colors"
                     >
                       {saving ? (
-                        <Loader2 size={14} className="animate-spin" />
+                        <Spinner className="h-3.5 w-3.5" />
                       ) : (
                         <Save size={14} />
                       )}
@@ -857,7 +801,7 @@ export default function WorkspacePage() {
                 </div>
               ) : selectedFile.path.match(/\.(png|jpg|jpeg|gif|svg|webp)$/i) ? (
                 <div className="p-4 flex items-center justify-center">
-                  <img src={`${BASE}/workspace/file?path=${encodeURIComponent(selectedFile.path)}&raw=true`} alt={fileName(selectedFile.path)} className="max-h-[50vh] rounded-lg" />
+                  <img src={apiUrl(`/workspace/file?path=${encodeURIComponent(selectedFile.path)}&raw=true`)} alt={fileName(selectedFile.path)} className="max-h-[50vh] rounded-lg" />
                 </div>
               ) : selectedFile.path.endsWith(".json") ? (
                 <pre className="p-4 text-sm text-slate-300 font-mono whitespace-pre overflow-x-auto">

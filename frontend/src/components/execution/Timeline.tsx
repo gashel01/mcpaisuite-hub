@@ -7,6 +7,7 @@ import {
   RotateCw, Zap, ArrowRight, Shield,
 } from "lucide-react";
 import { useExecutionStore, type StreamEvent, type EventType } from "@/stores/execution";
+import { useShallow } from "zustand/react/shallow";
 
 const EVENT_CONFIG: Record<EventType, { icon: typeof Play; color: string; bg: string }> = {
   task_started:         { icon: Play, color: "text-violet-400", bg: "bg-violet-500/20 border-violet-500/30" },
@@ -82,7 +83,9 @@ function TimelineItem({ event, isActive }: { event: StreamEvent; isActive: boole
 }
 
 export default function Timeline() {
-  const { events, activeEventId } = useExecutionStore();
+  const { events, activeEventId } = useExecutionStore(
+    useShallow(s => ({ events: s.events, activeEventId: s.activeEventId }))
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom

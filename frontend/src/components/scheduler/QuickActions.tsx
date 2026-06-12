@@ -9,9 +9,9 @@ import {
   Zap,
   RotateCcw,
   Check,
-  Loader2,
 } from "lucide-react";
 import type { ScheduledJob } from "@/types/scheduler";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface QuickActionsProps {
   job: ScheduledJob;
@@ -146,7 +146,7 @@ function ActionButton({
             exit={{ scale: 0 }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
           >
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Spinner className="h-3.5 w-3.5" />
           </motion.span>
         ) : isDone ? (
           <motion.span

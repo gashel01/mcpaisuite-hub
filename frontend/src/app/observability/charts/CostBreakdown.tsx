@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { DollarSign, Cpu, Wrench, Users, Loader2 } from 'lucide-react';
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch } from '@/lib/api';
 
 interface CostData {
   window: string;
@@ -24,7 +24,6 @@ interface Props {
 const WINDOWS = ['1h', '6h', '24h', '7d'] as const;
 
 export function CostBreakdown({ namespace, window: externalWindow }: Props) {
-  const API = getApiUrl();
   const [win, setWin] = useState(externalWindow || '24h');
   const [data, setData] = useState<CostData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,10 +33,7 @@ export function CostBreakdown({ namespace, window: externalWindow }: Props) {
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/analytics/cost?window=${activeWindow}`, {
-        headers: { 'X-Tenant-Id': namespace },
-      });
-      if (res.ok) setData(await res.json());
+      setData(await apiFetch<any>(`/analytics/cost?window=${activeWindow}`, { tenant: namespace }));
     } catch { /* ignore */ }
     setLoading(false);
   }, [activeWindow, namespace]);

@@ -1,7 +1,7 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
+import { Modal } from "./Modal";
 
 interface Props {
   open: boolean;
@@ -14,46 +14,36 @@ interface Props {
 }
 
 export default function ConfirmDialog({ open, title, message, confirmLabel = "Delete", onConfirm, onCancel, destructive = true }: Props) {
-  if (!open) return null;
-
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[55] flex items-center justify-center bg-black/50 "
-      onClick={onCancel}
+    <Modal
+      open={open}
+      onClose={onCancel}
+      backdropClassName="z-[55] bg-black/50"
+      className="w-80 rounded-xl border border-white/[0.08] bg-[#0f0f1c] p-4"
     >
-      <motion.div
-        initial={{ scale: 0.95 }}
-        animate={{ scale: 1 }}
-        className="bg-[#0f0f1c] border border-white/[0.08] rounded-xl p-4 w-80"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 mb-2">
-          {destructive && <AlertTriangle className="w-4 h-4 text-red-400" />}
-          <h3 className="text-sm font-semibold text-white">{title}</h3>
-        </div>
-        <p className="text-[11px] text-slate-400 mb-4">{message}</p>
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="px-3 py-1.5 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => { onConfirm(); onCancel(); }}
-            className={`px-4 py-1.5 text-[10px] font-medium rounded-md transition-colors ${
-              destructive
-                ? "bg-red-500/20 hover:bg-red-500/30 text-red-300"
-                : "bg-violet-500/20 hover:bg-violet-500/30 text-violet-300"
-            }`}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
+      <div className="flex items-center gap-2 mb-2">
+        {destructive && <AlertTriangle className="w-4 h-4 text-red-400" />}
+        <h3 className="text-sm font-semibold text-white">{title}</h3>
+      </div>
+      <p className="text-[11px] text-slate-400 mb-4">{message}</p>
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="px-3 py-1.5 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => { onConfirm(); onCancel(); }}
+          className={`px-4 py-1.5 text-[10px] font-medium rounded-md transition-colors ${
+            destructive
+              ? "bg-red-500/20 hover:bg-red-500/30 text-red-300"
+              : "bg-violet-500/20 hover:bg-violet-500/30 text-violet-300"
+          }`}
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </Modal>
   );
 }

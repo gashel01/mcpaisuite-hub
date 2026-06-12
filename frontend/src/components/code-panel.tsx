@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useRef, useCallback, useMemo, useEffect, type MutableRefObject } from "react";
-import { Play, Square, Clock, Loader2, AlertTriangle, Terminal, X } from "lucide-react";
+import { Play, Square, Clock, AlertTriangle, Terminal, X } from "lucide-react";
+import { Spinner } from "@/components/ui/Spinner";
 import CodeEditor from "@/components/code-editor";
 import { useCodeRunner } from "@/context/code-runner";
-import { BASE_URL } from "@/types";
+import { apiFetch, apiUrl } from "@/lib/api";
 
 interface CodePanelProps {
   onClose: () => void;
@@ -66,17 +67,10 @@ export default function CodePanel({ onClose, tenant }: CodePanelProps) {
     const message = `Run this code:\n\`\`\`${language}\n${code}\n\`\`\``;
 
     try {
-      const res = await fetch(`${BASE_URL}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({
-          message,
-          conversation_id: convId,
-          execution_mode: "react",
-        }),
+      const data = await apiFetch<any>("/chat", {
+        method: "POST", headers: th,
+        body: { message, conversation_id: convId, execution_mode: "react" },
       });
-
-      const data = await res.json();
       const taskId = data.task_id;
 
       if (!taskId) {
@@ -87,7 +81,7 @@ export default function CodePanel({ onClose, tenant }: CodePanelProps) {
 
       closeStream();
       const es = new EventSource(
-        `${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(taskId)}`
+        apiUrl(`/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(taskId)}`)
       );
       eventSourceRef.current = es;
 
@@ -138,8 +132,7 @@ export default function CodePanel({ onClose, tenant }: CodePanelProps) {
       es.onerror = () => {
         closeStream();
         if (running) {
-          fetch(`${BASE_URL}/chat/${convId}/task/${taskId}`)
-            .then((r) => r.json())
+          apiFetch<any>(`/chat/${convId}/task/${taskId}`)
             .then((task) => {
               setRunning(false);
               if (task.answer) setOutput(task.answer);
@@ -233,7 +226,7 @@ export default function CodePanel({ onClose, tenant }: CodePanelProps) {
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/[0.04] shrink-0">
               <Terminal className="h-3 w-3 text-slate-500" />
               <span className="text-[10px] font-medium text-slate-400">stdout</span>
-              {running && <Loader2 className="h-3 w-3 text-emerald-400 animate-spin ml-auto" />}
+              {running && <Spinner className="h-3 w-3 text-emerald-400 ml-auto" />}
             </div>
             <pre className="flex-1 overflow-auto px-3 py-2 font-mono text-[11px] text-slate-300 bg-slate-950 whitespace-pre-wrap min-h-[60px]">
               {output || (

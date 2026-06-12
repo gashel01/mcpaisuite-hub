@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertCircle } from "lucide-react";
-import { getApiUrl } from '@/lib/api-url';
+import { apiFetch, ApiError } from '@/lib/api';
+import { Modal } from "@/components/ui/Modal";
 
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -36,7 +37,6 @@ const CHANNELS = [
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function CreateAlertDialog({ open, onClose, onCreated }: CreateAlertDialogProps) {
-  const API = getApiUrl();
   const [name, setName] = useState("");
   const [metric, setMetric] = useState("failure_rate");
   const [operator, setOperator] = useState<string>(">");
@@ -106,21 +106,15 @@ export default function CreateAlertDialog({ open, onClose, onCreated }: CreateAl
         body.slack_webhook = slackWebhook.trim();
       }
 
-      const res = await fetch(`${API}/alerts/rules`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || data.message || `Request failed: ${res.status}`);
-      }
+      await apiFetch("/alerts/rules", { method: "POST", body });
 
       resetForm();
       onCreated();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create rule");
+      const detail = err instanceof ApiError
+        ? ((err.body as any)?.detail || (err.body as any)?.message || `Request failed: ${err.status}`)
+        : err instanceof Error ? err.message : "Failed to create rule";
+      setError(detail);
     } finally {
       setSubmitting(false);
     }
@@ -129,29 +123,12 @@ export default function CreateAlertDialog({ open, onClose, onCreated }: CreateAl
   const selectedMetric = METRIC_OPTIONS.find((m) => m.value === metric);
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-        >
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/60 "
-            onClick={handleClose}
-          />
-
-          {/* Dialog */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-            transition={{ duration: 0.2 }}
-            className="relative w-full max-w-md bg-[#0f0f1c] border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 overflow-hidden"
-          >
+    <Modal
+      open={open}
+      onClose={handleClose}
+      backdropClassName="z-50 bg-black/60"
+      className="relative w-full max-w-md bg-[#0f0f1c] border border-white/[0.08] rounded-xl shadow-2xl shadow-black/50 overflow-hidden"
+    >
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06]">
               <h2 className="text-sm font-semibold text-slate-200">Create Alert Rule</h2>
@@ -361,9 +338,6 @@ export default function CreateAlertDialog({ open, onClose, onCreated }: CreateAl
                 </button>
               </div>
             </form>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    </Modal>
   );
 }

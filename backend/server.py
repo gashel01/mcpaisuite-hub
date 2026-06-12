@@ -104,6 +104,10 @@ async def startup():
             neo4j_password=settings.get("memory_neo4j_password", ""),
             qdrant_url=settings.get("memory_qdrant_url", "http://localhost:6333"),
             qdrant_collection=settings.get("memory_qdrant_collection", "memorymcp_facts"),
+            enable_rerank=bool(settings.get("memory_enable_rerank", False)),
+            rerank_model=settings.get("memory_rerank_model", "") or None,
+            enable_query_expansion=bool(settings.get("memory_enable_query_expansion", False)),
+            query_expansion_threshold=float(settings.get("memory_query_expansion_threshold", 0.5)),
         )
 
     # 2. ragmcp — from env (qdrant + fastembed), configured via docker-compose
@@ -213,6 +217,7 @@ async def startup():
         api_key=api_key, base_url=base_url, enable_routing=True,
         max_turns=int(os.getenv("KERNELMCP_MAX_TURNS", str(settings.get("max_turns", 20)))),
         max_tokens_per_task=settings.get("max_tokens", 50000),
+        context_window_tokens=int(os.getenv("KERNELMCP_CONTEXT_WINDOW", str(settings.get("context_window_tokens", 40000)))),
         checkpoint_url=settings.get("kernel_checkpoint_url", "") or os.getenv("KERNELMCP_CHECKPOINT_URL", ""),
         namespace=DEFAULT_NAMESPACE,
         memory_pipeline=pipelines.get("memory"), planning_pipeline=pipelines.get("planning"),

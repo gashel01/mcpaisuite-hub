@@ -1,9 +1,10 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
-  Settings, Save, Loader2, Cpu, Brain, HardDrive, Shield, Database, Clock, Search,
+  Settings, Save, Cpu, Brain, HardDrive, Shield, Database, Clock, Search,
   Check, ChevronRight, ChevronDown, Plug, CircleCheck, CircleX, Server, Wifi, WifiOff, Wrench, RefreshCw,
   KeyRound, Eye, EyeOff, Copy, Trash2, Plus,
   Sparkles, Undo2, AlertTriangle, Zap, Cloud, Monitor, X, ArrowRight, ArrowLeft, Rocket, Link2Off, Menu,
@@ -23,14 +24,19 @@ import ToolsPanel from "./ToolsPanel";
 interface FullConfig {
   provider: string; model: string; api_key: string; base_url: string;
   max_turns: number; max_tokens: number; max_cost: number; execution_mode: string; routing_enabled: boolean;
+  context_window_tokens: number; kernel_checkpoint_url: string;
   graph_max_self_refines: number; graph_max_feedback_runs: number; graph_max_total_steps: number;
   num_ctx: number; keep_alive: string;
   workspace_root: string; tenant_isolation: boolean; max_file_size_mb: number; checkpoint_enabled: boolean;
   host_exec_enabled: boolean; auto_approve: boolean; sandbox_timeout: number; max_output_chars: number;
   memory_importance_threshold: number; memory_max_results: number; memory_default_tags: string;
+  memory_enable_rerank: boolean; memory_rerank_model: string;
+  memory_enable_query_expansion: boolean; memory_query_expansion_threshold: number;
   scheduler_tick_interval: number; scheduler_max_concurrent: number; scheduler_enabled: boolean;
   rag_chunk_size: number; rag_chunk_overlap: number; rag_top_k: number; rag_embedding_model: string;
   memory_backend: string; memory_semantic_backend: string; memory_redis_url: string; memory_decay_mode: string;
+  memory_hotcache_backend: string; memory_graph_backend: string;
+  memory_qdrant_url: string; memory_qdrant_collection: string;
   memory_neo4j_uri: string; memory_neo4j_user: string; memory_neo4j_password: string;
   rag_vectorstore: string; rag_vectorstore_url: string; rag_vectorstore_api_key: string;
   rag_graph_backend: string; rag_neo4j_uri: string; rag_neo4j_user: string; rag_neo4j_password: string;
@@ -41,15 +47,20 @@ interface FullConfig {
 const DEFAULTS: FullConfig = {
   provider: "ollama", model: "qwen3.5:9b", api_key: "", base_url: "",
   max_turns: 10, max_tokens: 50000, max_cost: 1.0, execution_mode: "hybrid", routing_enabled: true,
+  context_window_tokens: 40000, kernel_checkpoint_url: "",
   graph_max_self_refines: 1, graph_max_feedback_runs: 1, graph_max_total_steps: 30,
   num_ctx: 16384, keep_alive: "30m",
   workspace_root: "~/.kernelmcp/workspace", tenant_isolation: true,
   max_file_size_mb: 50, checkpoint_enabled: true,
   host_exec_enabled: true, auto_approve: false, sandbox_timeout: 30, max_output_chars: 5000,
   memory_importance_threshold: 0.5, memory_max_results: 10, memory_default_tags: "",
+  memory_enable_rerank: false, memory_rerank_model: "",
+  memory_enable_query_expansion: false, memory_query_expansion_threshold: 0.5,
   scheduler_tick_interval: 15, scheduler_max_concurrent: 5, scheduler_enabled: true,
   rag_chunk_size: 512, rag_chunk_overlap: 50, rag_top_k: 5, rag_embedding_model: "BAAI/bge-small-en-v1.5",
   memory_backend: "sqlite", memory_semantic_backend: "chroma", memory_redis_url: "", memory_decay_mode: "exponential",
+  memory_hotcache_backend: "", memory_graph_backend: "",
+  memory_qdrant_url: "http://host.docker.internal:6333", memory_qdrant_collection: "memorymcp_facts",
   memory_neo4j_uri: "", memory_neo4j_user: "neo4j", memory_neo4j_password: "",
   rag_vectorstore: "qdrant", rag_vectorstore_url: "", rag_vectorstore_api_key: "",
   rag_graph_backend: "networkx",
@@ -120,15 +131,15 @@ type TabId = typeof TABS[number]["id"];
 // Map fields to tabs for dirty tracking
 const TAB_FIELDS: Record<TabId, (keyof FullConfig)[]> = {
   llm: [],
-  engine: ["max_turns", "max_tokens", "max_cost", "execution_mode", "routing_enabled", "graph_max_self_refines", "graph_max_feedback_runs", "graph_max_total_steps"],
+  engine: ["max_turns", "max_tokens", "max_cost", "context_window_tokens", "kernel_checkpoint_url", "execution_mode", "routing_enabled", "graph_max_self_refines", "graph_max_feedback_runs", "graph_max_total_steps"],
   workspace: ["workspace_root", "tenant_isolation", "max_file_size_mb", "checkpoint_enabled"],
   sandbox: ["host_exec_enabled", "auto_approve", "sandbox_timeout", "max_output_chars"],
-  memory: ["memory_importance_threshold", "memory_max_results", "memory_default_tags"],
+  memory: ["memory_importance_threshold", "memory_max_results", "memory_default_tags", "memory_enable_rerank", "memory_rerank_model", "memory_enable_query_expansion", "memory_query_expansion_threshold"],
   scheduler: ["scheduler_tick_interval", "scheduler_max_concurrent", "scheduler_enabled"],
   rag: ["rag_chunk_size", "rag_chunk_overlap", "rag_top_k", "rag_embedding_model"],
   tools: [],
   env: [],
-  infra: ["memory_backend", "memory_semantic_backend", "memory_redis_url", "memory_decay_mode", "memory_neo4j_uri", "memory_neo4j_user", "memory_neo4j_password", "rag_vectorstore", "rag_vectorstore_url", "rag_vectorstore_api_key", "rag_graph_backend", "rag_neo4j_uri", "rag_neo4j_user", "rag_neo4j_password", "workspace_checkpoint_store", "workspace_audit_store", "sandbox_audit_store", "sandbox_vault", "scheduler_store"],
+  infra: ["memory_backend", "memory_semantic_backend", "memory_hotcache_backend", "memory_graph_backend", "memory_qdrant_url", "memory_qdrant_collection", "memory_redis_url", "memory_decay_mode", "memory_neo4j_uri", "memory_neo4j_user", "memory_neo4j_password", "rag_vectorstore", "rag_vectorstore_url", "rag_vectorstore_api_key", "rag_graph_backend", "rag_neo4j_uri", "rag_neo4j_user", "rag_neo4j_password", "workspace_checkpoint_store", "workspace_audit_store", "sandbox_audit_store", "sandbox_vault", "scheduler_store"],
   remote: [],
 };
 
@@ -145,7 +156,6 @@ const HEALTH_SERVICES = [
 
 // ── Components ─────────────────────────────────────────────────────────────
 
-const BASE_URL = getApiUrl();
 
 // Form primitives (TestBtn, Field, Toggle, NumberInput, TextInput, SelectInput, SectionHeader,
 // AdvancedDisclosure) live in ./_ui and are imported above.
@@ -280,10 +290,7 @@ function SetupWizard({ onComplete, onSkip }: { onComplete: (cfg: Partial<FullCon
       const body: Record<string, string> = { service: "llm", provider: wizCfg.provider || "ollama", model: wizCfg.model || "" };
       if (wizCfg.api_key) body.api_key = wizCfg.api_key;
       if (wizCfg.base_url) body.url = wizCfg.base_url;
-      const res = await fetch(`${BASE_URL}/test-connection`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-      });
-      const data = await res.json();
+      const data = await apiFetch<any>("/test-connection", { method: "POST", body });
       setLlmOk(data.ok);
     } catch { setLlmOk(false); }
     setTestingLlm(false);
@@ -348,7 +355,7 @@ function SetupWizard({ onComplete, onSkip }: { onComplete: (cfg: Partial<FullCon
             <div className="space-y-4 animate-slide-in">
               <div className="text-center py-4">
                 <div className={`inline-flex p-4 rounded-2xl mb-4 ${llmOk === true ? "bg-emerald-500/10" : llmOk === false ? "bg-red-500/10" : "bg-slate-800"}`}>
-                  {testingLlm ? <Loader2 className="h-8 w-8 text-violet-400 animate-spin" /> :
+                  {testingLlm ? <Spinner className="h-8 w-8 text-violet-400" /> :
                    llmOk === true ? <CircleCheck className="h-8 w-8 text-emerald-400" /> :
                    llmOk === false ? <CircleX className="h-8 w-8 text-red-400" /> :
                    <Brain className="h-8 w-8 text-slate-400" />}
@@ -457,7 +464,7 @@ function StickySaveBar({ dirtyCount, dirtyTabs, saving, onSave, onDiscard }: {
           disabled={saving}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 text-[10px] font-medium text-violet-300 transition-all"
         >
-          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+          {saving ? <Spinner className="h-3 w-3" /> : <Save className="h-3 w-3" />}
           Save
         </button>
       </div>
@@ -578,11 +585,7 @@ export default function SettingsPage() {
     try {
       const promises = HEALTH_SERVICES.map(async svc => {
         try {
-          const r = await fetch(`${BASE_URL}/test-connection`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ service: svc.id }),
-          });
-          const data = await r.json();
+          const data = await apiFetch<any>("/test-connection", { method: "POST", body: { service: svc.id } });
           results[svc.id] = data.ok ? "ok" : "error";
         } catch { results[svc.id] = "unknown"; }
       });
@@ -606,15 +609,12 @@ export default function SettingsPage() {
   const loadServers = async () => {
     setServersLoading(true);
     try {
-      const r = await fetch(`${BASE_URL}/servers`);
-      if (r.ok) {
-        const data = await r.json();
-        const list: ServerData[] = Object.entries(data.servers || {}).map(([name, info]: [string, unknown]) => {
-          const i = info as { connected: boolean; tools: number; tool_names?: string[] };
-          return { name, connected: i.connected, tools: i.tools, tool_list: i.tool_names };
-        });
-        setServers(list.sort((a, b) => a.name.localeCompare(b.name)));
-      }
+      const data = await apiFetch<any>("/servers");
+      const list: ServerData[] = Object.entries(data.servers || {}).map(([name, info]: [string, unknown]) => {
+        const i = info as { connected: boolean; tools: number; tool_names?: string[] };
+        return { name, connected: i.connected, tools: i.tools, tool_list: i.tool_names };
+      });
+      setServers(list.sort((a, b) => a.name.localeCompare(b.name)));
     } catch { /* ignore */ }
     setServersLoading(false);
   };
@@ -623,11 +623,7 @@ export default function SettingsPage() {
     setSavingConstitution(true);
     setConstitutionSaved(false);
     try {
-      const r = await fetch(`${BASE_URL}/constitution`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rules: constitution }),
-      });
-      const c = await r.json();
+      const c = await apiFetch<any>("/constitution", { method: "POST", body: { rules: constitution } });
       setConstitution(c.rules);
       setConstitutionSaved(true);
       setTimeout(() => setConstitutionSaved(false), 3000);
@@ -653,17 +649,14 @@ export default function SettingsPage() {
         body.url = cfg.rag_vectorstore_url;
         if (cfg.rag_vectorstore_api_key) body.api_key = cfg.rag_vectorstore_api_key;
       } else if (service === "pgvector" || service === "milvus") { body.url = cfg.rag_vectorstore_url; }
-      const res = await fetch(`${BASE_URL}/test-connection`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-      });
-      const data = await res.json();
+      const data = await apiFetch<any>("/test-connection", { method: "POST", body });
       setTestResult({ service, ok: data.ok, detail: data.detail });
     } catch (e) { setTestResult({ service, ok: false, detail: String(e) }); }
     setTesting(null);
   };
 
   useEffect(() => {
-    fetch(`${BASE_URL}/settings`).then(r => r.json()).then(data => {
+    apiFetch<any>("/settings").then(data => {
       const merged = { ...DEFAULTS, ...pickDefined(data) };
       setCfg(merged);
       setSavedCfg(merged);
@@ -671,7 +664,7 @@ export default function SettingsPage() {
       // Show wizard if config looks like defaults (first launch)
       if (!data.provider && !data.model && !data.has_api_key) setShowWizard(true);
     }).catch(() => {});
-    fetch(`${BASE_URL}/constitution`).then(r => r.json()).then(c => setConstitution(c.rules || "")).catch(() => {});
+    apiFetch<any>("/constitution").then(c => setConstitution(c.rules || "")).catch(() => {});
     loadServers();
     checkHealth();
     // Poll health every 30s
@@ -690,10 +683,7 @@ export default function SettingsPage() {
       // prevents stale cfg values here from clobbering the active connection.
       const payload: Record<string, unknown> = { ...cfg };
       delete payload.provider; delete payload.model; delete payload.api_key; delete payload.base_url;
-      const res = await fetch(`${BASE_URL}/settings`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      await apiFetch("/settings", { method: "POST", body: payload });
       setSavedCfg({ ...cfg });
       checkHealth();
     } catch (_e) { }
@@ -757,7 +747,7 @@ export default function SettingsPage() {
                 {servers.filter(s => s.connected).length}/{servers.length} servers connected &middot; {totalTools} tools available
               </span>
               <button onClick={loadServers} disabled={serversLoading} className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium text-slate-400 hover:text-slate-200 bg-white/[0.03] border border-white/[0.06] rounded-lg transition-all disabled:opacity-50">
-                <RefreshCw className={`h-3 w-3 ${serversLoading ? "animate-spin" : ""}`} /> Refresh
+                <Spinner icon={RefreshCw} spinning={serversLoading} className="h-3 w-3" /> Refresh
               </button>
             </div>
             <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
@@ -948,6 +938,12 @@ export default function SettingsPage() {
                   <Field label="Max Cost per Task ($)" hint="Task stops when cost exceeds this amount">
                     <NumberInput value={cfg.max_cost} onChange={v => update("max_cost", v)} min={0.01} max={100} step={0.1} />
                   </Field>
+                  <Field label="Context Window (tokens)" hint="Tokens sent to the LLM per turn — raise for repo-scale tasks (capped by Max Tokens)">
+                    <NumberInput value={cfg.context_window_tokens} onChange={v => update("context_window_tokens", v)} min={4000} max={500000} step={1000} />
+                  </Field>
+                  <Field label="Kernel Checkpoint URL" hint="postgres://… externalizes kernel state (cross-instance task resume); empty = local SQLite">
+                    <TextInput value={cfg.kernel_checkpoint_url} onChange={v => update("kernel_checkpoint_url", v)} placeholder="postgresql://user:pass@host:5432/db" />
+                  </Field>
                   <Toggle label="Smart Tool Routing" value={cfg.routing_enabled} onChange={v => update("routing_enabled", v)} />
                 </AdvancedDisclosure>
                 <AdvancedDisclosure label="Multi-agent graph limits" hint="how far a TaskForce graph can iterate">
@@ -1024,6 +1020,18 @@ export default function SettingsPage() {
                 <Field label="Default Tags" hint="Comma-separated tags added to all stored facts">
                   <TextInput value={cfg.memory_default_tags} onChange={v => update("memory_default_tags", v)} placeholder="project, notes" />
                 </Field>
+                <AdvancedDisclosure label="Reranking" hint="cross-encoder · higher recall, slower">
+                  <Toggle label="Enable Reranker" value={cfg.memory_enable_rerank} onChange={v => update("memory_enable_rerank", v)} />
+                  <Field label="Reranker Model" hint="Cross-encoder that re-scores retrieved memories for accuracy. Measured: recall@1 0.40→0.88. Cost ~+200ms/query, ~80MB model downloaded on first use. Empty = default (ms-marco-MiniLM-L-6-v2, English).">
+                    <TextInput value={cfg.memory_rerank_model} onChange={v => update("memory_rerank_model", v)} placeholder="Xenova/ms-marco-MiniLM-L-6-v2" />
+                  </Field>
+                </AdvancedDisclosure>
+                <AdvancedDisclosure label="Query expansion" hint="LLM paraphrase · recovers hard paraphrases">
+                  <Toggle label="Enable Query Expansion" value={cfg.memory_enable_query_expansion} onChange={v => update("memory_enable_query_expansion", v)} />
+                  <Field label="Expansion Threshold" hint="When a memory search scores below this, the query is rewritten into synonymous phrasings and re-searched — recovering facts worded differently than the question. Measured: retrieval recall@5 0.42→0.92 on zero-overlap paraphrases. Adaptive: costs one extra LLM call ONLY when the first pass is weak. Higher = expand more often (1.0 = always); lower = rarely. Default 0.5.">
+                    <NumberInput value={cfg.memory_query_expansion_threshold} onChange={v => update("memory_query_expansion_threshold", v)} step={0.05} min={0} max={1} />
+                  </Field>
+                </AdvancedDisclosure>
                 <TestBtn service="memory" testing={testing} result={testResult} onClick={() => testConnection("memory")} />
               </>
             )}
@@ -1099,9 +1107,24 @@ export default function SettingsPage() {
                     { value: "memory", label: "In-Memory (volatile)" },
                     { value: "chroma", label: "ChromaDB (persistent, local)" },
                     { value: "pgvector", label: "pgvector (PostgreSQL)" },
+                    { value: "qdrant", label: "Qdrant (vector DB)" },
                   ]} />
                 </Field>
-                {cfg.memory_backend === "redis" && (
+                {cfg.memory_semantic_backend === "qdrant" && (
+                  <>
+                    <Field label="Qdrant URL" hint="Server URL (inside Docker use host.docker.internal), or :memory: for in-process">
+                      <TextInput value={cfg.memory_qdrant_url} onChange={v => update("memory_qdrant_url", v)} placeholder="http://host.docker.internal:6333" />
+                    </Field>
+                    <Field label="Qdrant Collection"><TextInput value={cfg.memory_qdrant_collection} onChange={v => update("memory_qdrant_collection", v)} placeholder="memorymcp_facts" /></Field>
+                  </>
+                )}
+                <Field label="Hot Cache Backend" hint="Fast LRU cache of frequently-recalled facts (shared across instances if Redis)">
+                  <SelectInput value={cfg.memory_hotcache_backend === "redis" ? "redis" : "memory"} onChange={v => update("memory_hotcache_backend", v === "redis" ? "redis" : "")} options={[
+                    { value: "memory", label: "In-Memory (default)" },
+                    { value: "redis", label: "Redis (shared)" },
+                  ]} />
+                </Field>
+                {(cfg.memory_backend === "redis" || cfg.memory_hotcache_backend === "redis") && (
                   <>
                     <Field label="Redis URL" hint="Include password: redis://:password@host:6379/0">
                       <TextInput value={cfg.memory_redis_url} onChange={v => update("memory_redis_url", v)} placeholder="redis://:password@localhost:6379/0" />
@@ -1110,12 +1133,12 @@ export default function SettingsPage() {
                   </>
                 )}
                 <Field label="Fact Graph Backend" hint="Stores how facts relate to each other (entities & links) for graph-aware recall">
-                  <SelectInput value={cfg.memory_neo4j_uri ? "neo4j" : "memory"} onChange={v => { if (v === "neo4j") update("memory_neo4j_uri", cfg.memory_neo4j_uri || "bolt://localhost:7687"); else update("memory_neo4j_uri", ""); }} options={[
+                  <SelectInput value={cfg.memory_graph_backend === "neo4j" ? "neo4j" : "memory"} onChange={v => { if (v === "neo4j") { update("memory_graph_backend", "neo4j"); update("memory_neo4j_uri", cfg.memory_neo4j_uri || "bolt://localhost:7687"); } else { update("memory_graph_backend", ""); update("memory_neo4j_uri", ""); } }} options={[
                     { value: "memory", label: "In-Memory (dev)" },
                     { value: "neo4j", label: "Neo4j (production)" },
                   ]} />
                 </Field>
-                {cfg.memory_neo4j_uri && (
+                {cfg.memory_graph_backend === "neo4j" && (
                   <>
                     <Field label="Neo4j URI" hint="Connection address of your Neo4j instance"><TextInput value={cfg.memory_neo4j_uri} onChange={v => update("memory_neo4j_uri", v)} placeholder="bolt://localhost:7687" /></Field>
                     <Field label="Neo4j User"><TextInput value={cfg.memory_neo4j_user} onChange={v => update("memory_neo4j_user", v)} placeholder="neo4j" /></Field>
@@ -1252,7 +1275,7 @@ export default function SettingsPage() {
                         disabled={remoteTesting || !remoteUrl.trim()}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700/60 text-slate-300 hover:bg-slate-700 transition-all disabled:opacity-40 shrink-0"
                       >
-                        {remoteTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
+                        {remoteTesting ? <Spinner className="h-3.5 w-3.5" /> : <Wifi className="h-3.5 w-3.5" />}
                         Test
                       </button>
                     </div>

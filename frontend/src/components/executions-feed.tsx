@@ -1,14 +1,18 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
+import { useApi } from "@/hooks/useApi";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
-  RefreshCw, Search, CheckCircle2, XCircle, Loader2, PauseCircle,
+  RefreshCw, Search, CheckCircle2, XCircle, PauseCircle,
   X, Rocket, Bot, Zap, DollarSign, ArrowUpRight, Activity, Play, Link2, Clock, History,
 } from "lucide-react";
-import { useTenant, tenantHeaders } from "@/context/tenant";
+import { useTenant } from "@/context/tenant";
 import { renderMarkdown } from "@/components/markdown";
+import { Spinner } from "@/components/ui/Spinner";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import type { LucideIcon } from "lucide-react";
 
 interface RunSummary {
   id: string;
@@ -28,9 +32,17 @@ interface RunSummary {
 const STATUS_ICON: Record<string, React.ReactNode> = {
   completed: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />,
   failed: <XCircle className="h-3.5 w-3.5 text-red-400" />,
-  running: <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />,
+  running: <Spinner className="h-3.5 w-3.5 text-violet-400" />,
   waiting: <PauseCircle className="h-3.5 w-3.5 text-amber-400" />,
   cancelled: <XCircle className="h-3.5 w-3.5 text-slate-500" />,
+};
+
+const SOURCE_BADGE: Record<string, { tone: BadgeTone; icon: LucideIcon; label: string }> = {
+  api: { tone: "sky", icon: Rocket, label: "API" },
+  test: { tone: "amber", icon: Play, label: "Test" },
+  webhook: { tone: "sky", icon: Link2, label: "Webhook" },
+  schedule: { tone: "violet", icon: Clock, label: "Schedule" },
+  builder: { tone: "violet", icon: Bot, label: "Builder" },
 };
 
 function fmtDate(ms?: number) {
@@ -45,46 +57,43 @@ function fmtDate(ms?: number) {
  * Executions page so the unified Fleet hub can show it as its "All activity" view.
  * `initialQuery` pre-filters by text (e.g. a deployment name).
  */
-export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: string }) {
-  const BASE = getApiUrl();
-  const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
+interface RunsResponse { runs: RunSummary[]; total: number; }
 
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [q, setQ] = useState(initialQuery);
+export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: string }) {
+  const { tenant } = useTenant();
+
+  const [q, setQ] = useState(initialQuery);            // text in the search box
+  const [appliedQ, setAppliedQ] = useState(initialQuery); // committed filter (Enter / Refresh / prop)
   const [status, setStatus] = useState("");
   const [source, setSource] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<any | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const fetchRuns = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data, loading, refresh } = useApi<RunsResponse>(
+    () => {
       const params = new URLSearchParams();
       if (status) params.set("status", status);
       if (source) params.set("source", source);
-      if (q.trim()) params.set("q", q.trim());
-      const r = await fetch(`${BASE}/runs?${params.toString()}`, { headers: th });
-      const d = await r.json();
-      setRuns(d.runs || []);
-      setTotal(d.total || 0);
-    } catch { setRuns([]); }
-    finally { setLoading(false); }
-  }, [BASE, th, status, source, q]);
+      if (appliedQ.trim()) params.set("q", appliedQ.trim());
+      return apiFetch<RunsResponse>(`/runs?${params.toString()}`, { tenant });
+    },
+    { deps: [tenant, status, source, appliedQ], initialData: { runs: [], total: 0 } }
+  );
+  const runs = data?.runs ?? [];
+  const total = data?.total ?? 0;
 
-  useEffect(() => { fetchRuns(); /* eslint-disable-next-line */ }, [status, source]);
-  useEffect(() => { setQ(initialQuery); }, [initialQuery]);
-  useEffect(() => { fetchRuns(); /* eslint-disable-next-line */ }, [initialQuery]);
+  // External prop (e.g. a deployment name) commits immediately.
+  useEffect(() => { setQ(initialQuery); setAppliedQ(initialQuery); }, [initialQuery]);
+
+  const applyAndRefresh = useCallback(() => { setAppliedQ(q); refresh(); }, [q, refresh]);
 
   const openDetail = useCallback(async (id: string) => {
     setSelectedId(id); setDetail(null); setDetailLoading(true);
-    try { const r = await fetch(`${BASE}/runs/${id}`, { headers: th }); setDetail(await r.json()); }
+    try { setDetail(await apiFetch(`/runs/${id}`, { tenant })); }
     catch { setDetail({ error: "Failed to load" }); }
     finally { setDetailLoading(false); }
-  }, [BASE, th]);
+  }, [tenant]);
 
   const stats = useMemo(() => {
     const completed = runs.filter(r => r.status === "completed").length;
@@ -103,8 +112,8 @@ export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: s
         <Chip icon={<XCircle className="h-3 w-3 text-red-400" />} label="Failed" value={String(stats.failed)} />
         <Chip icon={<Zap className="h-3 w-3 text-amber-400" />} label="Tokens" value={stats.tokens.toLocaleString()} />
         <Chip icon={<DollarSign className="h-3 w-3 text-emerald-400" />} label="Cost" value={`$${stats.cost.toFixed(3)}`} />
-        <button onClick={fetchRuns} className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white/[0.03] hover:bg-white/[0.06] text-slate-300 border border-white/[0.06] transition-all">
-          <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} /> Refresh
+        <button onClick={applyAndRefresh} className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white/[0.03] hover:bg-white/[0.06] text-slate-300 border border-white/[0.06] transition-all">
+          <Spinner icon={RefreshCw} spinning={loading} className="h-3 w-3" /> Refresh
         </button>
       </div>
 
@@ -112,7 +121,7 @@ export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: s
       <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-white/[0.04] shrink-0">
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-600" />
-          <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && fetchRuns()} placeholder="Search workflow / output…" className="w-full !pl-8 !py-1.5 !text-[12px]" />
+          <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && setAppliedQ(q)} placeholder="Search workflow / output…" className="w-full !pl-8 !py-1.5 !text-[12px]" />
         </div>
         <select value={source} onChange={e => setSource(e.target.value)} className="!py-1.5 !text-[12px] !px-2.5">
           <option value="">All sources</option>
@@ -134,7 +143,7 @@ export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: s
       {/* Table */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         {loading && runs.length === 0 ? (
-          <div className="flex items-center justify-center h-40 text-slate-600 text-xs gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+          <div className="flex items-center justify-center h-40 text-slate-600 text-xs gap-2"><Spinner className="h-4 w-4" /> Loading…</div>
         ) : runs.length === 0 ? (
           <div className="text-center py-16">
             <History className="h-10 w-10 text-slate-800 mx-auto mb-3" />
@@ -163,17 +172,7 @@ export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: s
                     {r.answerPreview && <div className="text-[10px] text-slate-600 truncate max-w-[260px]">{r.answerPreview}</div>}
                   </td>
                   <td className="px-2 py-2.5">
-                    {r.source === "api" ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-sky-300 bg-sky-500/10 border border-sky-500/15 px-1.5 py-0.5 rounded"><Rocket className="h-2.5 w-2.5" /> API</span>
-                    ) : r.source === "test" ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/15 px-1.5 py-0.5 rounded"><Play className="h-2.5 w-2.5" /> Test</span>
-                    ) : r.source === "webhook" ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-sky-300 bg-sky-500/10 border border-sky-500/15 px-1.5 py-0.5 rounded"><Link2 className="h-2.5 w-2.5" /> Webhook</span>
-                    ) : r.source === "schedule" ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-violet-300 bg-violet-500/10 border border-violet-500/15 px-1.5 py-0.5 rounded"><Clock className="h-2.5 w-2.5" /> Schedule</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-violet-300 bg-violet-500/10 border border-violet-500/15 px-1.5 py-0.5 rounded"><Bot className="h-2.5 w-2.5" /> Builder</span>
-                    )}
+                    {(() => { const b = SOURCE_BADGE[r.source] || SOURCE_BADGE.builder; return <Badge tone={b.tone} icon={b.icon}>{b.label}</Badge>; })()}
                   </td>
                   <td className="px-2 py-2.5 text-right text-slate-400 tabular-nums">{r.metrics?.duration ? `${(r.metrics.duration / 1000).toFixed(1)}s` : "—"}</td>
                   <td className="px-2 py-2.5 text-right text-slate-400 tabular-nums">{r.metrics?.tokens?.toLocaleString() || "—"}</td>
@@ -200,7 +199,7 @@ export default function ExecutionsFeed({ initialQuery = "" }: { initialQuery?: s
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               {detailLoading ? (
-                <div className="flex items-center gap-2 text-slate-600 text-xs"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+                <div className="flex items-center gap-2 text-slate-600 text-xs"><Spinner className="h-4 w-4" /> Loading…</div>
               ) : !detail || detail.error ? (
                 <p className="text-xs text-red-400">Failed to load run.</p>
               ) : (

@@ -9,8 +9,10 @@ import {
 import Link from "next/link";
 import CopyButton from "@/components/copy-button";
 import { renderMarkdown } from "@/components/markdown";
-import { BASE_URL, AGENT_META } from "./constants";
-import type { TeamAgent, LiveAgentEvent, AgentSession } from "@/stores/agent-sessions";
+import { AGENT_META } from "./constants";
+import { apiFetch } from "@/lib/api";
+import { Modal } from "@/components/ui/Modal";
+import { useAgentSessionStore, type TeamAgent, type LiveAgentEvent, type AgentSession } from "@/stores/agent-sessions";
 
 // Lazy import to avoid circular deps
 let HumanGateActions: any = null;
@@ -52,8 +54,7 @@ export default function OutputPanel({
     setResolvedTaskId(null);
     if (!session.runId) return;
     let cancelled = false;
-    fetch(`${BASE_URL}/runs/${session.runId}`, { headers: th })
-      .then(r => (r.ok ? r.json() : null))
+    apiFetch<any>(`/runs/${session.runId}`, { headers: th })
       .then(d => { if (!cancelled) setResolvedTaskId(d?.taskId || null); })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -117,19 +118,8 @@ export default function OutputPanel({
             </div>
           )}
 
-          {/* Live token stream (typewriter) — assistant text as it's generated */}
-          {isRunning && session.streamingText && (
-            <div className="shrink-0 border-b border-white/[0.04] max-h-[45%] overflow-y-auto px-4 py-3 animate-fade-in">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <Loader2 className="h-3 w-3 text-violet-400 animate-spin" />
-                <span className="text-[10px] font-medium text-violet-300">Streaming&hellip;</span>
-              </div>
-              <p className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
-                {session.streamingText}
-                <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-violet-400 align-middle animate-pulse" />
-              </p>
-            </div>
-          )}
+          {/* Live token stream (typewriter) — isolated leaf so only it re-renders per token */}
+          <StreamingText sessionId={session.id} isRunning={isRunning} />
 
           {/* Output section (top) */}
           {isDone && session.answer && (
@@ -181,6 +171,25 @@ export default function OutputPanel({
 
 // ── Output Result sub-component ──────────────────────────────────────────
 
+// Live typewriter — the ONLY component that subscribes to streamingText, so the per-token
+// updates (hundreds/sec) re-render just this leaf, not OutputPanel or the agents page.
+function StreamingText({ sessionId, isRunning }: { sessionId: string; isRunning: boolean }) {
+  const text = useAgentSessionStore(s => s.streamingText[sessionId] ?? "");
+  if (!isRunning || !text) return null;
+  return (
+    <div className="shrink-0 border-b border-white/[0.04] max-h-[45%] overflow-y-auto px-4 py-3 animate-fade-in">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Loader2 className="h-3 w-3 text-violet-400 animate-spin" />
+        <span className="text-[10px] font-medium text-violet-300">Streaming&hellip;</span>
+      </div>
+      <p className="text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">
+        {text}
+        <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-violet-400 align-middle animate-pulse" />
+      </p>
+    </div>
+  );
+}
+
 function OutputResult({ session, store, th }: { session: AgentSession; store: any; th: Record<string, string> }) {
   const [view, setView] = useState<"md" | "raw">("md");
   const [expanded, setExpanded] = useState(false);
@@ -208,9 +217,12 @@ function OutputResult({ session, store, th }: { session: AgentSession; store: an
   return (
     <div className="p-4 space-y-3">
       {/* Full-screen report */}
-      {expanded && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setExpanded(false)}>
-          <div className="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl animate-scale-in" onClick={e => e.stopPropagation()}>
+      <Modal
+        open={expanded}
+        onClose={() => setExpanded(false)}
+        backdropClassName="z-50 bg-black/70 backdrop-blur-sm"
+        className="w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl"
+      >
             <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.06]">
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />
               <span className="text-sm font-semibold text-slate-200">Report</span>
@@ -222,9 +234,7 @@ function OutputResult({ session, store, th }: { session: AgentSession; store: an
               </div>
             </div>
             <div className="flex-1 min-h-0"><Body max="max-h-[calc(85vh-3.5rem)]" /></div>
-          </div>
-        </div>
-      )}
+      </Modal>
       {session.status === "failed" ? (
         <div className="rounded-xl border border-red-500/20 bg-red-500/[0.03] px-4 py-3">
           <div className="flex items-center gap-2 mb-2">
@@ -253,7 +263,7 @@ function OutputResult({ session, store, th }: { session: AgentSession; store: an
               <span className="text-[10px] text-slate-500">Rate:</span>
               <button onClick={() => {
                 store.setFeedback(session.id, "good");
-                fetch(`${BASE_URL}/runs/${session.runId || session.taskId || session.id}/feedback`, {
+                apiFetch(`/runs/${session.runId || session.taskId || session.id}/feedback`, {
                   method: "POST", headers: { "Content-Type": "application/json", ...th },
                   body: JSON.stringify({ rating: "good", goal: session.config.goal, output: session.answer?.slice(0, 500) }),
                 }).catch(() => {});
@@ -262,7 +272,7 @@ function OutputResult({ session, store, th }: { session: AgentSession; store: an
               </button>
               <button onClick={() => {
                 store.setFeedback(session.id, "bad");
-                fetch(`${BASE_URL}/runs/${session.runId || session.taskId || session.id}/feedback`, {
+                apiFetch(`/runs/${session.runId || session.taskId || session.id}/feedback`, {
                   method: "POST", headers: { "Content-Type": "application/json", ...th },
                   body: JSON.stringify({ rating: "bad", goal: session.config.goal, output: session.answer?.slice(0, 500) }),
                 }).catch(() => {});
@@ -274,7 +284,7 @@ function OutputResult({ session, store, th }: { session: AgentSession; store: an
                   onBlur={e => {
                     if (session.feedback) {
                       store.setFeedback(session.id, session.feedback.rating!, e.target.value);
-                      fetch(`${BASE_URL}/runs/${session.runId || session.taskId || session.id}/feedback`, {
+                      apiFetch(`/runs/${session.runId || session.taskId || session.id}/feedback`, {
                         method: "POST", headers: { "Content-Type": "application/json", ...th },
                         body: JSON.stringify({ rating: session.feedback.rating, comment: e.target.value, goal: session.config.goal }),
                       }).catch(() => {});

@@ -3,10 +3,11 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Cpu, Trash2, FileDown, ShieldAlert,
-  FileText, Loader2, ArrowDown, Bot, PanelLeft, Search, X, Menu,
+  FileText, ArrowDown, Bot, PanelLeft, Search, X, Menu,
 } from "lucide-react";
 import { useTenant } from "@/context/tenant";
-import { BASE_URL } from "@/types";
+import { apiFetch, apiUrl, ApiError } from "@/lib/api";
+import { Spinner } from "@/components/ui/Spinner";
 import type { ChatMsg, Turn, TaskInfo, ConvInfo, ScheduledJob } from "@/types";
 
 import ChatMessage from "@/components/chat-message";
@@ -110,8 +111,7 @@ export default function ChatPage() {
 
   // Refresh sidebar data (conversations, tasks, schedules)
   const refreshSidebar = () => {
-    const h = { headers: th };
-    fetch(`${BASE_URL}/conversations`, h).then(r => r.json()).then(d => setConversations(d.conversations || [])).catch(() => {});
+    apiFetch<any>("/conversations", { headers: th }).then(d => setConversations(d.conversations || [])).catch(() => {});
   };
 
   useEffect(() => {
@@ -121,16 +121,16 @@ export default function ChatPage() {
       refreshSidebar();
     }, loading ? 15000 : 60000);
     return () => clearInterval(interval);
-  }, [loading]);
+  }, [loading, tenant]);
 
   useEffect(() => {
-    fetch(`${BASE_URL}/egress`, { headers: th }).then(r => r.json()).then(d => { setNetworkEnabled(d.enabled || false); setAllowedDomains(d.allowed_domains || []); }).catch(() => {});
-    fetch(`${BASE_URL}/mode`).then(r => r.json()).then(d => { if (d.mode) setExecMode(d.mode); }).catch(() => {});
-  }, []);
+    apiFetch<any>("/egress", { headers: th }).then(d => { setNetworkEnabled(d.enabled || false); setAllowedDomains(d.allowed_domains || []); }).catch(() => {});
+    apiFetch<any>("/mode").then(d => { if (d.mode) setExecMode(d.mode); }).catch(() => {});
+  }, [tenant]);
 
   useEffect(() => {
-    fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => { setHostApproved(d.approved || []); setHostPending(d.pending || []); }).catch(() => {});
-  }, []);
+    apiFetch<any>("/host", { headers: th }).then(d => { setHostApproved(d.approved || []); setHostPending(d.pending || []); }).catch(() => {});
+  }, [tenant]);
 
   // ── SSE stream management ────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ export default function ChatPage() {
     setLiveTurns([]); setStreamingText("");
     const turns: Turn[] = [];
     let taskDone = false;
-    const es = new EventSource(`${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`);
+    const es = new EventSource(apiUrl(`/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`));
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {
@@ -201,7 +201,7 @@ export default function ChatPage() {
       closeStream();
       if (taskDone) return;
       // Fallback: fetch final state
-      fetch(`${BASE_URL}/chat/${convId}/task/${tid}`, { headers: th }).then(r => r.json()).then(task => {
+      apiFetch<any>(`/chat/${convId}/task/${tid}`, { headers: th }).then(task => {
         setLoading(false);
         if (["completed", "failed", "cancelled"].includes(task.status)) {
           setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
@@ -219,7 +219,7 @@ export default function ChatPage() {
       if (urlConv && urlConv !== convId) setConvId(urlConv);
     }
     setLoadingConv(true);
-    fetch(`${BASE_URL}/chat/${encodeURIComponent(convId)}`, { headers: th }).then(r => r.json()).then(data => {
+    apiFetch<any>(`/chat/${encodeURIComponent(convId)}`, { headers: th }).then(data => {
       const serverMsgs: ChatMsg[] = (data.messages || []).map((m: any) => ({
         role: m.role as "user" | "assistant", content: m.content,
         turns: m.turns, tokens: m.tokens, cost: m.cost, taskId: m.task_id,
@@ -251,9 +251,7 @@ export default function ChatPage() {
   useEffect(() => {
     const syncFromServer = async () => {
       try {
-        const r = await fetch(`${BASE_URL}/chat/${encodeURIComponent(convId)}`, { headers: th });
-        if (!r.ok) return;
-        const data = await r.json();
+        const data = await apiFetch<any>(`/chat/${encodeURIComponent(convId)}`, { headers: th });
         const serverMsgs: any[] = data.messages || [];
         if (serverMsgs.length > messages.length) {
           setMessages(serverMsgs.map(m => ({
@@ -276,26 +274,25 @@ export default function ChatPage() {
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
-  const toggleNetwork = async () => { const next = !networkEnabled; await fetch(`${BASE_URL}/egress/toggle?enabled=${next}`, { method: "POST", headers: th }); setNetworkEnabled(next); };
-  const addDomain = async () => { if (!newDomain.trim()) return; await fetch(`${BASE_URL}/egress/allow?domain=${encodeURIComponent(newDomain.trim())}`, { method: "POST", headers: th }); setAllowedDomains(prev => [...prev, newDomain.trim()]); setNewDomain(""); };
-  const removeDomain = async (d: string) => { await fetch(`${BASE_URL}/egress/allow?domain=${encodeURIComponent(d)}`, { method: "DELETE", headers: th }); setAllowedDomains(prev => prev.filter(x => x !== d)); };
+  const toggleNetwork = async () => { const next = !networkEnabled; await apiFetch(`/egress/toggle?enabled=${next}`, { method: "POST", headers: th }); setNetworkEnabled(next); };
+  const addDomain = async () => { if (!newDomain.trim()) return; await apiFetch(`/egress/allow?domain=${encodeURIComponent(newDomain.trim())}`, { method: "POST", headers: th }); setAllowedDomains(prev => [...prev, newDomain.trim()]); setNewDomain(""); };
+  const removeDomain = async (d: string) => { await apiFetch(`/egress/allow?domain=${encodeURIComponent(d)}`, { method: "DELETE", headers: th }); setAllowedDomains(prev => prev.filter(x => x !== d)); };
 
-  const approveHost = async (p: string, guardNs?: string) => { await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(p)}${guardNs ? `&guard_ns=${encodeURIComponent(guardNs)}` : ""}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); setHostApproved(prev => [...prev, p]); };
-  const denyHost = async (p: string) => { await fetch(`${BASE_URL}/host/deny?pattern=${encodeURIComponent(p)}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); };
-  const addHost = async () => { if (!newHostPattern.trim()) return; await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(newHostPattern.trim())}`, { method: "POST", headers: th }); setHostApproved(prev => [...prev, newHostPattern.trim()]); setNewHostPattern(""); };
-  const revokeHost = async (p: string) => { await fetch(`${BASE_URL}/host/approve?pattern=${encodeURIComponent(p)}`, { method: "DELETE", headers: th }); setHostApproved(prev => prev.filter(x => x !== p)); };
+  const approveHost = async (p: string, guardNs?: string) => { await apiFetch(`/host/approve?pattern=${encodeURIComponent(p)}${guardNs ? `&guard_ns=${encodeURIComponent(guardNs)}` : ""}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); setHostApproved(prev => [...prev, p]); };
+  const denyHost = async (p: string) => { await apiFetch(`/host/deny?pattern=${encodeURIComponent(p)}`, { method: "POST", headers: th }); setHostPending(prev => prev.filter(x => x.pattern !== p)); };
+  const addHost = async () => { if (!newHostPattern.trim()) return; await apiFetch(`/host/approve?pattern=${encodeURIComponent(newHostPattern.trim())}`, { method: "POST", headers: th }); setHostApproved(prev => [...prev, newHostPattern.trim()]); setNewHostPattern(""); };
+  const revokeHost = async (p: string) => { await apiFetch(`/host/approve?pattern=${encodeURIComponent(p)}`, { method: "DELETE", headers: th }); setHostApproved(prev => prev.filter(x => x !== p)); };
 
   const uploadAndAsk = async (file: File) => {
     setUploading(file.name);
     try {
       const form = new FormData(); form.append("file", file);
-      const res = await fetch(`${BASE_URL}/rag/upload`, { method: "POST", body: form, headers: th });
-      if (!res.ok) throw new Error(await res.text());
+      await apiFetch("/rag/upload", { method: "POST", headers: th, body: form });
       setUploading(null);
       setInput(`I just uploaded "${file.name}" to the knowledge base. Please search for its content and give me a summary.`);
     } catch (err) {
       setUploading(null);
-      const errStr = String(err);
+      const errStr = err instanceof ApiError ? String((err.body as any)?.detail ?? (err.body as any) ?? err.message) : String(err);
       let userMsg = `Failed to upload ${file.name}.`;
       if (errStr.includes("dimension error") || errStr.includes("expected dim")) userMsg += "\n\n**Vector dimension mismatch** — go to Settings > Knowledge / RAG to check your embedding model.";
       else userMsg += `\n\n\`${errStr.length > 200 ? errStr.slice(0, 200) + "..." : errStr}\``;
@@ -305,10 +302,10 @@ export default function ChatPage() {
 
   const handleFileDrop = (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); const files = Array.from(e.dataTransfer.files); if (files.length > 0) uploadAndAsk(files[0]); };
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => { const files = Array.from(e.target.files || []); if (files.length > 0) uploadAndAsk(files[0]); };
-  const clearChat = async () => { await fetch(`${BASE_URL}/chat/${convId}`, { method: "DELETE", headers: th }); setMessages([]); setLiveTurns([]); setStreamingText(""); };
+  const clearChat = async () => { await apiFetch(`/chat/${convId}`, { method: "DELETE", headers: th }); setMessages([]); setLiveTurns([]); setStreamingText(""); };
 
   const stopTask = async () => {
-    if (taskId) try { await fetch(`${BASE_URL}/tasks/${taskId}`, { method: "DELETE", headers: th }); } catch (_e) {}
+    if (taskId) try { await apiFetch(`/tasks/${taskId}`, { method: "DELETE", headers: th }); } catch (_e) {}
     closeStream(); setLoading(false);
     // Keep the turns that were already executed — don't clear them
     setMessages(prev => [...prev, {
@@ -321,6 +318,13 @@ export default function ChatPage() {
   };
 
   const switchConv = (id: string) => {
+    // Re-clicking the already-active conversation is a no-op for convId, so the load effect
+    // (deps [convId]) wouldn't re-run — that would leave loadingConv=true + messages=[] stuck
+    // on the skeleton forever. Bail early (just close the mobile drawer).
+    if (id === convId) {
+      if (typeof window !== "undefined" && window.innerWidth < 768) setShowHistory(false);
+      return;
+    }
     // Close any running stream and reset loading state
     closeStream();
     setLoading(false);
@@ -340,12 +344,26 @@ export default function ChatPage() {
     if (typeof window !== "undefined" && window.innerWidth < 768) setShowHistory(false);
   };
   const newChat = () => switchConv("chat-" + Date.now().toString(36));
+
+  // On tenant switch, reload the conversation list and reset the open conversation ONLY if it
+  // doesn't exist under the new tenant (otherwise keep it open). Skip the first run (mount).
+  const tenantSwitchRef = useRef(true);
+  useEffect(() => {
+    if (tenantSwitchRef.current) { tenantSwitchRef.current = false; return; }
+    apiFetch<any>("/conversations", { headers: th })
+      .then(d => {
+        const convs = d.conversations || [];
+        setConversations(convs);
+        if (!convs.some((c: any) => c.id === convId)) newChat();
+      })
+      .catch(() => {});
+  }, [tenant]); // eslint-disable-line react-hooks/exhaustive-deps
   const deleteConv = async (id: string) => {
-    try { await fetch(`${BASE_URL}/chat/${encodeURIComponent(id)}`, { method: "DELETE", headers: th }); setConversations(prev => prev.filter(c => c.id !== id)); if (id === convId) newChat(); } catch (_e) {}
+    try { await apiFetch(`/chat/${encodeURIComponent(id)}`, { method: "DELETE", headers: th }); setConversations(prev => prev.filter(c => c.id !== id)); if (id === convId) newChat(); } catch (_e) {}
   };
 
   const selectTask = async (id: string) => {
-    try { const r = await fetch(`${BASE_URL}/tasks/${encodeURIComponent(id)}`, { headers: th }); if (r.ok) setSelectedTask(await r.json()); } catch (_e) {}
+    try { setSelectedTask(await apiFetch<any>(`/tasks/${encodeURIComponent(id)}`, { headers: th })); } catch (_e) {}
   };
 
   // ── Send ─────────────────────────────────────────────────────────────────
@@ -358,12 +376,10 @@ export default function ChatPage() {
     setMessages(prev => [...prev, { role: "user", content: msg, timestamp: Date.now() }]);
 
     try {
-      const res = await fetch(`${BASE_URL}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...th },
-        body: JSON.stringify({ message: msg, conversation_id: convId, enable_network: networkEnabled, allowed_domains: allowedDomains, execution_mode: execMode }),
+      const data = await apiFetch<any>("/chat", {
+        method: "POST", headers: th,
+        body: { message: msg, conversation_id: convId, enable_network: networkEnabled, allowed_domains: allowedDomains, execution_mode: execMode },
       });
-      const data = await res.json();
       const tid = data.task_id;
       setTaskId(tid);
       if (typeof window !== "undefined") localStorage.setItem("kernelmcp_last_conv", convId);
@@ -377,10 +393,10 @@ export default function ChatPage() {
 
       // Poll host access requests every 5s while running (agent may block on request_host_access)
       const hostPoll = setInterval(() => {
-        fetch(`${BASE_URL}/host`, { headers: th }).then(r => r.json()).then(d => setHostPending(d.pending || [])).catch(() => {});
+        apiFetch<any>("/host", { headers: th }).then(d => setHostPending(d.pending || [])).catch(() => {});
       }, 5000);
 
-      const es = new EventSource(`${BASE_URL}/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`);
+      const es = new EventSource(apiUrl(`/chat/${encodeURIComponent(convId)}/stream/${encodeURIComponent(tid)}`));
       eventSourceRef.current = es;
 
       es.onmessage = (event) => {
@@ -438,7 +454,7 @@ export default function ChatPage() {
         clearInterval(hostPoll);
         if (taskDone) return;
         // Fallback: SSE failed, fetch final state once
-        fetch(`${BASE_URL}/chat/${convId}/task/${tid}`, { headers: th }).then(r => r.json()).then(task => {
+        apiFetch<any>(`/chat/${convId}/task/${tid}`, { headers: th }).then(task => {
           setLoading(false);
           if (["completed", "failed", "cancelled"].includes(task.status)) {
             setMessages(prev => [...prev, { role: "assistant", content: task.answer || `Task ${task.status}.`, turns: task.turns, tokens: task.total_tokens, cost: task.total_cost, taskId: tid }]);
@@ -624,7 +640,7 @@ export default function ChatPage() {
                 </div>
                 <div className="bg-slate-800/40 border border-violet-800/20 rounded-2xl px-4 py-3 w-full md:max-w-[85%] space-y-2">
                   <div className="flex items-center gap-2 text-xs text-violet-400">
-                    <Loader2 className="h-3 w-3 animate-spin" /> <span className="animate-thinking">Working...</span>
+                    <Spinner className="h-3 w-3" /> <span className="animate-thinking">Working...</span>
                     {liveTurns.length > 0 && <span className="text-slate-600">{liveTurns.length} steps</span>}
                   </div>
                   {liveTurns.length > 0 && <div className="space-y-2">{liveTurns.map((t, j) => <TurnItem key={j} turn={t} />)}</div>}
@@ -669,7 +685,7 @@ export default function ChatPage() {
                       onChange={e => setElicitResponse(e.target.value)}
                       onKeyDown={e => {
                         if (e.key === "Enter" && elicitResponse.trim()) {
-                          fetch(`${BASE_URL}/chat/elicit/${elicitation.taskId}`, {
+                          apiFetch(`/chat/elicit/${elicitation.taskId}`, {
                             method: "POST", headers: { "Content-Type": "application/json", ...th },
                             body: JSON.stringify({ response: elicitResponse }),
                           });
@@ -683,7 +699,7 @@ export default function ChatPage() {
                     <button
                       onClick={() => {
                         if (elicitResponse.trim()) {
-                          fetch(`${BASE_URL}/chat/elicit/${elicitation.taskId}`, {
+                          apiFetch(`/chat/elicit/${elicitation.taskId}`, {
                             method: "POST", headers: { "Content-Type": "application/json", ...th },
                             body: JSON.stringify({ response: elicitResponse }),
                           });
@@ -730,7 +746,7 @@ export default function ChatPage() {
         {/* Upload indicator */}
         {uploading && (
           <div className="flex items-center gap-2 px-3 py-2 bg-violet-950/30 border border-violet-800/30 rounded-lg mx-4 mb-2 shrink-0">
-            <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />
+            <Spinner className="h-3.5 w-3.5 text-violet-400" />
             <span className="text-xs text-violet-300">Uploading {uploading}...</span>
           </div>
         )}

@@ -1,9 +1,11 @@
 "use client";
 
 import {
-  Search, Filter, Sparkles, Upload, RefreshCw, Loader2,
+  Search, Filter, Sparkles, Upload,
   Brain, FileText, Network, Target, X, PanelRightOpen, Activity,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/Spinner";
+import { RefreshButton } from "@/components/ui/RefreshButton";
 import type { SearchMode, GraphMode, MemoryStats } from "../types";
 import type { GraphStatus } from "../hooks";
 import { KnowledgeScoreBar } from "./KnowledgeScoreBar";
@@ -87,7 +89,7 @@ export function TopLeftHUD(props: TopLeftHUDProps) {
           ))}
         </div>
         <button onClick={props.onSearch} disabled={props.searching || !props.query.trim()} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-20 text-white rounded-xl p-1.5 transition-all active:scale-90 shrink-0 touch-target">
-          {props.searching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+          {props.searching ? <Spinner className="h-3 w-3" /> : <Search className="h-3 w-3" />}
         </button>
       </div>
 
@@ -162,7 +164,7 @@ function GraphControlButtons(props: GraphControlsProps) {
       <button onClick={props.onExtractGraph} disabled={props.graphExtracting} className={`relative flex items-center gap-1 px-2 py-1.5 bg-black/50 backdrop-blur-sm border rounded-xl text-[9px] font-medium transition-all disabled:opacity-50 active:scale-95 touch-target ${
         props.graphStatus?.stale ? "border-amber-500/40 text-amber-300 hover:bg-amber-500/10" : "border-violet-500/20 text-violet-300 hover:bg-violet-500/10"
       }`}>
-        {props.graphExtracting ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Sparkles className="h-2.5 w-2.5" />}
+        {props.graphExtracting ? <Spinner className="h-2.5 w-2.5" /> : <Sparkles className="h-2.5 w-2.5" />}
         <span className="hidden sm:inline">{props.extractProgress ? `${props.extractProgress.chunk}/${props.extractProgress.total}` : props.graphStatus?.stale ? "Update" : "Build"}</span>
         {props.graphStatus?.stale && !props.graphExtracting && (
           <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
@@ -171,9 +173,7 @@ function GraphControlButtons(props: GraphControlsProps) {
       <button onClick={props.onUploadClick} className="p-1.5 bg-black/50 backdrop-blur-sm border border-white/[0.08] rounded-xl text-slate-500 hover:text-violet-300 transition-all active:scale-95 touch-target">
         <Upload className="h-3 w-3" />
       </button>
-      <button onClick={props.onRefresh} className="p-1.5 bg-black/50 backdrop-blur-sm border border-white/[0.08] rounded-xl text-slate-600 hover:text-slate-300 transition-all active:scale-95 touch-target">
-        <RefreshCw className="h-3 w-3" />
-      </button>
+      <RefreshButton onRefresh={props.onRefresh} iconClassName="h-3 w-3" className="p-1.5 bg-black/50 backdrop-blur-sm border border-white/[0.08] rounded-xl text-slate-600 hover:text-slate-300 transition-all active:scale-95 touch-target" />
       {!props.sideOpen && (
         <button onClick={props.onOpenSide} className="p-1.5 bg-black/50 backdrop-blur-sm border border-white/[0.08] rounded-xl text-slate-500 hover:text-slate-300 transition-all active:scale-95 touch-target" aria-label="Open side panel">
           <PanelRightOpen className="h-3 w-3" />
@@ -237,7 +237,7 @@ export function GraphBuildProgress({ progress }: { progress: { chunk: number; to
       </div>
       {/* Status pill */}
       <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-black/70  border border-violet-500/30 rounded-2xl shadow-2xl animate-fade-in">
-        <Loader2 className="h-3.5 w-3.5 text-violet-400 animate-spin" />
+        <Spinner className="h-3.5 w-3.5 text-violet-400" />
         <div className="flex flex-col">
           <span className="text-[11px] text-slate-200 font-medium">Building Knowledge Graph</span>
           <span className="text-[9px] text-slate-500">

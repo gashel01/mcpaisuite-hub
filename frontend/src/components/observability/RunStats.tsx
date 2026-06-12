@@ -1,5 +1,5 @@
 "use client";
-import { getApiUrl } from "@/lib/api-url";
+import { apiFetch } from "@/lib/api";
 
 import { useState, useEffect, useCallback } from "react";
 import { BarChart3, Clock, DollarSign, Cpu, Wrench, Layers, Loader2 } from "lucide-react";
@@ -27,7 +27,6 @@ const TYPE_COLORS: Record<string, { color: string; label: string; icon: typeof C
 };
 
 export default function RunStats({ taskId, namespace, totalTokens, totalCost, totalTurns }: Props) {
-  const BASE = getApiUrl();
   const [spans, setSpans] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -35,11 +34,8 @@ export default function RunStats({ taskId, namespace, totalTokens, totalCost, to
     if (!taskId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${BASE}/tasks/${taskId}/spans`, { headers: { "x-tenant-id": namespace } });
-      if (res.ok) {
-        const data = await res.json();
-        setSpans(data.spans || []);
-      }
+      const data = await apiFetch<any>(`/tasks/${taskId}/spans`, { tenant: namespace });
+      setSpans(data.spans || []);
     } catch {}
     setLoading(false);
   }, [taskId, namespace]);

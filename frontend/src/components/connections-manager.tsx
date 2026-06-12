@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Check, Trash, Pencil, Loader2, KeyRound, Cpu, Plug, CircleCheck, CircleX } from "lucide-react";
-import { getApiUrl } from "@/lib/api-url";
-import { useTenant, tenantHeaders } from "@/context/tenant";
+import { Plus, Check, Trash, Pencil, KeyRound, Cpu, Plug, CircleCheck, CircleX } from "lucide-react";
+import { apiFetch, ApiError } from "@/lib/api";
+import { useTenant } from "@/context/tenant";
+import { Spinner } from "@/components/ui/Spinner";
 import type { Connection } from "./connection-picker";
-
-const BASE = getApiUrl();
 
 export const PROVIDERS: { id: string; label: string; placeholder: string; needsKey: boolean; needsUrl?: boolean }[] = [
   { id: "anthropic", label: "Anthropic", placeholder: "claude-opus-4-8", needsKey: true },
@@ -28,7 +27,6 @@ const emptyForm = { id: "", name: "", provider: "anthropic", model: "", api_key:
  */
 export default function ConnectionsManager({ onChanged }: { onChanged?: () => void }) {
   const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
   const [conns, setConns] = useState<Connection[]>([]);
   const [form, setForm] = useState({ ...emptyForm });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -39,11 +37,10 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`${BASE}/llm/connections`, { headers: th });
-      const d = await r.json();
+      const d = await apiFetch<{ connections?: Connection[] }>("/llm/connections", { tenant });
       setConns(d.connections || []);
     } catch { /* ignore */ }
-  }, [th]);
+  }, [tenant]);
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
@@ -51,26 +48,25 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
 
   const activate = useCallback(async (id: string) => {
     setConns(cs => cs.map(c => ({ ...c, is_default: c.id === id })));
-    try { await fetch(`${BASE}/llm/connections/${id}/default`, { method: "POST", headers: th }); } catch {}
+    try { await apiFetch(`/llm/connections/${id}/default`, { method: "POST", tenant }); } catch {}
     notify();
-  }, [th, notify]);
+  }, [tenant, notify]);
 
   const remove = useCallback(async (id: string) => {
-    try { await fetch(`${BASE}/llm/connections/${id}`, { method: "DELETE", headers: th }); } catch {}
+    try { await apiFetch(`/llm/connections/${id}`, { method: "DELETE", tenant }); } catch {}
     if (editingId === id) { setEditingId(null); setForm({ ...emptyForm }); }
     notify();
-  }, [th, notify, editingId]);
+  }, [tenant, notify, editingId]);
 
   const testActive = useCallback(async () => {
     setTesting(true); setTestRes(null);
     try {
       // No overrides → backend tests the currently-active llm_config (the active connection)
-      const r = await fetch(`${BASE}/test-connection`, { method: "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify({ service: "llm" }) });
-      const d = await r.json();
+      const d = await apiFetch<any>("/test-connection", { method: "POST", tenant, body: { service: "llm" } });
       setTestRes({ ok: !!d.ok, detail: String(d.detail || "") });
     } catch (e: any) { setTestRes({ ok: false, detail: String(e?.message || e) }); }
     finally { setTesting(false); }
-  }, [th]);
+  }, [tenant]);
 
   const startEdit = (c: Connection) => {
     setForm({ id: c.id, name: c.name, provider: c.provider, model: c.model, api_key: "", base_url: c.base_url || "" });
@@ -82,13 +78,14 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
     const body: any = { name: form.name, provider: form.provider, model: form.model, base_url: form.base_url };
     if (form.api_key) body.api_key = form.api_key;
     try {
-      const url = editingId ? `${BASE}/llm/connections/${editingId}` : `${BASE}/llm/connections`;
-      const r = await fetch(url, { method: editingId ? "PUT" : "POST", headers: { "Content-Type": "application/json", ...th }, body: JSON.stringify(body) });
-      if (!r.ok) { const e = await r.json().catch(() => ({})); setErr(e.detail || `Error ${r.status}`); }
-      else { setForm({ ...emptyForm }); setEditingId(null); notify(); }
-    } catch (e: any) { setErr(String(e?.message || e)); }
+      const path = editingId ? `/llm/connections/${editingId}` : "/llm/connections";
+      await apiFetch(path, { method: editingId ? "PUT" : "POST", tenant, body });
+      setForm({ ...emptyForm }); setEditingId(null); notify();
+    } catch (e: any) {
+      setErr(e instanceof ApiError ? ((e.body as any)?.detail || `Error ${e.status}`) : String(e?.message || e));
+    }
     finally { setSaving(false); }
-  }, [form, editingId, th, notify]);
+  }, [form, editingId, tenant, notify]);
 
   const prov = PROVIDERS.find(p => p.id === form.provider) || PROVIDERS[0];
 
@@ -116,7 +113,7 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
         <div className="flex items-center gap-3">
           <button onClick={testActive} disabled={testing}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-white/[0.03] border border-white/[0.07] text-slate-300 hover:bg-white/[0.06] disabled:opacity-50 transition-all">
-            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plug className="h-3.5 w-3.5" />}
+            {testing ? <Spinner className="h-3.5 w-3.5" /> : <Plug className="h-3.5 w-3.5" />}
             {testing ? "Testing…" : "Test active model"}
           </button>
           {testRes && (
@@ -150,7 +147,7 @@ export default function ConnectionsManager({ onChanged }: { onChanged?: () => vo
         {err && <p className="text-[10px] text-red-400">{err}</p>}
         <div className="flex gap-2">
           <button onClick={save} disabled={saving || !form.model.trim()} className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[12px] font-medium text-white bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 rounded-lg transition-all">
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : editingId ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />} {editingId ? "Save" : "Add"}
+            {saving ? <Spinner className="h-3.5 w-3.5" /> : editingId ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />} {editingId ? "Save" : "Add"}
           </button>
           {editingId && <button onClick={() => { setEditingId(null); setForm({ ...emptyForm }); }} className="px-3 py-2 text-[12px] text-slate-400 hover:text-slate-200 rounded-lg">Cancel</button>}
         </div>

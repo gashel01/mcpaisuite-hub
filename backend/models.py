@@ -70,11 +70,18 @@ class SettingsIn(BaseModel):
     rag_chunk_overlap: Optional[int] = None
     rag_top_k: Optional[int] = None
     rag_embedding_model: Optional[str] = None
+    # Engine + kernel state
+    context_window_tokens: Optional[int] = None
+    kernel_checkpoint_url: Optional[str] = None
     # Infrastructure backends
     memory_backend: Optional[str] = None
     memory_semantic_backend: Optional[str] = None
     memory_redis_url: Optional[str] = None
     memory_decay_mode: Optional[str] = None
+    memory_hotcache_backend: Optional[str] = None
+    memory_graph_backend: Optional[str] = None
+    memory_qdrant_url: Optional[str] = None
+    memory_qdrant_collection: Optional[str] = None
     memory_neo4j_uri: Optional[str] = None
     memory_neo4j_user: Optional[str] = None
     memory_neo4j_password: Optional[str] = None

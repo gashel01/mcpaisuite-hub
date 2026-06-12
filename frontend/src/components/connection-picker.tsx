@@ -2,11 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Cpu, ChevronDown, Plus, Check, Pencil, X } from "lucide-react";
-import { getApiUrl } from "@/lib/api-url";
-import { useTenant, tenantHeaders } from "@/context/tenant";
+import { apiFetch } from "@/lib/api";
+import { useTenant } from "@/context/tenant";
 import ConnectionsManager from "./connections-manager";
-
-const BASE = getApiUrl();
+import { Modal } from "@/components/ui/Modal";
 
 export interface Connection {
   id: string;
@@ -21,7 +20,6 @@ export interface Connection {
 
 export default function ConnectionPicker({ compact }: { compact?: boolean }) {
   const { tenant } = useTenant();
-  const th = tenantHeaders(tenant);
   const [conns, setConns] = useState<Connection[]>([]);
   const [open, setOpen] = useState(false);
   const [managing, setManaging] = useState(false);
@@ -29,11 +27,10 @@ export default function ConnectionPicker({ compact }: { compact?: boolean }) {
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`${BASE}/llm/connections`, { headers: th });
-      const d = await r.json();
+      const d = await apiFetch<{ connections?: Connection[] }>("/llm/connections", { tenant });
       setConns(d.connections || []);
     } catch { /* ignore */ }
-  }, [th]);
+  }, [tenant]);
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
   useEffect(() => {
@@ -48,9 +45,9 @@ export default function ConnectionPicker({ compact }: { compact?: boolean }) {
   const activate = useCallback(async (id: string) => {
     setConns(cs => cs.map(c => ({ ...c, is_default: c.id === id })));
     setOpen(false);
-    try { await fetch(`${BASE}/llm/connections/${id}/default`, { method: "POST", headers: th }); } catch {}
+    try { await apiFetch(`/llm/connections/${id}/default`, { method: "POST", tenant }); } catch {}
     load();
-  }, [th, load]);
+  }, [tenant, load]);
 
   return (
     <div className="relative" ref={ref}>
@@ -85,19 +82,20 @@ export default function ConnectionPicker({ compact }: { compact?: boolean }) {
       )}
 
       {/* Manage modal — reuses the shared ConnectionsManager surface */}
-      {managing && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setManaging(false)}>
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50 animate-scale-in flex flex-col max-h-[88vh]" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
-              <div className="flex items-center gap-2"><Cpu className="h-4 w-4 text-violet-400" /><h3 className="text-sm font-semibold text-slate-200">LLM connections</h3></div>
-              <button onClick={() => setManaging(false)}><X className="h-4 w-4 text-slate-500 hover:text-slate-300" /></button>
-            </div>
-            <div className="px-5 py-4 overflow-y-auto">
-              <ConnectionsManager onChanged={load} />
-            </div>
-          </div>
+      <Modal
+        open={managing}
+        onClose={() => setManaging(false)}
+        backdropClassName="z-[60] bg-black/60 backdrop-blur-sm"
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-[#12121c] shadow-2xl shadow-black/50 flex flex-col max-h-[88vh]"
+      >
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06] shrink-0">
+          <div className="flex items-center gap-2"><Cpu className="h-4 w-4 text-violet-400" /><h3 className="text-sm font-semibold text-slate-200">LLM connections</h3></div>
+          <button onClick={() => setManaging(false)}><X className="h-4 w-4 text-slate-500 hover:text-slate-300" /></button>
         </div>
-      )}
+        <div className="px-5 py-4 overflow-y-auto">
+          <ConnectionsManager onChanged={load} />
+        </div>
+      </Modal>
     </div>
   );
 }

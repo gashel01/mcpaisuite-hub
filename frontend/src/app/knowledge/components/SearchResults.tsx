@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import {
-  Search, X, Sparkles, Loader2, FileText, Network,
+  Search, X, Sparkles, FileText, Network,
   RefreshCw, Hash, ChevronDown, ChevronRight,
 } from "lucide-react";
 import type { KnowledgeFact, SearchResult, SelfRagResult, UnifiedNode } from "../types";
 import { renderMarkdown } from "@/components/markdown";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface SearchResultsProps {
   query: string;
@@ -36,7 +37,7 @@ export function SearchResults({ query, searching, facts, docResults, selfRagResu
       <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto">
         {searching && (
           <div className="py-6 text-center">
-            <Loader2 className="h-5 w-5 text-violet-400 animate-spin mx-auto" />
+            <Spinner className="h-5 w-5 text-violet-400 mx-auto" />
             <p className="text-[10px] text-slate-600 mt-2">Searching knowledge base...</p>
           </div>
         )}
