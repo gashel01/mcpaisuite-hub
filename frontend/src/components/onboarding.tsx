@@ -3,11 +3,15 @@
 import { useState, useEffect } from "react";
 import { MessageSquare, Database, Bot, Tv2, X, ArrowRight } from "lucide-react";
 import Link from "next/link";
+import { apiFetch } from "@/lib/api";
 
 const STORAGE_KEY = "kernelmcp_onboarded";
 
 export default function Onboarding() {
   const [show, setShow] = useState(false);
+  // Real tool/server counts, fetched from the same endpoint Settings uses.
+  // null = not loaded yet → render a generic phrasing instead of a stale number.
+  const [counts, setCounts] = useState<{ tools: number; servers: number } | null>(null);
 
   useEffect(() => {
     // Only show on first visit
@@ -17,6 +21,24 @@ export default function Onboarding() {
       return () => clearTimeout(t);
     }
   }, []);
+
+  useEffect(() => {
+    if (!show) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch<{ servers?: Record<string, { tools?: number }> }>("/servers");
+        const entries = Object.values(data.servers || {});
+        const tools = entries.reduce((s, srv) => s + (srv?.tools ?? 0), 0);
+        if (!cancelled && entries.length > 0) setCounts({ tools, servers: entries.length });
+      } catch {
+        // Backend unreachable — keep the generic phrasing.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [show]);
 
   const dismiss = () => {
     setShow(false);
@@ -50,7 +72,10 @@ export default function Onboarding() {
               <span className="px-1.5 py-[1px] rounded-full text-[8px] font-bold uppercase tracking-wider text-violet-300 bg-violet-500/15 border border-violet-500/25">Beta</span>
             </div>
             <p className="text-sm text-slate-400 leading-relaxed">
-              The orchestration dashboard for the MCP AI Suite. Your agent has access to 90+ tools across 6 servers.
+              The orchestration dashboard for the MCP AI Suite.{" "}
+              {counts
+                ? `Your agent has access to ${counts.tools} tools across ${counts.servers} ${counts.servers === 1 ? "server" : "servers"}.`
+                : "Your agent has access to the full suite of MCP tools."}
             </p>
             <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
               In active development — still evolving. Found a bug or have an idea?{" "}
