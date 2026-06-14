@@ -25,6 +25,11 @@ WORKDIR /app
 COPY kernelmcp-demo/backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Playwright's Chromium OUTSIDE /root/.cache: the compose `model-cache`
+# volume mounts over /root/.cache at runtime and would shadow a browser installed
+# there (→ "Executable doesn't exist"). PLAYWRIGHT_BROWSERS_PATH persists to runtime
+# so both install and launch resolve to this unshadowed path.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN pip install --no-cache-dir beautifulsoup4 lxml playwright pypdf chromadb \
     && python -m playwright install chromium
 
