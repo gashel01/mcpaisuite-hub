@@ -73,6 +73,9 @@ export function SettingsTabs({ tab, cfg, update, testing, testResult, testConnec
                   <Field label="Context Window (tokens)" hint="Tokens sent to the LLM per turn — raise for repo-scale tasks (capped by Max Tokens)">
                     <NumberInput value={cfg.context_window_tokens} onChange={v => update("context_window_tokens", v)} min={4000} max={500000} step={1000} />
                   </Field>
+                  <Field label="Bootstrap relevance floor" hint="Min similarity (0–1) for auto-injected RAG/memory/corrections. Higher = stricter, fewer wasted tokens on off-topic queries. 0 = inject nearest matches always.">
+                    <NumberInput value={cfg.bootstrap_min_score} onChange={v => update("bootstrap_min_score", v)} min={0} max={1} step={0.05} />
+                  </Field>
                   <Field label="Kernel Checkpoint URL" hint="postgres://… externalizes kernel state (cross-instance task resume); empty = local SQLite">
                     <TextInput value={cfg.kernel_checkpoint_url} onChange={v => update("kernel_checkpoint_url", v)} placeholder="postgresql://user:pass@host:5432/db" />
                   </Field>

@@ -25,6 +25,9 @@ DEFAULT_SETTINGS = {
     # Engine context window per LLM call (≠ total budget; never exceeds it) + externalized
     # kernel state (postgres:// → cross-instance task resume, empty = local SQLite).
     "context_window_tokens": 40000, "kernel_checkpoint_url": "",
+    # Minimum similarity score for auto-injected bootstrap context (RAG/memory/corrections).
+    # Below this, off-topic nearest-neighbour hits are dropped instead of wasting tokens.
+    "bootstrap_min_score": 0.35,
     # Multi-agent graph (TaskForce) loop bounds — conservative defaults; raise for deeper
     # iterative flows at the cost of more steps/tokens.
     "graph_max_self_refines": 1, "graph_max_feedback_runs": 1, "graph_max_total_steps": 30,

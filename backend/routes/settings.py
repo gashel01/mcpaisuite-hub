@@ -486,6 +486,8 @@ async def save_settings(body: SettingsIn):
         if m in ("react", "ltp", "hybrid"): k._engine._mode = m
     if "max_turns" in updates and k: k._engine._max_turns = updates["max_turns"]
     if "max_tokens" in updates and k: k.config.max_tokens_per_task = updates["max_tokens"]
+    if "bootstrap_min_score" in updates and k and k._engine._orchestrator:
+        k._engine._orchestrator._context_min_score = float(updates["bootstrap_min_score"])
     # Sandbox
     if k and k._engine._orchestrator.sandbox:
         sb = k._engine._orchestrator.sandbox

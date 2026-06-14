@@ -243,6 +243,9 @@ async def startup():
       return
     # Set execution mode from settings
     kernel._engine._mode = settings.get("execution_mode", "react")
+    # Apply persisted bootstrap relevance floor (drops off-topic auto-injected context)
+    if kernel._engine._orchestrator and "bootstrap_min_score" in settings:
+        kernel._engine._orchestrator._context_min_score = float(settings["bootstrap_min_score"])
 
     # Fallback chain: primary model → retry same model (transient errors)
     from kernelmcp.core.resilience import LLMFallbackChain

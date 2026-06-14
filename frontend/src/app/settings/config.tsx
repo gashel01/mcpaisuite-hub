@@ -4,7 +4,7 @@ import { Monitor, Server, Cloud, Brain, Cpu, HardDrive, Shield, Database, Clock,
 export interface FullConfig {
   provider: string; model: string; api_key: string; base_url: string;
   max_turns: number; max_tokens: number; max_cost: number; execution_mode: string; routing_enabled: boolean;
-  context_window_tokens: number; kernel_checkpoint_url: string;
+  context_window_tokens: number; kernel_checkpoint_url: string; bootstrap_min_score: number;
   graph_max_self_refines: number; graph_max_feedback_runs: number; graph_max_total_steps: number;
   num_ctx: number; keep_alive: string;
   workspace_root: string; tenant_isolation: boolean; max_file_size_mb: number; checkpoint_enabled: boolean;
@@ -27,7 +27,7 @@ export interface FullConfig {
 export const DEFAULTS: FullConfig = {
   provider: "ollama", model: "qwen3.5:9b", api_key: "", base_url: "",
   max_turns: 10, max_tokens: 50000, max_cost: 1.0, execution_mode: "hybrid", routing_enabled: true,
-  context_window_tokens: 40000, kernel_checkpoint_url: "",
+  context_window_tokens: 40000, kernel_checkpoint_url: "", bootstrap_min_score: 0.35,
   graph_max_self_refines: 1, graph_max_feedback_runs: 1, graph_max_total_steps: 30,
   num_ctx: 16384, keep_alive: "30m",
   workspace_root: "~/.kernelmcp/workspace", tenant_isolation: true,

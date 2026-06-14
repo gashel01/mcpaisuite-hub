@@ -73,6 +73,7 @@ class SettingsIn(BaseModel):
     # Engine + kernel state
     context_window_tokens: Optional[int] = None
     kernel_checkpoint_url: Optional[str] = None
+    bootstrap_min_score: Optional[float] = None
     # Infrastructure backends
     memory_backend: Optional[str] = None
     memory_semantic_backend: Optional[str] = None
