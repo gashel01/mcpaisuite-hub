@@ -25,6 +25,7 @@ export interface TaskInfo {
   total_turns?: number;
   total_tokens?: number;
   total_cost?: number;
+  execution_mode_used?: string;
   turns?: Turn[];
 }
 

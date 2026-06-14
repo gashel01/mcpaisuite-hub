@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Play } from "lucide-react";
+import { X, Play, Zap } from "lucide-react";
 import type { TaskInfo } from "@/types";
 import { TurnItem } from "./turns";
 import { Modal } from "@/components/ui/Modal";
@@ -30,6 +30,14 @@ export default function TaskModal({ task, onClose }: TaskModalProps) {
                 task.status === "running" ? "bg-violet-900/30 text-violet-400" :
                 "bg-slate-800 text-slate-500"
               }`}>{task.status}</span>
+              {task.execution_mode_used === "jit" && (
+                <span
+                  title="Answered by the Agent-JIT cache — a validated solution pattern was reused instead of full reasoning."
+                  className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-900/30 text-indigo-300"
+                >
+                  <Zap className="h-2.5 w-2.5" /> JIT
+                </span>
+              )}
               {task.total_tokens != null && (
                 <span className="text-[10px] text-slate-500">
                   {task.total_tokens?.toLocaleString()} tokens &middot; ${(task.total_cost || 0).toFixed(4)}

@@ -1,4 +1,6 @@
 "use client";
+import { useState, useEffect } from "react";
+import { apiFetch } from "@/lib/api";
 import { Spinner } from "@/components/ui/Spinner";
 import {
   Settings, Save, Cpu, Brain, HardDrive, Shield, Database, Clock, Search,
@@ -11,6 +13,26 @@ import { TestBtn, Field, Toggle, NumberInput, TextInput, SelectInput, SectionHea
 import EnvPanel from "./EnvPanel";
 import ToolsPanel from "./ToolsPanel";
 import type { FullConfig, TabId } from "./config";
+
+function JitStatsLine({ enabled }: { enabled: boolean }) {
+  const [s, setS] = useState<{ families: number; trusted: number; total_hits: number; embedder?: boolean } | null>(null);
+  useEffect(() => {
+    if (!enabled) { setS(null); return; }
+    let alive = true;
+    const load = () => apiFetch<{ families: number; trusted: number; total_hits: number; embedder?: boolean }>("/jit/stats").then(d => { if (alive) setS(d); }).catch(() => {});
+    load();
+    const t = setInterval(load, 4000);
+    return () => { alive = false; clearInterval(t); };
+  }, [enabled]);
+  if (!enabled) return null;
+  return (
+    <p className="text-[10px] text-slate-500 mt-1">
+      {s
+        ? <>Agent-JIT: <span className="text-slate-300">{s.families}</span> familles &middot; <span className="text-slate-300">{s.trusted}</span> trusted &middot; <span className="text-slate-300">{s.total_hits}</span> réutilisations{s.embedder ? "" : " · signature exacte (sans embedder)"}</>
+        : "Agent-JIT: chargement…"}
+    </p>
+  );
+}
 
 export function SettingsTabs({ tab, cfg, update, testing, testResult, testConnection, remoteUrl, setRemoteUrl, saveRemote, testRemote, remoteEnabled, remoteTesting, remoteTestResult, clearRemote }: {
   tab: TabId;
@@ -82,6 +104,7 @@ export function SettingsTabs({ tab, cfg, update, testing, testResult, testConnec
                   <Toggle label="Smart Tool Routing" value={cfg.routing_enabled} onChange={v => update("routing_enabled", v)} />
                   <Field label="Agent-JIT cache" hint="Reuse shadow-validated solution patterns across repeated task families. First sighting reasons normally; a later one is validated once by deterministic output comparison, then reused cheaply. Off by default.">
                     <Toggle label="Enable Agent-JIT" value={cfg.jit_enabled} onChange={v => update("jit_enabled", v)} />
+                    <JitStatsLine enabled={cfg.jit_enabled} />
                   </Field>
                 </AdvancedDisclosure>
                 <AdvancedDisclosure label="Multi-agent graph limits" hint="how far a TaskForce graph can iterate">
