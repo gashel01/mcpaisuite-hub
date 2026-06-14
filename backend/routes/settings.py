@@ -465,6 +465,22 @@ async def test_connection(body: TestConnectionRequest):
 
 # ── Unified Settings ─────────────────────────────────────────────────────────
 
+@router.get("/jit/stats")
+async def jit_stats(namespace: str | None = None):
+    """Agent-JIT cache state: cached task families, how many are trusted, total warm reuses."""
+    k = _require()
+    cache = getattr(k._engine, "_jit", None)
+    return cache.stats(namespace) if cache else {"enabled": False, "families": 0, "trusted": 0, "total_hits": 0}
+
+
+@router.post("/jit/clear")
+async def jit_clear(namespace: str | None = None):
+    """Drop cached solution patterns (all, or one namespace)."""
+    k = _require()
+    cache = getattr(k._engine, "_jit", None)
+    return {"removed": cache.clear(namespace) if cache else 0}
+
+
 @router.get("/settings")
 async def get_settings():
     return {"provider": llm_config["provider"], "model": llm_config["model"], "base_url": llm_config["base_url"], "api_key": "", "has_api_key": bool(llm_config.get("api_key")), **settings}
