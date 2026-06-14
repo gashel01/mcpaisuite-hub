@@ -74,6 +74,7 @@ class SettingsIn(BaseModel):
     context_window_tokens: Optional[int] = None
     kernel_checkpoint_url: Optional[str] = None
     bootstrap_min_score: Optional[float] = None
+    jit_enabled: Optional[bool] = None
     # Infrastructure backends
     memory_backend: Optional[str] = None
     memory_semantic_backend: Optional[str] = None

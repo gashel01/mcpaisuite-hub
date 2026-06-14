@@ -230,6 +230,7 @@ async def startup():
         checkpoint_url=settings.get("kernel_checkpoint_url", "") or os.getenv("KERNELMCP_CHECKPOINT_URL", ""),
         namespace=DEFAULT_NAMESPACE,
         enable_dlp=bool(settings.get("kernel_enable_dlp", True)),
+        jit=bool(settings.get("jit_enabled", False)),
         memory_pipeline=pipelines.get("memory"), planning_pipeline=pipelines.get("planning"),
         workspace_pipeline=pipelines.get("workspace"), sandbox_pipeline=pipelines.get("sandbox"),
         scheduler_pipeline=pipelines.get("scheduler"), rag_pipeline=pipelines.get("rag"),

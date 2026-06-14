@@ -5,6 +5,7 @@ export interface FullConfig {
   provider: string; model: string; api_key: string; base_url: string;
   max_turns: number; max_tokens: number; max_cost: number; execution_mode: string; routing_enabled: boolean;
   context_window_tokens: number; kernel_checkpoint_url: string; bootstrap_min_score: number;
+  jit_enabled: boolean;
   graph_max_self_refines: number; graph_max_feedback_runs: number; graph_max_total_steps: number;
   num_ctx: number; keep_alive: string;
   workspace_root: string; tenant_isolation: boolean; max_file_size_mb: number; checkpoint_enabled: boolean;
@@ -28,6 +29,7 @@ export const DEFAULTS: FullConfig = {
   provider: "ollama", model: "qwen3.5:9b", api_key: "", base_url: "",
   max_turns: 10, max_tokens: 50000, max_cost: 1.0, execution_mode: "hybrid", routing_enabled: true,
   context_window_tokens: 40000, kernel_checkpoint_url: "", bootstrap_min_score: 0.35,
+  jit_enabled: false,
   graph_max_self_refines: 1, graph_max_feedback_runs: 1, graph_max_total_steps: 30,
   num_ctx: 16384, keep_alive: "30m",
   workspace_root: "~/.kernelmcp/workspace", tenant_isolation: true,
@@ -111,7 +113,7 @@ export type TabId = typeof TABS[number]["id"];
 // Map fields to tabs for dirty tracking
 export const TAB_FIELDS: Record<TabId, (keyof FullConfig)[]> = {
   llm: [],
-  engine: ["max_turns", "max_tokens", "max_cost", "context_window_tokens", "kernel_checkpoint_url", "execution_mode", "routing_enabled", "graph_max_self_refines", "graph_max_feedback_runs", "graph_max_total_steps"],
+  engine: ["max_turns", "max_tokens", "max_cost", "context_window_tokens", "kernel_checkpoint_url", "bootstrap_min_score", "jit_enabled", "execution_mode", "routing_enabled", "graph_max_self_refines", "graph_max_feedback_runs", "graph_max_total_steps"],
   workspace: ["workspace_root", "tenant_isolation", "max_file_size_mb", "checkpoint_enabled"],
   sandbox: ["host_exec_enabled", "auto_approve", "sandbox_timeout", "max_output_chars"],
   memory: ["memory_importance_threshold", "memory_max_results", "memory_default_tags", "memory_enable_rerank", "memory_rerank_model", "memory_enable_query_expansion", "memory_query_expansion_threshold"],

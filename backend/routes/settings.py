@@ -488,6 +488,28 @@ async def save_settings(body: SettingsIn):
     if "max_tokens" in updates and k: k.config.max_tokens_per_task = updates["max_tokens"]
     if "bootstrap_min_score" in updates and k and k._engine._orchestrator:
         k._engine._orchestrator._context_min_score = float(updates["bootstrap_min_score"])
+    # Agent-JIT — toggle live; lazy-create the cache (with embedder) the first time it's on.
+    if "jit_enabled" in updates and k:
+        want = bool(updates["jit_enabled"])
+        cache = getattr(k._engine, "_jit", None)
+        if want and cache is None:
+            try:
+                import os as _os
+                from kernelmcp.core.jit import JITCache
+                embedder = None
+                try:
+                    from fastembed import TextEmbedding
+                    embedder = TextEmbedding("BAAI/bge-small-en-v1.5")
+                except Exception:
+                    pass
+                store = _os.path.join(_os.path.expanduser("~"), ".kernelmcp", "jit_cache.json")
+                _os.makedirs(_os.path.dirname(store), exist_ok=True)
+                cache = JITCache(embedder=embedder, store_path=store)
+                k._engine._jit = cache
+            except Exception as exc:
+                print(f"[JIT] enable failed: {exc}", flush=True)
+        if cache is not None:
+            cache.enabled = want
     # Sandbox
     if k and k._engine._orchestrator.sandbox:
         sb = k._engine._orchestrator.sandbox

@@ -80,6 +80,9 @@ export function SettingsTabs({ tab, cfg, update, testing, testResult, testConnec
                     <TextInput value={cfg.kernel_checkpoint_url} onChange={v => update("kernel_checkpoint_url", v)} placeholder="postgresql://user:pass@host:5432/db" />
                   </Field>
                   <Toggle label="Smart Tool Routing" value={cfg.routing_enabled} onChange={v => update("routing_enabled", v)} />
+                  <Field label="Agent-JIT cache" hint="Reuse shadow-validated solution patterns across repeated task families. First sighting reasons normally; a later one is validated once by deterministic output comparison, then reused cheaply. Off by default.">
+                    <Toggle label="Enable Agent-JIT" value={cfg.jit_enabled} onChange={v => update("jit_enabled", v)} />
+                  </Field>
                 </AdvancedDisclosure>
                 <AdvancedDisclosure label="Multi-agent graph limits" hint="how far a TaskForce graph can iterate">
                   <p className="text-[10px] text-slate-500 leading-relaxed -mt-1">
