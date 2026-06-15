@@ -102,8 +102,8 @@ export function SettingsTabs({ tab, cfg, update, testing, testResult, testConnec
                     <TextInput value={cfg.kernel_checkpoint_url} onChange={v => update("kernel_checkpoint_url", v)} placeholder="postgresql://user:pass@host:5432/db" />
                   </Field>
                   <Toggle label="Smart Tool Routing" value={cfg.routing_enabled} onChange={v => update("routing_enabled", v)} />
-                  <Field label="Agent-JIT cache" hint="Reuse shadow-validated solution patterns across repeated task families. First sighting reasons normally; a later one is validated once by deterministic output comparison, then reused cheaply. Off by default.">
-                    <Toggle label="Enable Agent-JIT" value={cfg.jit_enabled} onChange={v => update("jit_enabled", v)} />
+                  <Field label="Agent-JIT cache (experimental)" hint="Reuse shadow-validated solution patterns across repeated task families — ~34× cheaper per reuse when it engages, never ships an unvalidated answer. Situational: a net win only on repetitive, execute_code-routed workloads; can be net-neutral (~+15%) otherwise. Off by default.">
+                    <Toggle label="Enable Agent-JIT (experimental)" value={cfg.jit_enabled} onChange={v => update("jit_enabled", v)} />
                     <JitStatsLine enabled={cfg.jit_enabled} />
                   </Field>
                 </AdvancedDisclosure>
