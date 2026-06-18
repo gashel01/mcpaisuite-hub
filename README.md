@@ -236,4 +236,4 @@ The bundled SearXNG instance provides web search capabilities to the kernel's to
 
 AGPL-3.0 — see [LICENSE](LICENSE).
 
-Open source for individuals and open-source projects. For commercial use in closed-source products, a commercial license is available — contact [gaeldev@gmail.com](mailto:gaeldev@gmail.com).
+Open source for individuals and open-source projects. For commercial use in closed-source products, a commercial license is available — contact [contact@mcpaisuite.com](mailto:contact@mcpaisuite.com).
