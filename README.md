@@ -1,4 +1,4 @@
-# kernelmcp Demo
+# MCP AI Suite Hub
 
 Full-stack demo for the `kernelmcp` orchestrator. Connects all six MCP libraries (memory, planning, workspace, sandbox, scheduler, RAG) through a single FastAPI backend with a Next.js 14 frontend.
 
@@ -16,7 +16,7 @@ Full-stack demo for the `kernelmcp` orchestrator. Connects all six MCP libraries
 ### Docker (recommended)
 
 ```bash
-cd kernelmcp-demo
+cd mcpaisuite-hub
 docker-compose up --build
 ```
 
