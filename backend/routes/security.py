@@ -445,7 +445,7 @@ async def security_posture(x_tenant_id: str = Header(default="")):
         const_data["has_custom_rules"] = bool(rules.strip())
         const_data["effective"] = getattr(c, 'render', lambda: rules)() if hasattr(c, 'render') else rules
         # Detect active templates by header markers
-        _TPL_IDS = {"Safety First": "safety", "Privacy & Data": "privacy", "Code Quality": "quality", "Web Safety": "web", "French Output": "language", "Concise Mode": "concise", "Always Plan": "planning", "Workspace Hygiene": "workspace"}
+        _TPL_IDS = {"Safety First": "safety", "Privacy & Data": "privacy", "Code Quality": "quality", "Web Safety": "web", "Concise Mode": "concise", "Always Plan": "planning", "Workspace Hygiene": "workspace"}
         const_data["active_templates"] = [tid for label, tid in _TPL_IDS.items() if f"## {label}" in rules]
 
     # Vault
