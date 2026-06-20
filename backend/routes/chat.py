@@ -21,15 +21,22 @@ def _require():
     return kernel
 
 
-async def execute_task(task: Task, k) -> None:
-    """Run a task and update stats."""
+async def execute_task(task: Task, k, dry_run: bool = False) -> None:
+    """Run a task and update stats. In dry_run, no tool executes (no side effects);
+    the intended calls are recorded on task.metadata["dry_run_calls"]."""
     audit_collector.emit("engine", "task_started", {
         "task_id": task.id,
         "goal": task.metadata.get("original_message", task.goal)[:200],
         "namespace": task.namespace,
     })
     try:
-        await k._engine.run(task)
+        from contextlib import nullcontext
+        from kernelmcp.core.dryrun import dry_run_scope
+        with (dry_run_scope() if dry_run else nullcontext(None)) as dry_calls:
+            await k._engine.run(task)
+            if dry_run:
+                task.metadata["dry_run"] = True
+                task.metadata["dry_run_calls"] = dry_calls
     except Exception as exc:
         task.status = TaskStatus.failed
         task.completed_at = _now()
@@ -70,8 +77,8 @@ async def create_task(body: TaskRequest, x_tenant_id: str = Header(default="")):
     task_ns = body.namespace or ns(x_tenant_id)
     task = Task(goal=body.goal, namespace=task_ns)
     k._tasks[task.id] = task
-    await task_runner.submit(task.id, lambda: execute_task(task, k))
-    return {"id": task.id, "goal": task.goal, "status": task.status.value, "namespace": task_ns}
+    await task_runner.submit(task.id, lambda: execute_task(task, k, dry_run=body.dry_run))
+    return {"id": task.id, "goal": task.goal, "status": task.status.value, "namespace": task_ns, "dry_run": body.dry_run}
 
 
 @router.get("/tasks")
@@ -87,7 +94,7 @@ async def get_task(task_id: str, x_tenant_id: str = Header(default="")):
     task = k._tasks.get(task_id)  # Direct lookup (tasks may have sub-namespaces)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return {"id": task.id, "goal": task.goal, "status": task.status.value, "turns": flatten_turns(task), "total_tokens": task.total_tokens, "total_cost": task.total_cost, "total_turns": task.total_turns, "duration_ms": getattr(task, "duration_ms", None), "namespace": task.namespace, "execution_mode_used": task.metadata.get("execution_mode_used", ""), "metadata": task.metadata.get("result", {})}
+    return {"id": task.id, "goal": task.goal, "status": task.status.value, "turns": flatten_turns(task), "total_tokens": task.total_tokens, "total_cost": task.total_cost, "total_turns": task.total_turns, "duration_ms": getattr(task, "duration_ms", None), "namespace": task.namespace, "execution_mode_used": task.metadata.get("execution_mode_used", ""), "metadata": task.metadata.get("result", {}), "dry_run": task.metadata.get("dry_run", False), "dry_run_calls": task.metadata.get("dry_run_calls", [])}
 
 
 @router.delete("/tasks/{task_id}")
@@ -205,11 +212,11 @@ async def chat(body: ChatMessageIn, x_tenant_id: str = Header(default="")):
     task.metadata["max_cost"] = float(settings.get("max_cost", 1.0))
     task.metadata["max_tokens"] = int(settings.get("max_tokens", 50000))
     k._tasks[task.id] = task
-    await task_runner.submit(task.id, lambda: _chat_execute(task, k, chat_ns, conv_id))
-    return {"task_id": task.id, "conversation_id": conv_id}
+    await task_runner.submit(task.id, lambda: _chat_execute(task, k, chat_ns, conv_id, dry_run=body.dry_run))
+    return {"task_id": task.id, "conversation_id": conv_id, "dry_run": body.dry_run}
 
 
-async def _chat_execute(task, k, chat_ns, conv_id):
+async def _chat_execute(task, k, chat_ns, conv_id, dry_run: bool = False):
     # Wire elicitation — engine can ask user questions (demo has UI to answer)
     k._engine._ask_user_fn = lambda q: k.ask_user(task.id, q)
     k._elicitation_futures_enabled = True  # Demo UI can respond
@@ -218,11 +225,18 @@ async def _chat_execute(task, k, chat_ns, conv_id):
     # Snapshot background tokens before execution
     from stores import background_token_counter
     bg_before = background_token_counter["total"]
-    await execute_task(task, k)
+    await execute_task(task, k, dry_run=dry_run)
     # Add background LLM tokens (memory extraction, planning, etc.)
     bg_used = background_token_counter["total"] - bg_before
     task.total_tokens += bg_used
     answer = extract_answer(task)
+    if dry_run:
+        # Dry-run shows only the planned tool calls. The LLM's natural-language
+        # answer is dropped on purpose: with no real tool results it's unreliable
+        # (it may hallucinate or say "I can't"), so the plan is the only honest output.
+        calls = task.metadata.get("dry_run_calls", [])
+        lines = "\n".join(f"{i + 1}. {c['tool']}({c['arguments']})" for i, c in enumerate(calls))
+        answer = f"🔍 Dry run — {len(calls)} tool call(s) would have run (nothing executed):\n{lines or '(none)'}"
     if answer:
         conversations.add_answer(
             chat_ns, conv_id, task.id, answer,

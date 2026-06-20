@@ -289,6 +289,13 @@ export default function JobDetailPanel({ job, onClose, onAction }: JobDetailPane
                   {job.schedule_type}
                 </span>
               </div>
+              <button
+                onClick={() => onAction(job.id, "dry_run_test")}
+                title="Run this job's goal once in dry-run — no tool executes (no side effects); shows the calls it would make. The LLM still runs, so tokens are still spent."
+                className="mt-2 text-[10px] font-medium uppercase tracking-wide px-2 py-1 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-all"
+              >
+                Test (dry-run)
+              </button>
             </div>
 
             {/* Tabs */}

@@ -56,6 +56,7 @@ export default function ChatPage() {
   const [newDomain, setNewDomain] = useState("");
   const [showEgress, setShowEgress] = useState(false);
   const [execMode, setExecMode] = useState<"react" | "ltp" | "hybrid">("react");
+  const [dryRun, setDryRun] = useState(false);  // simulate: no tool executes
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const [showHostAccess, setShowHostAccess] = useState(false);
@@ -378,7 +379,7 @@ export default function ChatPage() {
     try {
       const data = await apiFetch<any>("/chat", {
         method: "POST", headers: th,
-        body: { message: msg, conversation_id: convId, enable_network: networkEnabled, allowed_domains: allowedDomains, execution_mode: execMode },
+        body: { message: msg, conversation_id: convId, enable_network: networkEnabled, allowed_domains: allowedDomains, execution_mode: execMode, dry_run: dryRun },
       });
       const tid = data.task_id;
       setTaskId(tid);
@@ -752,7 +753,7 @@ export default function ChatPage() {
         )}
 
         {/* Input */}
-        <ChatInput input={input} setInput={setInput} loading={loading} execMode={execMode} setExecMode={setExecMode} onSend={send} onStop={stopTask} onFileSelect={handleFileSelect} uploading={uploading} />
+        <ChatInput input={input} setInput={setInput} loading={loading} execMode={execMode} setExecMode={setExecMode} dryRun={dryRun} setDryRun={setDryRun} onSend={send} onStop={stopTask} onFileSelect={handleFileSelect} uploading={uploading} />
       </div>
 
       {/* Code editor panel */}

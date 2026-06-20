@@ -10,13 +10,15 @@ interface ChatInputProps {
   loading: boolean;
   execMode: "react" | "ltp" | "hybrid";
   setExecMode: (m: "react" | "ltp" | "hybrid") => void;
+  dryRun: boolean;
+  setDryRun: (v: boolean) => void;
   onSend: () => void;
   onStop: () => void;
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   uploading: string | null;
 }
 
-export default function ChatInput({ input, setInput, loading, execMode, setExecMode, onSend, onStop, onFileSelect, uploading }: ChatInputProps) {
+export default function ChatInput({ input, setInput, loading, execMode, setExecMode, dryRun, setDryRun, onSend, onStop, onFileSelect, uploading }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -71,16 +73,25 @@ export default function ChatInput({ input, setInput, loading, execMode, setExecM
           )}
         </div>
         <div className="flex items-center justify-between mt-1.5 px-0.5">
-          <div className="flex items-center bg-white/[0.02] rounded-lg overflow-hidden border border-white/[0.04]">
-            {(["react", "ltp", "hybrid"] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => { setExecMode(m); apiFetch(`/mode?mode=${m}`, { method: "POST" }).catch(() => {}); }}
-                className={`px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide transition-all ${execMode === m ? "bg-violet-600 text-white" : "text-slate-500 hover:text-slate-300"}`}
-              >
-                {m}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center bg-white/[0.02] rounded-lg overflow-hidden border border-white/[0.04]">
+              {(["react", "ltp", "hybrid"] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => { setExecMode(m); apiFetch(`/mode?mode=${m}`, { method: "POST" }).catch(() => {}); }}
+                  className={`px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide transition-all ${execMode === m ? "bg-violet-600 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setDryRun(!dryRun)}
+              title="Dry run — no tool executes (no side effects); shows the calls it would make. The LLM still runs, so tokens are still spent."
+              className={`px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide rounded-md border transition-all ${dryRun ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "text-slate-500 border-white/[0.06] hover:text-slate-300"}`}
+            >
+              {dryRun ? "Dry: on" : "Dry"}
+            </button>
           </div>
           <span className="text-[10px] text-slate-600">Shift+Enter for new line</span>
         </div>

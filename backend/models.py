@@ -14,6 +14,7 @@ class LLMConfigIn(BaseModel):
 class TaskRequest(BaseModel):
     goal: str
     namespace: str = ""
+    dry_run: bool = False
 
 
 class ChatMessageIn(BaseModel):
@@ -21,6 +22,7 @@ class ChatMessageIn(BaseModel):
     conversation_id: str = "default"
     timezone: str = ""
     execution_mode: str = "react"
+    dry_run: bool = False
 
 
 class ConstitutionBody(BaseModel):

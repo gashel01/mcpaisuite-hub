@@ -24,6 +24,8 @@ export default function SchedulerPage() {
 
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<{ goal: string; calls: { tool: string; arguments: unknown }[] } | null>(null);
+  const [dryRunBusy, setDryRunBusy] = useState(false);
 
   /* ── Data fetching ───────────────────────────────────────────── */
 
@@ -85,6 +87,30 @@ export default function SchedulerPage() {
   const handleAction = useCallback(async (jobId: string, action: string) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
+
+    // Dry-run test: run this job's goal once in simulation (no tool executes),
+    // reusing the /tasks dry-run endpoint, then show what it would have called.
+    if (action === "dry_run_test") {
+      setDryRunBusy(true);
+      setDryRunResult({ goal: job.goal, calls: [] });
+      try {
+        const res = await apiFetch<{ id: string }>("/tasks", { method: "POST", tenant, body: { goal: job.goal, dry_run: true } });
+        const tid = res.id;
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 700));
+          const t = await apiFetch<{ status: string; dry_run_calls?: { tool: string; arguments: unknown }[] }>(`/tasks/${tid}`, { tenant }).catch(() => null);
+          if (t && ["completed", "failed", "cancelled"].includes(t.status)) {
+            setDryRunResult({ goal: job.goal, calls: t.dry_run_calls ?? [] });
+            break;
+          }
+        }
+      } catch {
+        /* silent */
+      } finally {
+        setDryRunBusy(false);
+      }
+      return;
+    }
 
     try {
       if (job.source === "taskforce" && action === "cancel") {
@@ -195,6 +221,31 @@ export default function SchedulerPage() {
           />
         )}
       </AnimatePresence>
+
+      {dryRunResult && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => !dryRunBusy && setDryRunResult(null)}>
+          <div className="w-full max-w-lg bg-[#0c0c14] border border-white/[0.08] rounded-xl p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-amber-300">Dry run — simulation</h3>
+              <button onClick={() => setDryRunResult(null)} disabled={dryRunBusy} className="text-slate-500 hover:text-slate-300 disabled:opacity-40">✕</button>
+            </div>
+            <p className="text-[11px] text-slate-500 mb-3 line-clamp-2">{dryRunResult.goal}</p>
+            {dryRunBusy ? (
+              <p className="text-xs text-slate-400">Simulating… nothing is being executed.</p>
+            ) : (
+              <>
+                <p className="text-xs text-slate-300 mb-2">{dryRunResult.calls.length} tool call(s) would have run (nothing executed):</p>
+                <ol className="text-[11px] text-slate-400 space-y-1 max-h-72 overflow-y-auto list-decimal pl-5">
+                  {dryRunResult.calls.map((c, i) => (
+                    <li key={i}><span className="text-slate-200 font-mono">{c.tool}</span>(<span className="font-mono">{JSON.stringify(c.arguments)}</span>)</li>
+                  ))}
+                  {dryRunResult.calls.length === 0 && <li className="list-none text-slate-500">No tool calls.</li>}
+                </ol>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

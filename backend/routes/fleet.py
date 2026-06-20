@@ -359,6 +359,8 @@ async def get_taskforce_result(task_id: str, x_tenant_id: str = Header(default="
         "task_id": task_id,
         "status": task.status.value,
         "result": task.metadata.get("result"),
+        "dry_run": task.metadata.get("dry_run", False),
+        "dry_run_calls": task.metadata.get("dry_run_calls", []),
     }
 
 
@@ -401,6 +403,38 @@ async def get_task_spans(task_id: str, x_tenant_id: str = Header(default="")):
         "trace_id": task.id,
         "spans": spans,
         "total_spans": len(task.spans or []),
+    }
+
+
+@router.get("/tasks/{task_id}/replay")
+async def get_task_replay(task_id: str, x_tenant_id: str = Header(default="")):
+    """Time-travel: per-step timeline + accumulated state at each turn.
+
+    Reuses kernelmcp's ReplayEngine so the step/state logic lives in one place.
+    Spans are served separately (/spans powers the waterfall), so a no-op tracer
+    is injected here — the timeline is turn-based, which is what the scrubber needs.
+    """
+    k = _require()
+    task = k._tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    from kernelmcp.observability.replay import ReplayEngine
+
+    class _NoSpanTracer:
+        def get_trace(self, _tid):
+            return []
+
+    engine = ReplayEngine(audit_logger=None, tracer=_NoSpanTracer())
+    engine.register_task(task)
+    timeline = engine.get_timeline(task_id)
+    states = [engine.get_state_at(task_id, i) for i in range(len(task.turns))]
+    return {
+        "task_id": task_id,
+        "goal": task.goal,
+        "total_turns": len(task.turns),
+        "timeline": timeline,
+        "states": states,
     }
 
 

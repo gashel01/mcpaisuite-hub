@@ -62,6 +62,7 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
         constitution = body.get("constitution", "")
         agent_specs = body.get("agents", [])
         blocking = body.get("blocking", False)  # Allow sync mode for backward compat
+        dry_run = body.get("dry_run", False)  # Simulate: no tool executes, record intended calls
 
         def _agent_llm(d: dict):
             """Resolve a per-agent/per-node connectionId into litellm-ready
@@ -134,10 +135,16 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
 
         async def _run_taskforce():
             try:
-                if executor:
-                    result = await executor.run()
-                else:
-                    result = await tf.run(k._agent_registry, namespace=namespace)
+                from contextlib import nullcontext
+                from kernelmcp.core.dryrun import dry_run_scope
+                with (dry_run_scope() if dry_run else nullcontext(None)) as dry_calls:
+                    if executor:
+                        result = await executor.run()
+                    else:
+                        result = await tf.run(k._agent_registry, namespace=namespace)
+                    if dry_run:
+                        task.metadata["dry_run"] = True
+                        task.metadata["dry_run_calls"] = dry_calls
                 # Store result in task metadata BEFORE changing status
                 # (status change triggers SSE terminal event, frontend fetches result after)
                 agent_outputs = []

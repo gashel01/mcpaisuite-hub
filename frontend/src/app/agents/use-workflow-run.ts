@@ -5,7 +5,7 @@ import { useWorkflowStore } from "@/stores/workflow-store";
 import { useTenant } from "@/context/tenant";
 import { sseRefs, newId } from "./constants";
 
-export function useWorkflowRun({ canRun, activeId, isRunning, goal, agents, pattern, teamConstitution, th, tenant, store, wfStore, isMobile, runParamValues, sessions, session, workspaceEnabled, setRunParamsOpen, setRunParamValues, setMobileTab, flowGraphRef }: {
+export function useWorkflowRun({ canRun, activeId, isRunning, goal, agents, pattern, teamConstitution, th, tenant, store, wfStore, isMobile, runParamValues, sessions, session, workspaceEnabled, setRunParamsOpen, setRunParamValues, setMobileTab, flowGraphRef, dryRun }: {
   canRun: string | boolean;
   activeId: string | null;
   isRunning: boolean;
@@ -26,6 +26,7 @@ export function useWorkflowRun({ canRun, activeId, isRunning, goal, agents, patt
   setRunParamValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setMobileTab: React.Dispatch<React.SetStateAction<"build" | "output">>;
   flowGraphRef: MutableRefObject<{ nodes: any[]; edges: any[] }>;
+  dryRun: boolean;
 }) {
   const handleRun = useCallback(async (paramsOverride?: Record<string, string>) => {
     if (!canRun || !activeId || isRunning) return;
@@ -150,6 +151,7 @@ export function useWorkflowRun({ canRun, activeId, isRunning, goal, agents, patt
             ...(a.tools?.length ? { tools: a.tools } : {}),
           })),
         };
+        if (dryRun) config.dry_run = true;  // simulate: no tool executes, record intended calls
 
         // Always send the graph — it's the source of truth (substitute placeholders in node instructions)
         if (hasGraph) {
@@ -478,7 +480,14 @@ export function useWorkflowRun({ canRun, activeId, isRunning, goal, agents, patt
                       // final_output with no error text; persist a clear message so reopening it
                       // later isn't blank (previously stored `answer || null` → blank on reopen,
                       // even though the live view showed "Failed").
-                      const resolved = answer || (failed ? "Run failed — no output was produced." : "Completed");
+                      let resolved = answer || (failed ? "Run failed — no output was produced." : "Completed");
+                      if (resp.dry_run) {
+                        // Show only the planned calls — the LLM answer is dropped (no real
+                        // results means it's unreliable). The plan is the honest output.
+                        const calls: any[] = resp.dry_run_calls || [];
+                        const lines = calls.map((c, i) => `${i + 1}. ${c.tool}(${JSON.stringify(c.arguments)})`).join("\n");
+                        resolved = `🔍 Dry run — ${calls.length} tool call(s) would have run (nothing executed):\n${lines || "(none)"}`;
+                      }
                       if (failed) store.setStatus(sessionId, "failed");
                       store.setResult(sessionId, resolved, metrics);
                       // Update run in workflow hierarchy — persist the SAME resolved answer.

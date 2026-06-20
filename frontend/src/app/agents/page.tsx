@@ -418,9 +418,10 @@ function AgentsPageInner() {
 
   // ── Run ────────────────────────────────────────────────────────────────
 
+  const [dryRun, setDryRun] = useState(false);  // simulate: no tool executes
   const { handleRun, handleStop } = useWorkflowRun({
     canRun, activeId, isRunning, goal, agents, pattern, teamConstitution, th, tenant, store, wfStore, isMobile, runParamValues, sessions, session, workspaceEnabled,
-    setRunParamsOpen, setRunParamValues, setMobileTab, flowGraphRef,
+    setRunParamsOpen, setRunParamValues, setMobileTab, flowGraphRef, dryRun,
   });
 
   const { paused, setPaused, resumeOutput, setResumeOutput, handlePause, handleResume, saveWorkflow, handleRerun, handleABTest, handleViewHistory } = useWorkflowActions({
@@ -911,7 +912,11 @@ function AgentsPageInner() {
                 ) : (
                   <>
                     <button onClick={() => handleRun()} disabled={!canRun || building} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-medium rounded-lg transition-all">
-                      <Play className="h-4 w-4" /> Run
+                      <Play className="h-4 w-4" /> {dryRun ? "Dry run" : "Run"}
+                    </button>
+                    <button onClick={() => setDryRun(v => !v)} title="Dry run — no tool executes (no side effects); shows the calls it would make. The LLM still runs, so tokens are still spent."
+                      className={`flex items-center justify-center px-4 py-3 text-sm font-medium rounded-lg transition-all shrink-0 border ${dryRun ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "bg-slate-800/50 text-slate-400 border-slate-700 hover:text-slate-200"}`}>
+                      {dryRun ? "Dry: ON" : "Dry"}
                     </button>
                     {agents.length > 0 && !session?.workflowId && (
                       <button onClick={() => { if (session && session.config.agents.length > 0) { setSavingName(session.config.goal.slice(0, 40) || "My Workflow"); setShowSaveDialog(true); } }} disabled={building}
