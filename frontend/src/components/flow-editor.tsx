@@ -103,7 +103,10 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
 
   // Only rebuild flow from props on first mount or when pattern/trigger/workspace change
   // NOT when agents change (to avoid overwriting user's manual edits)
-  const agentsKey = agents.map(a => `${a.type}:${a.role}`).join(",");
+  // Structural identity = the set/order of agent ids (data changes are handled by the
+  // soft-sync below; this only triggers a rebuild on add/remove/reorder). Id-based so
+  // deterministic tool/code entries are treated like any other node.
+  const agentsKey = agents.map(a => a.id).join(",");
   const configKey = `${pattern}_${agentsKey}_${propTriggerType}_${workspaceEnabled}_${workspaceName}_${workspaceMode}_${(humanGates || []).join(",")}`;
   const isFirstMount = useRef(true);
   const lastBuiltKey = useRef("");
@@ -163,17 +166,24 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
   // reflect on existing nodes (positions/edges kept). Without this, the debounced sync-back
   // would overwrite the architect's change with stale node data. The `changed` guard keeps it
   // from looping (returns the same nodes when nothing differs).
-  const agentDataKey = agents.map(a => `${a.type}|${a.role}|${(a.tools || []).join(",")}|${a.instructions || ""}|${a.max_turns}`).join("§");
+  // Map by node id (== agent id), not position, so interleaved deterministic
+  // tool/code nodes don't drift the agent↔node alignment.
+  const agentDataKey = agents.map(a => `${a.id}|${a.kind || a.type}|${a.role}|${(a.tools || []).join(",")}|${a.instructions || ""}|${a.max_turns}|${a.tool || ""}|${a.args || ""}|${a.code || ""}`).join("§");
   useEffect(() => {
     if (isFirstMount.current) return;
     setNodes(nds => {
-      let ai = 0;
+      const byId = new Map(agents.map(a => [a.id, a]));
       let changed = false;
       const out = nds.map(n => {
-        if (n.type !== "agent") return n;
-        const a = agents[ai++];
+        const a = byId.get(n.id);
         if (!a) return n;
         const d = n.data as any;
+        if (n.type === "tool" || n.type === "code") {
+          if ((d.tool || "") === (a.tool || "") && (d.args || "") === (a.args || "") && (d.code || "") === (a.code || "")) return n;
+          changed = true;
+          return { ...n, data: { ...d, kind: a.kind, tool: a.tool || "", args: a.args || "{}", code: a.code || "" } };
+        }
+        if (n.type !== "agent") return n;
         const sameTools = JSON.stringify(d.tools || []) === JSON.stringify(a.tools || []);
         if (d.agentType === a.type && d.role === a.role && (d.instructions || "") === (a.instructions || "") && d.maxTurns === a.max_turns && sameTools) return n;
         changed = true;
@@ -214,9 +224,11 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
     clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => {
       onUpdateFlow(nodes, edges);
-      // Mark this agents key as internally generated (so rebuild doesn't trigger)
-      const agentNodes = nodes.filter(n => n.type === "agent");
-      internalAgentsKey.current = agentNodes.map(n => `${(n.data as any).agentType}:${(n.data as any).role}`).join(",");
+      // Mark this agents key as internally generated (so rebuild doesn't trigger).
+      // Must match agentsKey (agent ids, in order) — includes deterministic tool/code nodes.
+      internalAgentsKey.current = nodes
+        .filter(n => n.type === "agent" || n.type === "tool" || n.type === "code")
+        .map(n => n.id).join(",");
     }, 100);
     return () => clearTimeout(syncTimer.current);
   }, [nodes, edges]); // eslint-disable-line

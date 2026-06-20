@@ -425,14 +425,20 @@ async def get_task_replay(task_id: str, x_tenant_id: str = Header(default="")):
         def get_trace(self, _tid):
             return []
 
-    engine = ReplayEngine(audit_logger=None, tracer=_NoSpanTracer())
-    engine.register_task(task)
-    timeline = engine.get_timeline(task_id)
-    states = [engine.get_state_at(task_id, i) for i in range(len(task.turns))]
+    if task.turns:
+        # Chat / single-agent (ReAct-LTP) runs — replay the turn history.
+        engine = ReplayEngine(audit_logger=None, tracer=_NoSpanTracer())
+        engine.register_task(task)
+        timeline = engine.get_timeline(task_id)
+        states = [engine.get_state_at(task_id, i) for i in range(len(task.turns))]
+    else:
+        # Graph / TaskForce runs (incl. dry-run) — replay the per-node spans.
+        timeline = ReplayEngine.timeline_from_spans(task)
+        states = [ReplayEngine.state_from_spans(task, i) for i in range(len(timeline))]
     return {
         "task_id": task_id,
         "goal": task.goal,
-        "total_turns": len(task.turns),
+        "total_turns": len(timeline),
         "timeline": timeline,
         "states": states,
     }
@@ -766,7 +772,12 @@ You design a WORKFLOW GRAPH on a canvas. Building blocks you control:
 
 PATTERNS (how agents relate — AGENT ORDER MATTERS): sequential (pipeline A→B→C). parallel (independent, simultaneous, results compared). supervisor (the FIRST agent reviews/coordinates the others — put the supervisor first). debate (the LAST agent is the JUDGE who reads the others' independent findings and merges/decides — put the judge last; the others are the debaters). swarm (collaborate with feedback loops — powerful but expensive).
 
-AGENT TYPES: code (execute_code, write_file), research (web_search, fetch_webpage), file (read/write files), memory (store/query facts), plan, rag (knowledge base), ltp (compile-once deterministic plan — cheap + reliable for fixed multi-step procedures), custom (you name the exact tools).
+AGENT TYPES (LLM-driven): code (execute_code, write_file), research (web_search, fetch_webpage), file (read/write files), memory (store/query facts), plan, rag (knowledge base), ltp (compile-once deterministic plan — cheap + reliable for fixed multi-step procedures), custom (you name the exact tools).
+
+DETERMINISTIC STEPS (NO LLM — cheaper, exact, governed): a step can be a plain operation instead of an LLM agent. Set "kind" on an entry:
+- kind="tool": run ONE governed tool directly. Set "tool" (exact tool name) and "args" (JSON; use the placeholder ${{input}} to pass the previous step's output). e.g. {{"kind":"tool","role":"Fetch","tool":"web_search","args":"{{\\"query\\":\\"${{input}}\\"}}"}}.
+- kind="code": run a Python snippet in the sandbox. Set "code". e.g. {{"kind":"code","role":"Sum","code":"print(sum(range(10)))"}}.
+Prefer a deterministic step when the work is a fixed operation (call an API, run a calculation, read/transform a file) and needs no reasoning — it costs no tokens and is exact. Use LLM agents when judgment/reasoning is needed.
 
 TRIGGER (how the workflow STARTS — this is a node you set, do NOT say you 'lack a scheduler'):
 - manual: user clicks Run (default).
@@ -784,7 +795,7 @@ HOW TO REPLY — two parts, in this exact order:
 1) Talk to the user like a real architect pairing with them: what you understood, what you're choosing and WHY (incl. the trigger if it's not manual), and honestly flag anything genuinely missing (e.g. an alerting channel that isn't connected). Warm, specific, concise — 2 to 5 short sentences. Streamed live, so write naturally. Do NOT claim you lack scheduling — you have the trigger node.
 2) Then a line containing EXACTLY {MARKER}
 3) Then ONLY a JSON object (no markdown, no prose after it) — the FULL desired workflow after this request:
-{{"pattern":"sequential|parallel|supervisor|debate|swarm","trigger":{{"type":"manual|cron|interval|scheduled|watch|webhook","cron":"0 * * * *","interval_seconds":3600,"webhook_path":"/hook","watch_command":"","watch_condition":""}},"agents":[{{"type":"code|research|file|memory|plan|rag|ltp|custom","role":"short role name","instructions":"specific actionable instructions","max_turns":3,"tools":["optional exact tool names"]}}],"human_gates":[],"workspace":{{"enabled":false,"name":"","mode":"persistent"}},"suggestions":["2-4 word next-step the user might want, e.g. 'Add a reviewer'","'Run it hourly'","'Add error handling'"],"estimated_cost":"$0.XX","estimated_duration":"XXs","missing":["genuinely-unavailable capabilities only"]}}
+{{"pattern":"sequential|parallel|supervisor|debate|swarm","trigger":{{"type":"manual|cron|interval|scheduled|watch|webhook","cron":"0 * * * *","interval_seconds":3600,"webhook_path":"/hook","watch_command":"","watch_condition":""}},"agents":[{{"type":"code|research|file|memory|plan|rag|ltp|custom","role":"short role name","instructions":"specific actionable instructions","max_turns":3,"tools":["optional exact tool names"],"kind":"(optional) tool|code — a deterministic no-LLM step","tool":"(if kind=tool) exact tool name","args":"(if kind=tool) JSON args, may use ${{input}}","code":"(if kind=code) python snippet"}}],"human_gates":[],"workspace":{{"enabled":false,"name":"","mode":"persistent"}},"suggestions":["2-4 word next-step the user might want, e.g. 'Add a reviewer'","'Run it hourly'","'Add error handling'"],"estimated_cost":"$0.XX","estimated_duration":"XXs","missing":["genuinely-unavailable capabilities only"]}}
 (Only include the trigger sub-fields relevant to the chosen type; omit the others. "suggestions": 2-3 punchy refinements that would genuinely improve THIS workflow — phrased as commands the user could click.)
 
 RULES:

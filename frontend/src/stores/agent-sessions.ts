@@ -11,6 +11,12 @@ export interface TeamAgent {
   max_turns: number;
   instructions: string;
   tools: string[];
+  // Deterministic step (no LLM). When set, this entry becomes a graph "tool"/"code"
+  // node instead of an LLM agent. Absent = a normal agent (back-compat).
+  kind?: "tool" | "code";
+  tool?: string;   // for kind="tool": the governed tool name
+  args?: string;   // for kind="tool": JSON args (supports ${input})
+  code?: string;   // for kind="code": sandboxed python
 }
 
 export interface LiveAgentEvent {

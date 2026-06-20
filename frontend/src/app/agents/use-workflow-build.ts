@@ -68,11 +68,20 @@ export function useWorkflowBuild({ activeId, th, store }: {
             const next = (ev.agents || []).map((a: any) => {
               const match = existing.find(e => e.role && e.role === a.role && !used.has(e.id));
               if (match) used.add(match.id);
-              return {
+              const base = {
                 id: match?.id || newId(), name: match?.name || "", description: "",
                 type: a.type || "custom", role: a.role || "", max_turns: a.max_turns || 5,
                 instructions: a.instructions || "", tools: Array.isArray(a.tools) ? a.tools : [],
               };
+              // Deterministic step (no LLM): the architect can emit kind="tool"/"code".
+              if (a.kind === "tool" || a.kind === "code") {
+                return {
+                  ...base, kind: a.kind, tool: a.tool || "",
+                  args: typeof a.args === "string" ? a.args : JSON.stringify(a.args || {}),
+                  code: a.code || "",
+                };
+              }
+              return base;
             });
             // Trigger (manual / cron / interval / scheduled / watch / webhook).
             const tr = ev.trigger || { type: "manual" };

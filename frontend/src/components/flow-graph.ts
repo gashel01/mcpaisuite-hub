@@ -11,10 +11,28 @@ import type { TriggerType, WorkspaceMode } from "./flow-types";
  */
 export function nodesToAgents(nodes: Node[], prevAgents: TeamAgent[] = []): TeamAgent[] {
   return nodes
-    .filter(n => n.type === "agent")
+    .filter(n => n.type === "agent" || n.type === "tool" || n.type === "code")
     .map(n => {
       const d = n.data as Record<string, unknown>;
       const existing = prevAgents.find(a => a.id === n.id);
+      // Deterministic node (tool/code) → carry its kind/tool/args/code back so the
+      // architect refine loop and persistence keep it.
+      if (n.type === "tool" || n.type === "code") {
+        return {
+          id: n.id,
+          name: (d.label as string) ?? existing?.name ?? "",
+          description: "",
+          type: "custom",
+          role: (d.label as string) ?? existing?.role ?? "",
+          max_turns: existing?.max_turns ?? 5,
+          instructions: "",
+          tools: [],
+          kind: n.type as "tool" | "code",
+          tool: (d.tool as string) ?? existing?.tool ?? "",
+          args: (d.args as string) ?? existing?.args ?? "{}",
+          code: (d.code as string) ?? existing?.code ?? "",
+        } as TeamAgent;
+      }
       return {
         id: n.id,
         name: (d.label as string) ?? existing?.name ?? "",
@@ -149,8 +167,22 @@ export function buildInitialFlow(
       y = yStep + radius + Math.sin(angle) * radius;
     }
 
+    // Use the agent's stable id as the node id so all syncs map by id (no positional
+    // drift when deterministic tool/code nodes are interleaved with agents).
+    const nodeId = a.id || gid();
+    if (a.kind === "tool" || a.kind === "code") {
+      return {
+        id: nodeId, type: a.kind,
+        position: { x, y },
+        data: {
+          kind: a.kind,
+          label: a.name || a.role || (a.kind === "code" ? "Python" : a.tool || "Tool"),
+          tool: a.tool || "", args: a.args || "{}", code: a.code || "",
+        },
+      };
+    }
     return {
-      id: gid(), type: "agent",
+      id: nodeId, type: "agent",
       position: { x, y },
       data: { agentType: a.type, role: a.role, label: a.name || a.role || a.type, maxTurns: a.max_turns, instructions: a.instructions, tools: a.tools || [] },
     };

@@ -5,9 +5,10 @@ import type { TeamAgent } from "@/stores/agent-sessions";
 // Characterization tests — lock the CURRENT behavior of the agents→graph builder
 // before the id-based / deterministic-node refactor, so a regression is caught.
 
+let _idc = 0;
 function agent(partial: Partial<TeamAgent>): TeamAgent {
   return {
-    id: partial.id || "a",
+    id: partial.id || `a${++_idc}`,
     name: partial.name ?? "",
     description: partial.description ?? "",
     type: partial.type ?? "code",
@@ -15,6 +16,7 @@ function agent(partial: Partial<TeamAgent>): TeamAgent {
     max_turns: partial.max_turns ?? 5,
     instructions: partial.instructions ?? "",
     tools: partial.tools ?? [],
+    ...(partial.kind ? { kind: partial.kind, tool: partial.tool, args: partial.args, code: partial.code } : {}),
   } as TeamAgent;
 }
 
@@ -73,6 +75,48 @@ describe("buildInitialFlow — workspace", () => {
   it("adds a workspace node when enabled", () => {
     const { nodes } = buildInitialFlow([agent({})], "sequential", { workspaceEnabled: true, workspaceName: "out" });
     expect(byType(nodes, "workspace")).toHaveLength(1);
+  });
+});
+
+describe("deterministic nodes (kind) — architect wiring", () => {
+  it("buildInitialFlow emits a tool node for kind='tool'", () => {
+    const agents = [agent({ kind: "tool", tool: "web_search", args: '{"q":"x"}', role: "Search" })];
+    const { nodes } = buildInitialFlow(agents, "sequential", {});
+    const tn = byType(nodes, "tool");
+    expect(tn).toHaveLength(1);
+    expect(tn[0].data.tool).toBe("web_search");
+    expect(tn[0].data.kind).toBe("tool");
+    expect(byType(nodes, "agent")).toHaveLength(0);
+  });
+
+  it("buildInitialFlow emits a code node for kind='code'", () => {
+    const agents = [agent({ kind: "code", code: "print(1)", role: "Calc" })];
+    const { nodes } = buildInitialFlow(agents, "sequential", {});
+    const cn = byType(nodes, "code");
+    expect(cn).toHaveLength(1);
+    expect(cn[0].data.code).toBe("print(1)");
+  });
+
+  it("uses the agent id as the node id (stable mapping)", () => {
+    const agents = [agent({ id: "fixed1", role: "A" }), agent({ id: "fixed2", kind: "tool", tool: "calc" })];
+    const { nodes } = buildInitialFlow(agents, "sequential", {});
+    const ids = nodes.map(n => n.id);
+    expect(ids).toContain("fixed1");
+    expect(ids).toContain("fixed2");
+  });
+
+  it("round-trips a mixed agent + tool + code team", () => {
+    const agents = [
+      agent({ id: "x1", type: "research", role: "R" }),
+      agent({ id: "x2", kind: "tool", tool: "web_search", args: '{"q":"1"}' }),
+      agent({ id: "x3", kind: "code", code: "print(2)" }),
+    ];
+    const { nodes } = buildInitialFlow(agents, "sequential", {});
+    const out = nodesToAgents(nodes);
+    expect(out).toHaveLength(3);
+    expect(out.find(a => a.id === "x1")).toMatchObject({ type: "research", role: "R" });
+    expect(out.find(a => a.id === "x2")).toMatchObject({ kind: "tool", tool: "web_search" });
+    expect(out.find(a => a.id === "x3")).toMatchObject({ kind: "code", code: "print(2)" });
   });
 });
 
