@@ -1,7 +1,7 @@
 "use client";
 import { type Node } from "@xyflow/react";
 import { Plus, Trash2, Layout, User, Settings, Sparkles, X, ChevronDown, AlertCircle, Download, Upload, Undo2, Redo2, Copy, Clipboard, Zap, Search, Check, Cpu } from "lucide-react";
-import type { TriggerNodeData, AgentNodeData, ConditionNodeData, HumanNodeData, WorkspaceNodeData, WorkflowNodeData, ToolNodeData } from "./flow-types";
+import type { TriggerNodeData, AgentNodeData, ConditionNodeData, HumanNodeData, WorkspaceNodeData, WorkflowNodeData, ToolNodeData, MapNodeData, Reducer } from "./flow-types";
 import { AGENT_COLORS } from "./flow-nodes";
 import type { TeamAgent } from "@/stores/agent-sessions";
 
@@ -303,6 +303,81 @@ export function NodeInspector({ selectedNode, updateNodeData, availableTools, co
                       </div>
                     </>
                   )}
+                </>
+              );
+            })()}
+
+            {/* Map — dynamic fan-out / map-reduce (Phase 2) */}
+            {selectedNode.type === "map" && (() => {
+              const d = selectedNode.data as MapNodeData;
+              const body = (d.body || { kind: "tool" }) as MapNodeData["body"];
+              const setBody = (patch: Partial<MapNodeData["body"]>) => updateNodeData(selectedNode.id, { body: { ...body, ...patch } });
+              const reducers: Reducer[] = ["append", "concat", "sum", "dedup", "last", "merge"];
+              return (
+                <>
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1">Label</label>
+                    <input value={d.label || ""} onChange={e => updateNodeData(selectedNode.id, { label: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px]" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1">Over (a runtime list — JSON array, or ${"{input}"} from upstream)</label>
+                    <input value={d.over || ""} onChange={e => updateNodeData(selectedNode.id, { over: e.target.value })} placeholder="${input}" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[9px] text-slate-500 block mb-1">Reducer</label>
+                      <select value={d.reducer || "append"} onChange={e => updateNodeData(selectedNode.id, { reducer: e.target.value as Reducer })} className="w-full !py-1.5 !px-2 !text-[11px]">
+                        {reducers.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-slate-500 block mb-1">Max fan-out</label>
+                      <input type="number" min={1} value={d.max_fanout || 50} onChange={e => updateNodeData(selectedNode.id, { max_fanout: Number(e.target.value) })} className="w-full !py-1.5 !px-2 !text-[11px]" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1">Into channel (optional — read elsewhere via ${"{channel:NAME}"})</label>
+                    <input value={d.into || ""} onChange={e => updateNodeData(selectedNode.id, { into: e.target.value })} placeholder="findings" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                  </div>
+                  <div className="rounded-lg border border-purple-500/20 bg-purple-500/[0.04] p-2 space-y-2">
+                    <div className="text-[9px] text-purple-300 font-semibold">Body — runs per item (${"{item}"}, ${"{index}"} available)</div>
+                    <div>
+                      <label className="text-[9px] text-slate-500 block mb-1">Kind</label>
+                      <select value={body.kind || "tool"} onChange={e => setBody({ kind: e.target.value as MapNodeData["body"]["kind"] })} className="w-full !py-1.5 !px-2 !text-[11px]">
+                        {["tool", "code", "agent"].map(k => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    {body.kind === "code" ? (
+                      <div>
+                        <label className="text-[9px] text-slate-500 block mb-1">Python (sandboxed, no LLM)</label>
+                        <textarea value={body.code || ""} onChange={e => setBody({ code: e.target.value })} rows={4} placeholder="# process ${item}" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                      </div>
+                    ) : body.kind === "agent" ? (
+                      <>
+                        <div>
+                          <label className="text-[9px] text-slate-500 block mb-1">Agent type</label>
+                          <select value={body.agentType || "code"} onChange={e => setBody({ agentType: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px] capitalize">
+                            {["code", "research", "file", "memory", "plan", "rag", "ltp", "custom"].map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-slate-500 block mb-1">Instructions (per item)</label>
+                          <textarea value={body.instructions || ""} onChange={e => setBody({ instructions: e.target.value })} rows={3} placeholder="Summarize ${item}" className="w-full !py-1.5 !px-2 !text-[11px]" />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <label className="text-[9px] text-slate-500 block mb-1">Tool (governed, no LLM)</label>
+                          <input value={body.tool || ""} onChange={e => setBody({ tool: e.target.value })} placeholder="web_fetch" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-slate-500 block mb-1">Args (JSON; ${"{item}"} = current element)</label>
+                          <textarea value={body.args || ""} onChange={e => setBody({ args: e.target.value })} rows={3} placeholder='{"url": "${item}"}' className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </>
               );
             })()}

@@ -13,10 +13,17 @@ export interface TeamAgent {
   tools: string[];
   // Deterministic step (no LLM). When set, this entry becomes a graph "tool"/"code"
   // node instead of an LLM agent. Absent = a normal agent (back-compat).
-  kind?: "tool" | "code";
+  // kind="map": a dynamic fan-out (map-reduce) node — see the map fields below.
+  kind?: "tool" | "code" | "map";
   tool?: string;   // for kind="tool": the governed tool name
   args?: string;   // for kind="tool": JSON args (supports ${input})
   code?: string;   // for kind="code": sandboxed python
+  // for kind="map": fan out `body` over `over` (a runtime list) and reduce the results.
+  over?: string;          // a runtime list — JSON array or ${input}
+  reducer?: string;       // append|concat|sum|dedup|last|merge
+  into?: string;          // optional channel to write the reduced result into
+  max_fanout?: number;    // cap on parallel width
+  body?: { kind: "tool" | "code" | "agent"; tool?: string; args?: string; code?: string; agentType?: string; instructions?: string };
 }
 
 export interface LiveAgentEvent {

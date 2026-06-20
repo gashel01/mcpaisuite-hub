@@ -81,6 +81,20 @@ export function useWorkflowBuild({ activeId, th, store }: {
                   code: a.code || "",
                 };
               }
+              // Dynamic fan-out (map-reduce): the architect can emit kind="map".
+              if (a.kind === "map") {
+                const b = a.body || {};
+                return {
+                  ...base, kind: "map",
+                  over: a.over || "${input}", reducer: a.reducer || "append",
+                  into: a.into || "", max_fanout: a.max_fanout || 50,
+                  body: {
+                    kind: b.kind || "tool", tool: b.tool || "",
+                    args: typeof b.args === "string" ? b.args : JSON.stringify(b.args || {}),
+                    code: b.code || "", agentType: b.agentType || "", instructions: b.instructions || "",
+                  },
+                };
+              }
               return base;
             });
             // Trigger (manual / cron / interval / scheduled / watch / webhook).

@@ -439,6 +439,8 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
       newNode = { id, type: "tool", position: { x, y }, data: { kind: "tool", label: "Tool", tool: "web_search", args: "{}", code: "" } };
     } else if (type === "code") {
       newNode = { id, type: "code", position: { x, y }, data: { kind: "code", label: "Python", tool: "", args: "{}", code: "# deterministic python\nprint('hello')" } };
+    } else if (type === "map") {
+      newNode = { id, type: "map", position: { x, y }, data: { label: "Map", over: "${input}", reducer: "append", into: "", max_fanout: 50, body: { kind: "tool", tool: "web_fetch", args: '{"url": "${item}"}', code: "" } } };
     } else return;
 
     setNodes(nds => [...nds, newNode]);
@@ -454,6 +456,11 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
   useEffect(() => {
     if (locked) return;
     const handler = (e: KeyboardEvent) => {
+      // Don't hijack keystrokes while typing in a field (inspector inputs/textareas/selects):
+      // Backspace/Delete must edit text, not delete the selected node; Ctrl+C/V/Z stay native.
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (t?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       const ctrl = e.ctrlKey || e.metaKey;
       if (ctrl && e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       if (ctrl && e.key === "z" && e.shiftKey) { e.preventDefault(); redo(); }
@@ -572,6 +579,7 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
                   <button onClick={() => addNode("workspace")} className="px-2 py-1 text-[9px] font-medium text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 rounded transition-all shrink-0">Workspace</button>
                   <button onClick={() => addNode("tool")} className="px-2 py-1 text-[9px] font-medium text-sky-400 hover:text-sky-300 hover:bg-sky-500/10 rounded transition-all shrink-0" title="Run a governed tool — no LLM">⚙ Tool</button>
                   <button onClick={() => addNode("code")} className="px-2 py-1 text-[9px] font-medium text-sky-400 hover:text-sky-300 hover:bg-sky-500/10 rounded transition-all shrink-0" title="Run sandboxed Python — no LLM (vs the 'code' agent which uses an LLM)">🐍 Python</button>
+                  <button onClick={() => addNode("map")} className="px-2 py-1 text-[9px] font-medium text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded transition-all shrink-0" title="Fan out over a runtime list — run the body in parallel for each item, then reduce">🔀 Map</button>
 
                   {/* Workflows dropdown */}
                   {savedWorkflows.length > 0 && (

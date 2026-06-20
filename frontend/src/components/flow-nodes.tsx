@@ -1,6 +1,6 @@
 import { Handle, Position, BaseEdge, type Node, type NodeProps, type NodeTypes, type EdgeProps, type EdgeTypes } from "@xyflow/react";
 import { Cpu } from "lucide-react";
-import type { AgentNodeData, TriggerNodeData, ConditionNodeData, HumanNodeData, WorkspaceNodeData, EndNodeData, WorkflowNodeData, ToolNodeData } from "./flow-types";
+import type { AgentNodeData, TriggerNodeData, ConditionNodeData, HumanNodeData, WorkspaceNodeData, EndNodeData, WorkflowNodeData, ToolNodeData, MapNodeData } from "./flow-types";
 
 // ── Colors ─────────────────────────────────────────────────────────────────
 
@@ -216,6 +216,34 @@ function ToolNode({ data, selected }: NodeProps<Node<ToolNodeData>>) {
   );
 }
 
+function MapNode({ data, selected }: NodeProps<Node<MapNodeData>>) {
+  const hasError = (data as any).hasError;
+  const runState = (data as any).runState as "idle" | "running" | "done" | undefined;
+  const isActive = runState === "running";
+  const isDone = runState === "done";
+  const color = "#a855f7"; // purple — dynamic fan-out
+  const body = (data.body || {}) as MapNodeData["body"];
+  const bodyLabel = body.kind === "code" ? "python" : body.kind === "agent" ? (body.agentType || "agent") : (body.tool || "tool");
+  return (
+    <div className={`relative px-3 py-2.5 rounded-xl border-2 min-w-[150px] transition-all duration-200 ${selected ? "scale-[1.03]" : ""} ${isActive ? "animate-pulse" : ""}`}
+      style={{ borderColor: hasError ? "rgb(239,68,68)" : isDone ? "rgb(16,185,129)" : (isActive || selected) ? color : color + "50",
+               background: hasError ? "rgba(239,68,68,0.06)" : isDone ? "rgba(16,185,129,0.04)" : "rgba(168,85,247,0.06)",
+               boxShadow: isActive ? `0 0 20px ${color}50` : selected ? `0 0 20px ${color}40` : "none" }}>
+      <TypeTag label="Map · fan-out" color={color} />
+      <Handle type="target" position={Position.Top} className="!w-3 !h-3 !bg-emerald-500 !border-2 !border-emerald-400" />
+      <div className="flex items-center gap-2">
+        <span className="text-sm">🔀</span>
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold text-purple-300 truncate">{data.label || "Map"}</div>
+          <div className="text-[9px] text-slate-500 truncate">each item → {bodyLabel} · {data.reducer || "append"}</div>
+        </div>
+      </div>
+      {hasError && <div className="text-[8px] text-red-400 mt-1">{(data as any).errorReason || "error"}</div>}
+      <Handle type="source" position={Position.Bottom} className="!w-3 !h-3 !bg-violet-500 !border-2 !border-violet-400" />
+    </div>
+  );
+}
+
 export const nodeTypes: NodeTypes = {
   agent: AgentNode,
   trigger: TriggerNode,
@@ -225,6 +253,7 @@ export const nodeTypes: NodeTypes = {
   workflow: WorkflowNode,
   tool: ToolNode,
   code: ToolNode,
+  map: MapNode,
   end: EndNode,
 };
 

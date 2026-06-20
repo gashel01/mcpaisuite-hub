@@ -11,10 +11,30 @@ import type { TriggerType, WorkspaceMode } from "./flow-types";
  */
 export function nodesToAgents(nodes: Node[], prevAgents: TeamAgent[] = []): TeamAgent[] {
   return nodes
-    .filter(n => n.type === "agent" || n.type === "tool" || n.type === "code")
+    .filter(n => n.type === "agent" || n.type === "tool" || n.type === "code" || n.type === "map")
     .map(n => {
       const d = n.data as Record<string, unknown>;
       const existing = prevAgents.find(a => a.id === n.id);
+      // Dynamic fan-out node (map) → carry its map fields back so the architect refine
+      // loop and persistence keep it (it executes from the graph, not the agent list).
+      if (n.type === "map") {
+        return {
+          id: n.id,
+          name: (d.label as string) ?? existing?.name ?? "",
+          description: "",
+          type: "custom",
+          role: (d.label as string) ?? existing?.role ?? "",
+          max_turns: existing?.max_turns ?? 5,
+          instructions: "",
+          tools: [],
+          kind: "map",
+          over: (d.over as string) ?? existing?.over ?? "${input}",
+          reducer: (d.reducer as string) ?? existing?.reducer ?? "append",
+          into: (d.into as string) ?? existing?.into ?? "",
+          max_fanout: (d.max_fanout as number) ?? existing?.max_fanout ?? 50,
+          body: (d.body as TeamAgent["body"]) ?? existing?.body ?? { kind: "tool", tool: "", args: "{}", code: "" },
+        } as TeamAgent;
+      }
       // Deterministic node (tool/code) → carry its kind/tool/args/code back so the
       // architect refine loop and persistence keep it.
       if (n.type === "tool" || n.type === "code") {
@@ -178,6 +198,18 @@ export function buildInitialFlow(
           kind: a.kind,
           label: a.name || a.role || (a.kind === "code" ? "Python" : a.tool || "Tool"),
           tool: a.tool || "", args: a.args || "{}", code: a.code || "",
+        },
+      };
+    }
+    if (a.kind === "map") {
+      return {
+        id: nodeId, type: "map",
+        position: { x, y },
+        data: {
+          label: a.name || a.role || "Map",
+          over: a.over || "${input}", reducer: a.reducer || "append",
+          into: a.into || "", max_fanout: a.max_fanout || 50,
+          body: a.body || { kind: "tool", tool: "", args: "{}", code: "" },
         },
       };
     }

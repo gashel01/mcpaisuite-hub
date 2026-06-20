@@ -17,6 +17,7 @@ function agent(partial: Partial<TeamAgent>): TeamAgent {
     instructions: partial.instructions ?? "",
     tools: partial.tools ?? [],
     ...(partial.kind ? { kind: partial.kind, tool: partial.tool, args: partial.args, code: partial.code } : {}),
+    ...(partial.kind === "map" ? { over: partial.over, reducer: partial.reducer, into: partial.into, max_fanout: partial.max_fanout, body: partial.body } : {}),
   } as TeamAgent;
 }
 
@@ -147,5 +148,28 @@ describe("nodesToAgents — sync-back", () => {
     const out = nodesToAgents(nodes);
     expect(out.map(a => a.role)).toEqual(["A", "B"]);
     expect(out.map(a => a.type)).toEqual(["research", "code"]);
+  });
+
+  it("round-trips a map node (kind=map + its fan-out fields) so the architect/persistence keep it", () => {
+    const nodes = [
+      node("t", "trigger", { triggerType: "manual" }),
+      node("a1", "agent", { agentType: "code", role: "R" }),
+      node("m1", "map", { label: "Fetch all", over: "${input}", reducer: "concat", into: "docs", max_fanout: 20, body: { kind: "tool", tool: "web_fetch", args: '{"url":"${item}"}' } }),
+      node("e", "end", { label: "END" }),
+    ];
+    const out = nodesToAgents(nodes);
+    expect(out.map(a => a.id)).toEqual(["a1", "m1"]);
+    const m = out.find(a => a.id === "m1")!;
+    expect(m).toMatchObject({ kind: "map", over: "${input}", reducer: "concat", into: "docs", max_fanout: 20 });
+    expect(m.body).toMatchObject({ kind: "tool", tool: "web_fetch" });
+  });
+
+  it("round-trips buildInitialFlow → nodesToAgents for a map entry", () => {
+    const agents = [agent({ kind: "map", role: "MapStep", over: "${input}", reducer: "append", max_fanout: 50, body: { kind: "code", code: "print(${item})" } } as any)];
+    const { nodes } = buildInitialFlow(agents, "sequential", {});
+    const mapNode = nodes.find(n => n.type === "map");
+    expect(mapNode).toBeTruthy();
+    const out = nodesToAgents(nodes);
+    expect(out.find(a => a.kind === "map")?.body?.kind).toBe("code");
   });
 });
