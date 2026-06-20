@@ -63,6 +63,11 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
         agent_specs = body.get("agents", [])
         blocking = body.get("blocking", False)  # Allow sync mode for backward compat
         dry_run = body.get("dry_run", False)  # Simulate: no tool executes, record intended calls
+        # Optional linkage to a saved workflow/version — lets Observability offer
+        # "Open in agent view" against the exact saved version (or fall back to the
+        # captured graph when the run isn't linked / the version was deleted).
+        workflow_id = body.get("workflow_id") or body.get("workflowId")
+        version_id = body.get("version_id") or body.get("versionId")
 
         def _agent_llm(d: dict):
             """Resolve a per-agent/per-node connectionId into litellm-ready
@@ -110,6 +115,23 @@ async def create_taskforce(body: dict, x_tenant_id: str = Header(default="")):
         namespace = f"{base_namespace}__run_{task.id[:8]}"
         task.namespace = namespace
         task.status = TaskStatus.running
+        # Persist the topology + saved-workflow linkage so Observability can render the
+        # real node/edge graph (read-only) and offer "Open in agent view". Strip the
+        # pre-resolved private connection fields (_model/_api_key/_base_url) — they hold
+        # credentials and must never reach the client or disk.
+        if pattern == "graph" and graph:
+            import copy as _copy
+            safe_graph = _copy.deepcopy(graph)
+            for _n in (safe_graph.get("nodes") or []):
+                _d = _n.get("data") or {}
+                for _k in ("_model", "_api_key", "_base_url"):
+                    _d.pop(_k, None)
+            task.metadata["graph"] = safe_graph
+            task.metadata["pattern"] = pattern
+        if workflow_id:
+            task.metadata["workflow_id"] = workflow_id
+        if version_id:
+            task.metadata["version_id"] = version_id
         k._tasks[task.id] = task
 
         if pattern == "graph" and graph:

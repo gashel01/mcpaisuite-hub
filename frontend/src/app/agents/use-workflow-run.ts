@@ -152,12 +152,16 @@ export function useWorkflowRun({ canRun, activeId, isRunning, goal, agents, patt
           })),
         };
         if (dryRun) config.dry_run = true;  // simulate: no tool executes, record intended calls
+        // Link the run to its saved workflow/version (when any) so Observability can
+        // offer "Open in agent view" against the exact saved version.
+        if (currentWorkflowId) config.workflow_id = currentWorkflowId;
+        if (currentVersionId) config.version_id = currentVersionId;
 
         // Always send the graph — it's the source of truth (substitute placeholders in node instructions)
         if (hasGraph) {
           config.graph = {
             nodes: flowNodes.map(n => ({ id: n.id, type: n.type, data: (n.data as any)?.instructions ? { ...n.data, instructions: subst((n.data as any).instructions) } : n.data, position: n.position })),
-            edges: flowEdges.map(e => ({ source: e.source, target: e.target, label: e.label, style: e.style })),
+            edges: flowEdges.map(e => ({ id: e.id, source: e.source, target: e.target, label: e.label, style: e.style })),
           };
         }
 

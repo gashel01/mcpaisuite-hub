@@ -435,12 +435,33 @@ async def get_task_replay(task_id: str, x_tenant_id: str = Header(default="")):
         # Graph / TaskForce runs (incl. dry-run) — replay the per-node spans.
         timeline = ReplayEngine.timeline_from_spans(task)
         states = [ReplayEngine.state_from_spans(task, i) for i in range(len(timeline))]
+    # Topology + saved-workflow linkage (graph runs only) — powers the read-only
+    # ExecutionGraph and the "Open in agent view" button in Observability.
+    meta = task.metadata or {}
+    graph = meta.get("graph")
+    workflow_id = meta.get("workflow_id")
+    version_id = meta.get("version_id")
+    workflow_exists = False
+    if workflow_id and version_id:
+        try:
+            from .workflows import _wf_path
+            import os as _os
+            workflow_exists = _os.path.isfile(
+                _os.path.join(_wf_path(workflow_id), "versions", f"{version_id}.json")
+            )
+        except Exception:
+            workflow_exists = False
     return {
         "task_id": task_id,
         "goal": task.goal,
         "total_turns": len(timeline),
         "timeline": timeline,
         "states": states,
+        "graph": graph,
+        "pattern": meta.get("pattern"),
+        "workflow_id": workflow_id,
+        "version_id": version_id,
+        "workflow_exists": workflow_exists,
     }
 
 

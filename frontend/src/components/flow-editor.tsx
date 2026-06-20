@@ -40,6 +40,7 @@ interface FlowEditorProps {
   isRunning?: boolean;
   building?: boolean;
   locked?: boolean;
+  topologyOnly?: boolean;  // Observability: pure read-only viewer — no node/edge selection, no inspector, no drag.
   waitingNodeId?: string | null;
   deniedNodeIds?: string[];
   approvedNodeIds?: string[];
@@ -51,7 +52,7 @@ interface FlowEditorProps {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 
-export default function FlowEditor({ agents, pattern, triggerType: propTriggerType, triggerConfig, workspaceEnabled, workspaceName, workspaceMode, humanGates, errorNodeIds, errorReasons, validationWarnings, graphRef, initialGraph, activeAgentIndex = -1, activeAgentIndices = [], completedAgents = [], isRunning = false, building = false, locked = false, waitingNodeId = null, deniedNodeIds = [], approvedNodeIds = [], revisionNodeIds = [], agentOutputs = {}, onPatternChange, onUpdateFlow }: FlowEditorProps) {
+export default function FlowEditor({ agents, pattern, triggerType: propTriggerType, triggerConfig, workspaceEnabled, workspaceName, workspaceMode, humanGates, errorNodeIds, errorReasons, validationWarnings, graphRef, initialGraph, activeAgentIndex = -1, activeAgentIndices = [], completedAgents = [], isRunning = false, building = false, locked = false, topologyOnly = false, waitingNodeId = null, deniedNodeIds = [], approvedNodeIds = [], revisionNodeIds = [], agentOutputs = {}, onPatternChange, onUpdateFlow }: FlowEditorProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -517,14 +518,14 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={locked ? undefined : onConnect}
-            onNodeClick={(_, node) => { setSelectedNodeId(node.id); setSelectedEdgeId(null); }}
-            onEdgeClick={(_, edge) => { setSelectedEdgeId(edge.id); setSelectedNodeId(null); }}
+            onNodeClick={topologyOnly ? undefined : (_, node) => { setSelectedNodeId(node.id); setSelectedEdgeId(null); }}
+            onEdgeClick={topologyOnly ? undefined : (_, edge) => { setSelectedEdgeId(edge.id); setSelectedNodeId(null); }}
             onPaneClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            nodesDraggable={true}
-            nodesConnectable={!locked}
-            elementsSelectable={true}
+            nodesDraggable={!topologyOnly}
+            nodesConnectable={!locked && !topologyOnly}
+            elementsSelectable={!topologyOnly}
             defaultEdgeOptions={{
               type: "smoothstep",
               markerEnd: { type: MarkerType.ArrowClosed, color: "rgba(139,92,246,0.5)" },

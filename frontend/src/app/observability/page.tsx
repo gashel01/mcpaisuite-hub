@@ -13,6 +13,7 @@ import { useSearchParams } from "next/navigation";
 
 import MetricsBar from "@/components/execution/MetricsBar";
 import ExecutionGraph from "@/components/execution/ExecutionGraph";
+import TopologyView from "@/components/observability/TopologyView";
 import StepDetail from "@/components/execution/StepDetail";
 import { useExecutionStore } from "@/stores/execution";
 import { useTaskStream } from "@/hooks/useTaskStream";
@@ -576,7 +577,7 @@ function ObservabilityInner() {
                     transition={{ duration: 0.2 }}
                     className="absolute inset-0"
                   >
-                    <ExecutionGraph />
+                    <TopologyView taskId={selectedHistoryTask || taskId} tenant={tenant} />
 
                     {/* Status banner */}
                     <AnimatePresence>

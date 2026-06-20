@@ -232,6 +232,48 @@ function AgentsPageInner() {
     })();
   }, [searchParams, wfStore.loaded]); // eslint-disable-line
 
+  // ── Handoff: "Open in agent view" for a run NOT linked to a saved workflow ──
+  // Observability stashes the captured graph in sessionStorage; we load it into a
+  // fresh EDITABLE session (agents reconstructed from the graph nodes) so the user
+  // can run/edit it even though there's no saved workflow/version behind it.
+  const handoffRestored = useRef(false);
+  useEffect(() => {
+    if (handoffRestored.current) return;
+    if (searchParams.get("handoff") !== "1") return;
+    if (!wfStore.loaded) return; // wait so workflow re-linking can resolve (graph still renders regardless)
+    handoffRestored.current = true;
+    let payload: { graph?: { nodes: any[]; edges: any[] }; goal?: string; workflowId?: string; versionId?: string } | null = null;
+    try {
+      const raw = sessionStorage.getItem("agentview_handoff");
+      if (raw) payload = JSON.parse(raw);
+      sessionStorage.removeItem("agentview_handoff");
+    } catch { payload = null; }
+    if (!payload?.graph?.nodes?.length) { setDeepLinkError(true); return; }
+    // Ensure every edge has an id (ReactFlow requirement) so links render.
+    const graph = {
+      nodes: payload.graph.nodes,
+      edges: (payload.graph.edges || []).map((e: any) => ({ ...e, id: e.id || `${e.source}->${e.target}` })),
+    };
+    const agents = nodesToAgents(graph.nodes as any, []);
+    // Re-link to the saved workflow/version when it still exists, so Save keeps
+    // versioning the same workflow; otherwise it's a standalone editable session.
+    const wf = payload.workflowId ? wfStore.getWorkflow(payload.workflowId) : null;
+    const linkable = wf && payload.versionId && wf.versions.some(v => v.id === payload!.versionId);
+    const newSess = store.createSession();
+    store.updateConfig(newSess, { goal: payload.goal || "", pattern: "graph", agents });
+    useAgentSessionStore.setState(s => ({
+      sessions: s.sessions.map(sess => sess.id === newSess ? {
+        ...sess, graph, readOnly: false,
+        ...(linkable ? { workflowId: payload!.workflowId, versionId: payload!.versionId, workflowName: wf!.name } : {}),
+      } : sess),
+    }));
+    store.setActive(newSess);
+    // Neutralize the URL-restore effect (it would otherwise create a duplicate session
+    // when the URL-sync effect adds ?wf=&v= for the now-linked session).
+    urlRestored.current = true;
+    navRouter.replace("/agents", { scroll: false });
+  }, [searchParams, wfStore.loaded]); // eslint-disable-line
+
   // ── URL sync: update URL when active session changes ──
   useEffect(() => {
     if (!activeId) return;
@@ -247,8 +289,11 @@ function AgentsPageInner() {
     }
   }, [activeId, sessions.find(s => s.id === activeId)?.workflowId, sessions.find(s => s.id === activeId)?.versionId, sessions.find(s => s.id === activeId)?.runId]); // eslint-disable-line
 
-  // Create initial session if none exist
+  // Create initial session if none exist — but NOT while a deep-link/handoff restore is
+  // pending, or we'd flash an empty session ("new tab") and race the restored one.
   useEffect(() => {
+    if (searchParams.get("handoff") === "1" && !handoffRestored.current) return;
+    if (searchParams.get("wf") && !urlRestored.current) return;
     if (sessions.length === 0 && !activeId) {
       store.createSession();
     }
