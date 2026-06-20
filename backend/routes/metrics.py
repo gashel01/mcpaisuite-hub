@@ -200,6 +200,41 @@ def _percentile(values: list[float], p: float) -> float:
     return sorted_v[lower] * (1 - frac) + sorted_v[upper] * frac
 
 
+def _core_window_metrics(tasks: list[dict]) -> dict:
+    """Core per-window aggregation — single source of truth shared by /metrics/summary
+    (dashboard JSON) and the Prometheus /metrics endpoint, so the math isn't duplicated."""
+    total = len(tasks)
+    completed = sum(1 for t in tasks if t.get("status") == "completed")
+    failed = sum(1 for t in tasks if t.get("status") == "failed")
+    durations = [t.get("duration_ms", 0) for t in tasks if t.get("duration_ms")]
+    return {
+        "total_tasks": total,
+        "completed": completed,
+        "failed": failed,
+        "success_rate": (completed / (completed + failed) * 100) if (completed + failed) > 0 else 0.0,
+        "total_cost": sum(t.get("total_cost", 0.0) for t in tasks),
+        "total_tokens": sum(t.get("total_tokens", 0) for t in tasks),
+        "avg_latency": sum(durations) / len(durations) if durations else 0.0,
+        "p50_latency": _percentile(durations, 50),
+        "p95_latency": _percentile(durations, 95),
+    }
+
+
+@router.get("/metrics")
+async def prometheus_metrics(
+    window: str = Query("24h"),
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-Id"),
+):
+    """Prometheus exposition of the Hub's task-store analytics (reuses the same per-window
+    aggregation as the dashboard). Empty body unless kernelmcp[metrics] is installed."""
+    from fastapi import Response
+    from kernelmcp.observability.metrics import render_snapshot
+    now = datetime.now(timezone.utc).timestamp()
+    tasks = _get_tasks_in_window(x_tenant_id, now - _parse_window(window), now)
+    body, ct = render_snapshot(_core_window_metrics(tasks))
+    return Response(content=body, media_type=ct)
+
+
 @router.get("/metrics/timeseries")
 async def timeseries(
     metric: str = Query(..., description="One of: latency, cost, tokens, success_rate, turns, throughput"),
@@ -258,17 +293,16 @@ async def summary(
     # Previous period (for trends)
     prev_tasks = _get_tasks_in_window(x_tenant_id, prev_start_ts, start_ts)
 
-    total_tasks = len(tasks)
-    completed = sum(1 for t in tasks if t.get("status") == "completed")
-    failed = sum(1 for t in tasks if t.get("status") == "failed")
-    success_rate = (completed / (completed + failed) * 100) if (completed + failed) > 0 else 0.0
-    total_cost = sum(t.get("total_cost", 0.0) for t in tasks)
-    total_tokens = sum(t.get("total_tokens", 0) for t in tasks)
-
-    durations = [t.get("duration_ms", 0) for t in tasks if t.get("duration_ms")]
-    avg_latency = sum(durations) / len(durations) if durations else 0.0
-    p50_latency = _percentile(durations, 50)
-    p95_latency = _percentile(durations, 95)
+    core = _core_window_metrics(tasks)
+    total_tasks = core["total_tasks"]
+    completed = core["completed"]
+    failed = core["failed"]
+    success_rate = core["success_rate"]
+    total_cost = core["total_cost"]
+    total_tokens = core["total_tokens"]
+    avg_latency = core["avg_latency"]
+    p50_latency = core["p50_latency"]
+    p95_latency = core["p95_latency"]
 
     turns_list = [t.get("total_turns", 0) for t in tasks if t.get("total_turns")]
     avg_turns = sum(turns_list) / len(turns_list) if turns_list else 0.0
