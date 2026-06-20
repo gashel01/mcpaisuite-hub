@@ -3,6 +3,32 @@ import type { TeamAgent } from "@/stores/agent-sessions";
 import type { TriggerType, WorkspaceMode } from "./flow-types";
 
 /**
+ * Rebuild the team's agent list from the canvas nodes (sync-back).
+ * Pure so it can be unit-tested; the page's onUpdateFlow delegates here.
+ * Current behavior: only "agent" nodes become TeamAgents; their data fields map
+ * back, falling back to the previous agent entry (matched by node id) when a
+ * field is absent.
+ */
+export function nodesToAgents(nodes: Node[], prevAgents: TeamAgent[] = []): TeamAgent[] {
+  return nodes
+    .filter(n => n.type === "agent")
+    .map(n => {
+      const d = n.data as Record<string, unknown>;
+      const existing = prevAgents.find(a => a.id === n.id);
+      return {
+        id: n.id,
+        name: (d.label as string) ?? existing?.name ?? "",
+        description: (d.description as string) ?? existing?.description ?? "",
+        type: (d.agentType as string) ?? existing?.type ?? "custom",
+        role: (d.role as string) ?? existing?.role ?? "",
+        max_turns: (d.maxTurns as number) ?? existing?.max_turns ?? 5,
+        instructions: (d.instructions as string) ?? existing?.instructions ?? "",
+        tools: (d.tools as string[]) ?? existing?.tools ?? [],
+      } as TeamAgent;
+    });
+}
+
+/**
  * Check if adding an edge from `sourceId` to `targetId` would create a cycle.
  * Does a DFS from `targetId` following existing edges — if we can reach `sourceId`, it's a cycle.
  * No dependency on trigger node.

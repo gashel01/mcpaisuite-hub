@@ -422,6 +422,10 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
       newNode = { id, type: "workspace", position: { x, y }, data: { workspaceName: "output", workspaceMode: "isolated", label: "Workspace" } };
     } else if (type === "trigger") {
       newNode = { id, type: "trigger", position: { x, y: 0 }, data: { triggerType: "manual", label: "Manual Run" } };
+    } else if (type === "tool") {
+      newNode = { id, type: "tool", position: { x, y }, data: { kind: "tool", label: "Tool", tool: "web_search", args: "{}", code: "" } };
+    } else if (type === "code") {
+      newNode = { id, type: "code", position: { x, y }, data: { kind: "code", label: "Python", tool: "", args: "{}", code: "# deterministic python\nprint('hello')" } };
     } else return;
 
     setNodes(nds => [...nds, newNode]);
@@ -553,6 +557,8 @@ export default function FlowEditor({ agents, pattern, triggerType: propTriggerTy
                   <button onClick={() => addNode("condition")} className="px-2 py-1 text-[9px] font-medium text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 rounded transition-all shrink-0">Condition</button>
                   <button onClick={() => addNode("human")} className="px-2 py-1 text-[9px] font-medium text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded transition-all flex items-center gap-1 shrink-0"><User className="h-2.5 w-2.5" /> Human</button>
                   <button onClick={() => addNode("workspace")} className="px-2 py-1 text-[9px] font-medium text-teal-400 hover:text-teal-300 hover:bg-teal-500/10 rounded transition-all shrink-0">Workspace</button>
+                  <button onClick={() => addNode("tool")} className="px-2 py-1 text-[9px] font-medium text-sky-400 hover:text-sky-300 hover:bg-sky-500/10 rounded transition-all shrink-0" title="Run a governed tool — no LLM">⚙ Tool</button>
+                  <button onClick={() => addNode("code")} className="px-2 py-1 text-[9px] font-medium text-sky-400 hover:text-sky-300 hover:bg-sky-500/10 rounded transition-all shrink-0" title="Run sandboxed Python — no LLM (vs the 'code' agent which uses an LLM)">🐍 Python</button>
 
                   {/* Workflows dropdown */}
                   {savedWorkflows.length > 0 && (

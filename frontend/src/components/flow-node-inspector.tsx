@@ -1,7 +1,7 @@
 "use client";
 import { type Node } from "@xyflow/react";
 import { Plus, Trash2, Layout, User, Settings, Sparkles, X, ChevronDown, AlertCircle, Download, Upload, Undo2, Redo2, Copy, Clipboard, Zap, Search, Check, Cpu } from "lucide-react";
-import type { TriggerNodeData, AgentNodeData, ConditionNodeData, HumanNodeData, WorkspaceNodeData, WorkflowNodeData } from "./flow-types";
+import type { TriggerNodeData, AgentNodeData, ConditionNodeData, HumanNodeData, WorkspaceNodeData, WorkflowNodeData, ToolNodeData } from "./flow-types";
 import { AGENT_COLORS } from "./flow-nodes";
 import type { TeamAgent } from "@/stores/agent-sessions";
 
@@ -238,6 +238,71 @@ export function NodeInspector({ selectedNode, updateNodeData, availableTools, co
                     <label className="text-[9px] text-slate-500 block mb-1">Expression</label>
                     <input value={d.expression || ""} onChange={e => updateNodeData(selectedNode.id, { expression: e.target.value })} placeholder="output.length > 100" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
                   </div>
+                </>
+              );
+            })()}
+
+            {/* Tool / Code — deterministic node (no LLM) */}
+            {(selectedNode.type === "tool" || selectedNode.type === "code") && (() => {
+              const d = selectedNode.data as ToolNodeData;
+              const isCode = selectedNode.type === "code";
+              return (
+                <>
+                  <div>
+                    <label className="text-[9px] text-slate-500 block mb-1">Label</label>
+                    <input value={d.label || ""} onChange={e => updateNodeData(selectedNode.id, { label: e.target.value })} className="w-full !py-1.5 !px-2 !text-[11px]" />
+                  </div>
+                  {isCode ? (
+                    <div>
+                      <label className="text-[9px] text-slate-500 block mb-1">Python (runs in the sandbox, no LLM)</label>
+                      <textarea value={d.code || ""} onChange={e => updateNodeData(selectedNode.id, { code: e.target.value })} rows={5} placeholder="# deterministic python" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="text-[9px] text-slate-500 block mb-1">Tool (governed, no LLM)</label>
+                        {availableTools.length > 0 ? (() => {
+                          const catColor = (c: string) => c === "mcp" ? "text-sky-300 bg-sky-500/12" : c === "langchain" ? "text-amber-300 bg-amber-500/12" : "text-violet-300 bg-violet-500/12";
+                          const cats: ("all" | "built-in" | "mcp" | "langchain")[] = ["all", "built-in", "mcp", "langchain"];
+                          const catCount = (c: string) => c === "all" ? availableTools.length : availableTools.filter(t => t.category === c).length;
+                          const q = toolSearch.trim().toLowerCase();
+                          const filtered = availableTools.filter(t =>
+                            (toolCat === "all" || t.category === toolCat) &&
+                            (!q || t.name.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q)));
+                          return (
+                            <div className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-1.5 space-y-1.5">
+                              <div className="relative">
+                                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-2.5 w-2.5 text-slate-600" />
+                                <input value={toolSearch} onChange={e => setToolSearch(e.target.value)} placeholder="Search installed tools / MCP…" className="w-full !pl-6 !py-1 !text-[10px] !bg-[#08080f] !border-white/[0.06]" />
+                              </div>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {cats.map(c => catCount(c) > 0 || c === "all" ? (
+                                  <button key={c} onClick={() => setToolCat(c)} className={`px-1.5 py-0.5 text-[8px] font-medium rounded-full capitalize transition-all ${toolCat === c ? "bg-sky-500/20 text-sky-200" : "text-slate-500 hover:text-slate-300 bg-white/[0.03]"}`}>{c === "all" ? "All" : c} {catCount(c)}</button>
+                                ) : null)}
+                              </div>
+                              <div className="max-h-44 overflow-y-auto space-y-0.5">
+                                {filtered.map(t => (
+                                  <button key={t.name} onClick={() => updateNodeData(selectedNode.id, { tool: t.name })}
+                                    className={`w-full flex items-center gap-1.5 px-2 py-1 rounded text-left transition-all ${d.tool === t.name ? "bg-sky-500/15 border border-sky-500/30" : "hover:bg-white/[0.03] border border-transparent"}`}>
+                                    <span className="font-mono text-[10px] text-slate-200 truncate">{t.name}</span>
+                                    <span className={`ml-auto shrink-0 px-1 py-[0.5px] rounded text-[7px] ${catColor(t.category)}`}>{t.category}</span>
+                                  </button>
+                                ))}
+                                {filtered.length === 0 && <div className="text-[9px] text-slate-600 px-2 py-1">No matching tool.</div>}
+                              </div>
+                              {d.tool && <div className="text-[9px] text-sky-300 px-0.5">selected: <span className="font-mono">{d.tool}</span></div>}
+                            </div>
+                          );
+                        })() : (
+                          <input value={d.tool || ""} onChange={e => updateNodeData(selectedNode.id, { tool: e.target.value })} placeholder="web_search" className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-slate-500 block mb-1">Args (JSON; use ${"{input}"} for the upstream output)</label>
+                        <textarea value={d.args || ""} onChange={e => updateNodeData(selectedNode.id, { args: e.target.value })} rows={3} placeholder='{"query": "${input}"}' className="w-full !py-1.5 !px-2 !text-[11px] font-mono" />
+                      </div>
+                    </>
+                  )}
                 </>
               );
             })()}

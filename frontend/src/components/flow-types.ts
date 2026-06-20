@@ -10,3 +10,5 @@ export interface HumanNodeData { label: string; instructions: string; [key: stri
 export interface WorkspaceNodeData { workspaceName: string; workspaceMode: WorkspaceMode; label: string; [key: string]: unknown; }
 export interface EndNodeData { label: string; [key: string]: unknown; }
 export interface WorkflowNodeData { templateId: string; templateName: string; label: string; agentCount: number; pattern: string; description: string; [key: string]: unknown; }
+// Deterministic node: runs a governed tool (kind="tool") or sandboxed Python (kind="code"), no LLM.
+export interface ToolNodeData { kind: "tool" | "code"; label: string; tool: string; args: string; code: string; [key: string]: unknown; }

@@ -17,6 +17,7 @@ import { renderMarkdown } from "@/components/markdown";
 import { useTenant, tenantHeaders } from "@/context/tenant";
 import { useAgentSessionStore, type TeamAgent, type LiveAgentEvent, type AgentSession } from "@/stores/agent-sessions";
 import FlowEditor from "@/components/flow-editor";
+import { nodesToAgents } from "@/components/flow-graph";
 
 // Extracted modules
 import { AGENT_META, TEMPLATES, PATTERNS, newId, sseRefs, type Pattern, type AgentInfo, type Template } from "./constants";
@@ -770,22 +771,8 @@ function AgentsPageInner() {
               });
               return outputs;
             })()} graphRef={flowGraphRef} initialGraph={session?.graph} onPatternChange={(p) => setPattern(p as Pattern)} onUpdateFlow={(nodes, edges) => {
-              // Sync agent nodes back to store
-              const agentNodes = nodes.filter(n => n.type === "agent");
-              const synced: TeamAgent[] = agentNodes.map(n => {
-                const d = n.data as any;
-                const existing = agents.find(a => a.id === n.id);
-                return {
-                  id: n.id,
-                  name: d.label ?? existing?.name ?? "",
-                  description: d.description ?? existing?.description ?? "",
-                  type: d.agentType ?? existing?.type ?? "custom",
-                  role: d.role ?? existing?.role ?? "",
-                  max_turns: d.maxTurns ?? existing?.max_turns ?? 5,
-                  instructions: d.instructions ?? existing?.instructions ?? "",
-                  tools: d.tools ?? existing?.tools ?? [],
-                };
-              });
+              // Sync agent nodes back to store (pure helper — unit-tested in flow-graph.test.ts)
+              const synced: TeamAgent[] = nodesToAgents(nodes, agents);
               // Only write back when VALUES actually changed — the debounced sync fires on
               // every node touch (incl. React Flow's own measurements), and an unconditional
               // store write here would re-render → re-measure → sync → … a CPU-burning loop
@@ -822,7 +809,7 @@ function AgentsPageInner() {
               const getLabel = (n: any) => (n.data as any).label || (n.data as any).role || (n.data as any).agentType || n.type || "?";
 
               // Agents without role
-              for (const n of agentNodes) {
+              for (const n of nodes.filter(n => n.type === "agent")) {
                 const d = n.data as any;
                 if (!(d.role ?? "").trim()) reasons[n.id] = "missing role";
               }
