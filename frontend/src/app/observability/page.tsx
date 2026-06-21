@@ -6,7 +6,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from "rea
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity, Download, ArrowLeft, PanelRightOpen, PanelRightClose,
-  History, X, Menu, Copy, Check,
+  History, X, Menu, Copy, Check, PencilRuler,
 } from "lucide-react";
 import { RefreshButton } from "@/components/ui/RefreshButton";
 import { useSearchParams } from "next/navigation";
@@ -123,6 +123,15 @@ function ObservabilityInner() {
   // ── Trace mode: right panel sub-tab ────────────────────────────────────
   const [traceSub, setTraceSub] = useState<"events" | "spans" | "stats" | "replay" | "plan">("events");
   const [copiedTrace, setCopiedTrace] = useState(false);
+  // The "Plan" tab only exists for runs that compiled an LTP plan (LTP/Hybrid) — ReAct
+  // runs have none, so we hide the tab entirely instead of showing an empty state.
+  const [activeHasPlan, setActiveHasPlan] = useState(false);
+  // "Open in agent view" handler, surfaced by TopologyView only for graph/topology runs.
+  // Stored as a function (the () => fn wrapper avoids React's updater-function semantics).
+  const [openAgentView, setOpenAgentView] = useState<(() => void) | null>(null);
+  const handleOpenHandler = useCallback((fn: (() => void) | null) => {
+    setOpenAgentView(() => fn);
+  }, []);
 
   // ── Dashboard mode: right panel sub-tab ────────────────────────────────
   const [dashSub, setDashSub] = useState<"alerts" | "queue" | "insights">("alerts");
@@ -131,6 +140,20 @@ function ObservabilityInner() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [selectedHistoryTask, setSelectedHistoryTask] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Does the active run have a compiled plan? (gates the "Plan" subtab)
+  useEffect(() => {
+    const id = taskId || selectedHistoryTask;
+    if (!id) { setActiveHasPlan(false); return; }
+    let cancelled = false;
+    apiFetch<{ has_plan?: boolean }>(`/tasks/${id}/plan`, { tenant })
+      .then(r => { if (!cancelled) setActiveHasPlan(!!r.has_plan); })
+      .catch(() => { if (!cancelled) setActiveHasPlan(false); });
+    return () => { cancelled = true; };
+  }, [taskId, selectedHistoryTask, tenant]);
+  useEffect(() => {
+    if (!activeHasPlan && traceSub === "plan") setTraceSub("events");
+  }, [activeHasPlan, traceSub]);
 
   // ── Scope: local Hub tasks, or a connected remote kernel's ingested runs ──
   // Keeps the history list to ONE source at a time so local stays clean by default.
@@ -577,7 +600,7 @@ function ObservabilityInner() {
                     transition={{ duration: 0.2 }}
                     className="absolute inset-0"
                   >
-                    <TopologyView taskId={selectedHistoryTask || taskId} tenant={tenant} />
+                    <TopologyView taskId={selectedHistoryTask || taskId} tenant={tenant} onOpenHandler={handleOpenHandler} />
 
                     {/* Status banner */}
                     <AnimatePresence>
@@ -596,7 +619,7 @@ function ObservabilityInner() {
                             <div className={`h-1.5 w-1.5 rounded-full ${viewState === "completed" ? "bg-emerald-400" : "bg-violet-400"}`} />
                             <span className="hidden sm:inline">{viewState === "completed" ? "Task completed" : "Viewing trace"}</span>
                             <span className="sm:hidden">{viewState === "completed" ? "Done" : "Trace"}</span>
-                            {(["events", "spans", "stats", "replay", "plan"] as const).map(t => (
+                            {(["events", "spans", "stats", "replay", "plan"] as const).filter(t => t !== "plan" || activeHasPlan).map(t => (
                               <button
                                 key={t}
                                 onClick={() => { setTraceSub(t); if (isMobile) setMobilePanel("right"); }}
@@ -607,13 +630,21 @@ function ObservabilityInner() {
                                 {t === "events" ? "Events" : t === "spans" ? "Spans" : t === "stats" ? "Stats" : t === "replay" ? "Replay" : "Plan"}
                               </button>
                             ))}
+                            {openAgentView && (
+                              <button
+                                onClick={openAgentView}
+                                data-tooltip="Open this run's topology in the agent view to run or edit it"
+                                className="flex items-center justify-center p-1 rounded-full transition-colors touch-target bg-white/[0.06] hover:bg-white/[0.1]"
+                              >
+                                <PencilRuler className="h-2.5 w-2.5 text-violet-300" />
+                              </button>
+                            )}
                             <button
                               onClick={copyTrace}
-                              data-tooltip="Copy trace as JSON"
-                              className="flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors text-[9px] sm:text-[10px] touch-target bg-white/[0.06] hover:bg-white/[0.1]"
+                              data-tooltip={copiedTrace ? "Copied" : "Copy trace as JSON"}
+                              className="flex items-center justify-center p-1 rounded-full transition-colors touch-target bg-white/[0.06] hover:bg-white/[0.1]"
                             >
                               {copiedTrace ? <Check className="h-2.5 w-2.5 text-emerald-400" /> : <Copy className="h-2.5 w-2.5" />}
-                              <span className="hidden sm:inline">{copiedTrace ? "Copied" : "Copy"}</span>
                             </button>
                           </div>
                         </motion.div>
@@ -665,7 +696,7 @@ function ObservabilityInner() {
             >
               <RightPanelContent
                 mode={mode}
-                traceSub={traceSub} setTraceSub={setTraceSub}
+                traceSub={traceSub} setTraceSub={setTraceSub} hasPlan={activeHasPlan}
                 dashSub={dashSub} setDashSub={setDashSub}
                 isLive={isLive}
                 executionEvents={executionEvents}
@@ -780,7 +811,7 @@ function ObservabilityInner() {
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 <RightPanelContent
                   mode={mode}
-                  traceSub={traceSub} setTraceSub={setTraceSub}
+                  traceSub={traceSub} setTraceSub={setTraceSub} hasPlan={activeHasPlan}
                   dashSub={dashSub} setDashSub={setDashSub}
                   isLive={isLive}
                   executionEvents={executionEvents}

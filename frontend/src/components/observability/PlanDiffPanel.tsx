@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { GitCompare, ListTree, RefreshCw } from "lucide-react";
+import { GitCompare, ListTree, RefreshCw, X, RotateCcw } from "lucide-react";
 import { Spinner } from "@/components/ui/Spinner";
 import { apiFetch } from "@/lib/api";
 
@@ -31,17 +31,17 @@ type DiffResp = {
   b: { steps: Step[] };
 };
 
-function StepRow({ s, tone }: { s: Step; tone: "neutral" | "added" | "removed" | "changed" }) {
+function StepRow({ s, tone, onClick }: { s: Step; tone: "neutral" | "added" | "removed" | "changed"; onClick?: () => void }) {
   const cls = {
-    neutral: "border-white/[0.06] bg-white/[0.015] text-slate-300",
-    added: "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-200",
-    removed: "border-red-500/30 bg-red-500/[0.06] text-red-200 line-through opacity-70",
-    changed: "border-amber-500/30 bg-amber-500/[0.06] text-amber-200",
+    neutral: "border-white/[0.06] bg-white/[0.015] text-slate-300 hover:border-white/[0.14]",
+    added: "border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-200 hover:border-emerald-500/50",
+    removed: "border-red-500/30 bg-red-500/[0.06] text-red-200 line-through opacity-70 hover:border-red-500/50",
+    changed: "border-amber-500/30 bg-amber-500/[0.06] text-amber-200 hover:border-amber-500/50",
   }[tone];
   const mark = { neutral: "", added: "+", removed: "−", changed: "~" }[tone];
   const argStr = Object.keys(s.args || {}).length ? JSON.stringify(s.args) : "";
   return (
-    <div className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-mono ${cls}`}>
+    <button onClick={onClick} className={`w-full text-left rounded-lg border px-2.5 py-1.5 text-[11px] font-mono transition-colors cursor-pointer ${cls}`}>
       <div className="flex items-center gap-1.5">
         {mark && <span className="font-semibold">{mark}</span>}
         <span className="text-slate-500">{s.id}</span>
@@ -51,6 +51,44 @@ function StepRow({ s, tone }: { s: Step; tone: "neutral" | "added" | "removed" |
         {s.is_foreach && <span className="ml-auto text-[9px] text-indigo-300/70">foreach</span>}
       </div>
       {argStr && <div className="mt-0.5 text-[10px] text-slate-500 truncate">{argStr}</div>}
+    </button>
+  );
+}
+
+function StepModal({ step, onClose }: { step: Step; onClose: () => void }) {
+  const rows: [string, string][] = [
+    ["Step", step.id],
+    ["Tool", step.tool],
+    ...(step.output_var ? [["Output var", step.output_var] as [string, string]] : []),
+    ...(step.goto ? [["Goto", step.goto] as [string, string]] : []),
+    ...(step.parallel_group ? [["Parallel group", step.parallel_group] as [string, string]] : []),
+    ...(step.is_foreach ? [["Foreach", "yes"] as [string, string]] : []),
+    ...(step.condition ? [["Condition", step.condition] as [string, string]] : []),
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-xl border border-white/[0.08] bg-[#0e0e12] shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] sticky top-0 bg-[#0e0e12]">
+          <span className="text-sm font-semibold text-slate-200 font-mono">{step.id} · {step.tool}</span>
+          <button onClick={onClose} className="text-slate-500 hover:text-white"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+            {rows.map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="text-slate-500">{k}</dt>
+                <dd className="text-slate-200 font-mono break-words">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Arguments</div>
+            <pre className="text-[11px] text-slate-300 bg-white/[0.02] border border-white/[0.06] rounded-lg p-3 overflow-x-auto whitespace-pre-wrap">
+{Object.keys(step.args || {}).length ? JSON.stringify(step.args, null, 2) : "(none)"}
+            </pre>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -63,6 +101,7 @@ export default function PlanDiffPanel({ taskId, namespace }: { taskId: string; n
   const [diff, setDiff] = useState<DiffResp | null>(null);
   const [diffing, setDiffing] = useState(false);
   const [err, setErr] = useState("");
+  const [modalStep, setModalStep] = useState<Step | null>(null);
 
   useEffect(() => {
     if (!taskId) return;
@@ -135,6 +174,12 @@ export default function PlanDiffPanel({ taskId, namespace }: { taskId: string; n
           ))}
         </select>
         {diffing && <Spinner icon={RefreshCw} className="h-3 w-3 text-slate-500" />}
+        {diff && !diffing && (
+          <button onClick={() => runDiff("")} data-tooltip="Reset comparison"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-white bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.12] shrink-0">
+            <RotateCcw className="h-3 w-3" /> Reset
+          </button>
+        )}
       </div>
 
       {err && <p className="text-[11px] text-red-400">{err}</p>}
@@ -159,20 +204,22 @@ export default function PlanDiffPanel({ taskId, namespace }: { taskId: string; n
       {!diff ? (
         <div className="space-y-1.5">
           <div className="text-[10px] uppercase tracking-wide text-slate-500">{plan?.goal?.slice(0, 60) || "Plan"} · {leftSteps.length} steps</div>
-          {leftSteps.map(s => <StepRow key={s.id} s={s} tone="neutral" />)}
+          {leftSteps.map(s => <StepRow key={s.id} s={s} tone="neutral" onClick={() => setModalStep(s)} />)}
         </div>
       ) : (
         <div className="flex gap-3">
           <div className="flex-1 min-w-0 space-y-1.5">
             <div className="text-[10px] uppercase tracking-wide text-slate-500">This run (A)</div>
-            {diff.a.steps.map(s => <StepRow key={s.id} s={s} tone={toneFor(s.id, "a")} />)}
+            {diff.a.steps.map(s => <StepRow key={s.id} s={s} tone={toneFor(s.id, "a")} onClick={() => setModalStep(s)} />)}
           </div>
           <div className="flex-1 min-w-0 space-y-1.5">
             <div className="text-[10px] uppercase tracking-wide text-slate-500">Compared (B)</div>
-            {diff.b.steps.map(s => <StepRow key={s.id} s={s} tone={toneFor(s.id, "b")} />)}
+            {diff.b.steps.map(s => <StepRow key={s.id} s={s} tone={toneFor(s.id, "b")} onClick={() => setModalStep(s)} />)}
           </div>
         </div>
       )}
+
+      {modalStep && <StepModal step={modalStep} onClose={() => setModalStep(null)} />}
     </div>
   );
 }

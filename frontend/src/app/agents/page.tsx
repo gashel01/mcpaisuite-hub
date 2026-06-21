@@ -244,9 +244,10 @@ function AgentsPageInner() {
     handoffRestored.current = true;
     let payload: { graph?: { nodes: any[]; edges: any[] }; goal?: string; workflowId?: string; versionId?: string } | null = null;
     try {
-      const raw = sessionStorage.getItem("agentview_handoff");
+      // localStorage (not sessionStorage) so the handoff survives opening /agents in a NEW tab.
+      const raw = localStorage.getItem("agentview_handoff");
       if (raw) payload = JSON.parse(raw);
-      sessionStorage.removeItem("agentview_handoff");
+      localStorage.removeItem("agentview_handoff");
     } catch { payload = null; }
     if (!payload?.graph?.nodes?.length) { setDeepLinkError(true); return; }
     // Ensure every edge has an id (ReactFlow requirement) so links render.

@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { PencilRuler } from "lucide-react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { apiFetch } from "@/lib/api";
 import { tenantHeaders } from "@/context/tenant";
+import { useExecutionStore } from "@/stores/execution";
 import FlowEditor from "@/components/flow-editor";
 import ExecutionGraph from "@/components/execution/ExecutionGraph";
 
@@ -26,18 +25,22 @@ interface ReplayMeta {
  * mode) — real node names + types instead of the generic "Turn 1/2/3" chain.
  * Temporal ordering (incl. parallel overlap) stays in the Spans waterfall by design.
  *
- * Falls back to the live event-derived ExecutionGraph for chat / single-agent runs
- * (which have no stored topology).
+ * Falls back to the live event-derived ExecutionGraph for chat / single-agent runs.
  *
- * "Open in agent view" lets the user run/edit the run:
- *  - linked to a still-saved workflow/version → deep-link `/agents?wf=&v=` (editable).
- *  - otherwise (unlinked or version deleted) → hand the captured graph off via
- *    sessionStorage so the agent view can load an editable copy with no saved workflow.
+ * Clicking a topology node selects the matching event/step (like ExecutionGraph), and
+ * the "Open in agent view" action is exposed to the parent via `onOpenHandler` so the
+ * button can live in the shared floating toolbar.
  */
-export default function TopologyView({ taskId, tenant }: { taskId: string | null; tenant: string }) {
-  const router = useRouter();
+export default function TopologyView({ taskId, tenant, onOpenHandler }: {
+  taskId: string | null;
+  tenant: string;
+  onOpenHandler?: (open: (() => void) | null) => void;
+}) {
   const [meta, setMeta] = useState<ReplayMeta | null>(null);
   const graphRef = useRef<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
+  const events = useExecutionStore(s => s.events);
+  const setActiveEvent = useExecutionStore(s => s.setActiveEvent);
+  const setDrawerOpen = useExecutionStore(s => s.setDrawerOpen);
 
   useEffect(() => {
     if (!taskId) { setMeta(null); return; }
@@ -53,35 +56,52 @@ export default function TopologyView({ taskId, tenant }: { taskId: string | null
     return () => { cancelled = true; };
   }, [taskId, tenant]);
 
-  // Normalize the persisted graph: ReactFlow requires a unique `id` on every edge,
-  // but older runs were stored with edges lacking it → links wouldn't render. Synthesize
-  // a stable id from source→target when missing so the topology always shows its links.
-  const graph = (() => {
+  // Normalize the persisted graph (synthesize missing edge ids). Memoized on `meta` so
+  // its identity is stable across renders — otherwise the onOpenHandler effect would loop.
+  const graph = useMemo(() => {
     if (!meta?.graph?.nodes?.length) return null;
     return {
       nodes: meta.graph.nodes,
-      edges: (meta.graph.edges || []).map((e: any) => ({
-        ...e, id: e.id || `${e.source}->${e.target}`,
-      })),
+      edges: (meta.graph.edges || []).map((e: any) => ({ ...e, id: e.id || `${e.source}->${e.target}` })),
     };
-  })();
+  }, [meta]);
 
   const openInAgentView = useCallback(() => {
     if (!graph) return;
-    // Always hand the captured topology off via sessionStorage — self-contained, so the
-    // exact graph always renders in the agent view regardless of workflow-store timing.
-    // Carry the saved-workflow linkage too: if that workflow/version still exists, the
-    // agent view re-links the session (so Save keeps versioning the same workflow).
     try {
-      sessionStorage.setItem("agentview_handoff", JSON.stringify({
+      // localStorage (not sessionStorage) so the handoff is readable in the NEW tab.
+      localStorage.setItem("agentview_handoff", JSON.stringify({
         graph,
         goal: (meta?.goal || "").replace(/^\[TaskForce:[^\]]*\]\s*/, ""),
         workflowId: meta?.workflow_exists ? meta?.workflow_id : undefined,
         versionId: meta?.workflow_exists ? meta?.version_id : undefined,
       }));
-    } catch { /* sessionStorage unavailable — agent view will just open empty */ }
-    router.push("/agents?handoff=1");
-  }, [graph, meta, router]);
+    } catch { /* storage unavailable — agent view will just open empty */ }
+    window.open("/agents?handoff=1", "_blank", "noopener");
+  }, [graph, meta]);
+
+  // Expose the open action to the parent (floating toolbar) while a topology is shown.
+  useEffect(() => {
+    onOpenHandler?.(graph ? openInAgentView : null);
+    return () => onOpenHandler?.(null);
+  }, [graph, openInAgentView, onOpenHandler]);
+
+  // Click a topology node → select the matching event/step (mirrors ExecutionGraph).
+  const onNodeClick = useCallback((node: any) => {
+    const role = node?.data?.role;
+    const label = node?.data?.label || node?.data?.tool;
+    // Prefer the most recent matching event (latest run/round of that node).
+    const match = [...events].reverse().find(e => {
+      const d: any = e.data || {};
+      return (role && d.agent_role === role)
+        || (label && (d.tool === label || e.message === label))
+        || (node?.id && (d.node_id === node.id || d.node === node.id));
+    });
+    if (match) {
+      setActiveEvent(match.id);
+      setDrawerOpen(true);
+    }
+  }, [events, setActiveEvent, setDrawerOpen]);
 
   // No stored topology → live event-derived graph (chat / single-agent runs).
   if (!graph) return <ExecutionGraph />;
@@ -94,18 +114,11 @@ export default function TopologyView({ taskId, tenant }: { taskId: string | null
         pattern="graph"
         locked
         topologyOnly
+        onNodeClick={onNodeClick}
         initialGraph={graph}
         graphRef={graphRef}
         onUpdateFlow={() => {}}
       />
-      <button
-        onClick={openInAgentView}
-        className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 text-[11px] font-medium shadow-lg backdrop-blur-sm hover:bg-violet-500/20 transition-colors"
-        title="Open this run's topology in the agent view to run or edit it"
-      >
-        <PencilRuler className="h-3.5 w-3.5" />
-        Open in agent view
-      </button>
     </div>
   );
 }

@@ -18,6 +18,7 @@ interface RightPanelContentProps {
   mode: PageMode;
   traceSub: "events" | "spans" | "stats" | "replay" | "plan";
   setTraceSub: (t: "events" | "spans" | "stats" | "replay" | "plan") => void;
+  hasPlan?: boolean;
   dashSub: "alerts" | "queue" | "insights";
   setDashSub: (t: "alerts" | "queue" | "insights") => void;
   isLive: boolean;
@@ -45,29 +46,32 @@ export function RightPanelContent({
   mode, traceSub, setTraceSub, dashSub, setDashSub, isLive,
   executionEvents, auditEvents, viewMode, setViewMode,
   sourceFilter, setSourceFilter, textFilter, setTextFilter,
-  activeEventId, taskId, selectedHistoryTask, tenant,
+  activeEventId, taskId, selectedHistoryTask, tenant, hasPlan,
   analytics, stats, th, setActiveEvent, setDrawerOpen, selectHistoryTask,
 }: RightPanelContentProps) {
   return mode === "trace" ? (
     <>
-      <div className="flex items-center gap-0.5 px-2.5 sm:px-3 py-2 border-b border-white/[0.04] shrink-0">
-        {([
-          { id: "events" as const, label: "Events" },
-          { id: "spans" as const, label: "Spans" },
-          { id: "stats" as const, label: "Run Stats" },
-          { id: "replay" as const, label: "Replay" },
-          { id: "plan" as const, label: "Plan" },
-        ]).map(t => (
-          <button key={t.id} onClick={() => setTraceSub(t.id)}
-            className={`relative px-3 py-2 text-[11px] sm:text-xs font-medium rounded-lg transition-all touch-target ${traceSub === t.id ? "text-violet-300" : "text-slate-500 hover:text-slate-300"}`}
-          >
-            {t.label}
-            {traceSub === t.id && (
-              <motion.div layoutId="trace-tab-bg" className="absolute inset-0 bg-violet-500/10 border border-violet-500/20 rounded-lg -z-10" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
-            )}
-          </button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
+      <div className="flex items-center gap-1 px-2.5 sm:px-3 py-2 border-b border-white/[0.04] shrink-0">
+        {/* Tabs — scroll horizontally when the panel is too narrow to show them all. */}
+        <div className="flex items-center gap-0.5 overflow-x-auto min-w-0 flex-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {([
+            { id: "events" as const, label: "Events" },
+            { id: "spans" as const, label: "Spans" },
+            { id: "stats" as const, label: "Run Stats" },
+            { id: "replay" as const, label: "Replay" },
+            ...(hasPlan ? [{ id: "plan" as const, label: "Plan" }] : []),
+          ]).map(t => (
+            <button key={t.id} onClick={() => setTraceSub(t.id)}
+              className={`shrink-0 relative px-3 py-2 text-[11px] sm:text-xs font-medium rounded-lg transition-all touch-target ${traceSub === t.id ? "text-violet-300" : "text-slate-500 hover:text-slate-300"}`}
+            >
+              {t.label}
+              {traceSub === t.id && (
+                <motion.div layoutId="trace-tab-bg" className="absolute inset-0 bg-violet-500/10 border border-violet-500/20 rounded-lg -z-10" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="ml-1 flex items-center gap-2 shrink-0">
           <RunWorkspacesButton taskId={taskId || selectedHistoryTask || ""} />
           {isLive && (
             <div className="flex items-center gap-1.5">
