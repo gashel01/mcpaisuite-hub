@@ -1,9 +1,20 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ScrollText, RefreshCw, ToggleLeft, ToggleRight } from "lucide-react";
+import { ScrollText, RefreshCw, ToggleLeft, ToggleRight, GitCompare, Play, Trophy } from "lucide-react";
 import { Spinner } from "@/components/ui/Spinner";
+import { apiFetch } from "@/lib/api";
 import type { SecurityPosture as SecurityPostureData } from "@/components/security/types";
+
+type ABSide = {
+  runs: number; success_rate: number; avg_tokens: number; avg_cost: number;
+  avg_turns: number; avg_score: number | null; scored_runs: number;
+};
+type ABResult = {
+  label_a: string; label_b: string; a: ABSide; b: ABSide;
+  delta: { success_rate: number; avg_tokens: number; avg_cost: number; avg_turns: number; avg_score?: number };
+  winner: string; goals: string[]; reps: number; judged: boolean; judge_note?: string;
+};
 
 export const RULE_TEMPLATES = [
   { id: "safety", label: "Safety First", icon: "🛡", desc: "Prevent destructive actions", rules: "- Never execute destructive commands (rm -rf, drop database, format) without explicit user confirmation\n- Always create a backup/checkpoint before modifying important files\n- If unsure about a command's impact, ask the user first" },
@@ -20,6 +31,17 @@ export function GovernancePanel({ posture, onSave }: { posture: SecurityPostureD
   const [customRules, setCustomRules] = useState("");
   const [editingCustom, setEditingCustom] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // A/B test: compare the live constitution (A) against a proposed alternative (B)
+  const [abOpen, setAbOpen] = useState(false);
+  const [abAlt, setAbAlt] = useState("");
+  const [abGoal, setAbGoal] = useState("");
+  const [abReps, setAbReps] = useState(1);
+  const [abJudge, setAbJudge] = useState(false);
+  const [abExpected, setAbExpected] = useState("");
+  const [abRunning, setAbRunning] = useState(false);
+  const [abResult, setAbResult] = useState<ABResult | null>(null);
+  const [abError, setAbError] = useState("");
 
   // Extract custom rules (non-template part) from saved rules
   useEffect(() => {
@@ -62,6 +84,34 @@ export function GovernancePanel({ posture, onSave }: { posture: SecurityPostureD
     await onSave(buildRules(activeTemplates, customRules));
     setSaving(false);
     setEditingCustom(false);
+  };
+
+  const currentRules = posture?.constitution?.rules || "";
+
+  const runAB = async () => {
+    if (!abGoal.trim() || !abAlt.trim() || abRunning) return;
+    setAbRunning(true);
+    setAbError("");
+    setAbResult(null);
+    try {
+      const res = await apiFetch<ABResult>("/constitution/ab", {
+        method: "POST",
+        body: {
+          goal: abGoal,
+          rules_a: currentRules,
+          rules_b: abAlt,
+          reps: Math.max(1, abReps),
+          judge: abJudge,
+          expected_output: abExpected,
+          label_a: "Current",
+          label_b: "Proposed",
+        },
+      });
+      setAbResult(res);
+    } catch (e: any) {
+      setAbError(e?.message || "A/B run failed");
+    }
+    setAbRunning(false);
   };
 
   return (
@@ -117,6 +167,133 @@ export function GovernancePanel({ posture, onSave }: { posture: SecurityPostureD
           </div>
         )}
       </div>
+
+      {/* A/B test: current constitution vs a proposed alternative */}
+      <div className="rounded-xl border border-white/[0.06] bg-white/[0.015] overflow-hidden">
+        <button onClick={() => setAbOpen(o => !o)}
+          className="w-full flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.04] text-left hover:bg-white/[0.02]">
+          <GitCompare className="h-4 w-4 text-indigo-400" />
+          <span className="text-xs font-semibold text-slate-300">A/B test a constitution change</span>
+          <span className="text-[10px] text-slate-500 ml-auto">{abOpen ? "Hide" : "Compare current vs. a proposal"}</span>
+        </button>
+
+        {abOpen && (
+          <div className="p-4 space-y-3">
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Runs the same goal under your <span className="text-slate-300">current</span> constitution and a
+              <span className="text-slate-300"> proposed</span> one, then reports the metric deltas + a winner.
+              The live constitution is restored after each run — nothing is changed permanently.
+            </p>
+
+            <div>
+              <label className="text-[10px] uppercase tracking-wide text-slate-500">Goal to run</label>
+              <input value={abGoal} onChange={e => setAbGoal(e.target.value)}
+                placeholder="e.g. Summarize the attached log and flag any errors"
+                className="mt-1 w-full px-3 py-2 rounded-lg bg-white/[0.02] border border-white/[0.06] text-xs text-slate-200 placeholder:text-slate-700 focus:outline-none focus:border-indigo-500/40" />
+            </div>
+
+            <div>
+              <label className="text-[10px] uppercase tracking-wide text-slate-500">Proposed constitution (B)</label>
+              <textarea value={abAlt} onChange={e => setAbAlt(e.target.value)} rows={5}
+                placeholder="Paste the alternative rules to test against the current one…"
+                className="mt-1 w-full px-3 py-2 rounded-lg bg-white/[0.02] border border-white/[0.06] text-xs text-slate-300 placeholder:text-slate-700 focus:outline-none focus:border-indigo-500/40 font-mono resize-none leading-relaxed" />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-[11px] text-slate-400">
+                Repetitions
+                <input type="number" min={1} max={10} value={abReps}
+                  onChange={e => setAbReps(parseInt(e.target.value || "1", 10))}
+                  className="w-16 px-2 py-1 rounded-lg bg-white/[0.02] border border-white/[0.06] text-xs text-slate-200 focus:outline-none focus:border-indigo-500/40" />
+              </label>
+              <button onClick={() => setAbJudge(j => !j)}
+                className={`flex items-center gap-1.5 text-[11px] font-medium ${abJudge ? "text-indigo-300" : "text-slate-500"}`}
+                data-tooltip="Score answer quality with an LLM judge (evalmcp), graded against the expected answer.">
+                {abJudge ? <ToggleRight className="h-4 w-4 text-indigo-400" /> : <ToggleLeft className="h-4 w-4 text-slate-700" />}
+                Judge quality (evalmcp)
+              </button>
+              <button onClick={runAB} disabled={abRunning || !abGoal.trim() || !abAlt.trim()}
+                className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white">
+                {abRunning ? <Spinner icon={RefreshCw} className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                {abRunning ? "Running…" : "Run A/B"}
+              </button>
+            </div>
+
+            {abJudge && (
+              <div>
+                <label className="text-[10px] uppercase tracking-wide text-slate-500">Expected answer (for the judge)</label>
+                <textarea value={abExpected} onChange={e => setAbExpected(e.target.value)} rows={2}
+                  placeholder="Reference answer the judge grades each output against…"
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-white/[0.02] border border-white/[0.06] text-xs text-slate-300 placeholder:text-slate-700 focus:outline-none focus:border-indigo-500/40 resize-none" />
+              </div>
+            )}
+
+            {abError && <p className="text-[11px] text-red-400">{abError}</p>}
+
+            {abResult && <ABResultView r={abResult} />}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function _fmt(n: number, digits = 2): string {
+  return Number.isFinite(n) ? n.toFixed(digits) : "—";
+}
+
+function _delta(n: number | undefined, digits = 2, lowerIsBetter = false): { text: string; cls: string } {
+  if (n === undefined || !Number.isFinite(n) || Math.abs(n) < 1e-9) return { text: "±0", cls: "text-slate-500" };
+  const good = lowerIsBetter ? n < 0 : n > 0;
+  const sign = n > 0 ? "+" : "";
+  return { text: `${sign}${n.toFixed(digits)}`, cls: good ? "text-emerald-400" : "text-red-400" };
+}
+
+function ABResultView({ r }: { r: ABResult }) {
+  const aWins = r.winner === r.label_a;
+  const tie = r.winner === "tie";
+  const Side = ({ label, s, win }: { label: string; s: ABSide; win: boolean }) => (
+    <div className={`flex-1 rounded-lg border p-3 ${win ? "border-amber-500/40 bg-amber-500/[0.05]" : "border-white/[0.06] bg-white/[0.015]"}`}>
+      <div className="flex items-center gap-1.5 mb-2">
+        {win && <Trophy className="h-3.5 w-3.5 text-amber-400" />}
+        <span className={`text-xs font-semibold ${win ? "text-amber-300" : "text-slate-300"}`}>{label}</span>
+        <span className="text-[10px] text-slate-600 ml-auto">{s.runs} run{s.runs !== 1 ? "s" : ""}</span>
+      </div>
+      <dl className="grid grid-cols-2 gap-y-1 text-[11px]">
+        <dt className="text-slate-500">Success</dt><dd className="text-right text-slate-200">{_fmt(s.success_rate * 100, 0)}%</dd>
+        <dt className="text-slate-500">Avg cost</dt><dd className="text-right text-slate-200">${_fmt(s.avg_cost, 4)}</dd>
+        <dt className="text-slate-500">Avg tokens</dt><dd className="text-right text-slate-200">{_fmt(s.avg_tokens, 0)}</dd>
+        <dt className="text-slate-500">Avg turns</dt><dd className="text-right text-slate-200">{_fmt(s.avg_turns, 1)}</dd>
+        {s.avg_score !== null && (<><dt className="text-slate-500">Quality</dt><dd className="text-right text-indigo-300">{_fmt(s.avg_score, 2)}</dd></>)}
+      </dl>
+    </div>
+  );
+
+  const dSucc = _delta(r.delta.success_rate * 100, 0);
+  const dCost = _delta(r.delta.avg_cost, 4, true);
+  const dTok = _delta(r.delta.avg_tokens, 0, true);
+  const dScore = r.delta.avg_score !== undefined ? _delta(r.delta.avg_score, 2) : null;
+
+  return (
+    <div className="space-y-3 pt-1">
+      <div className="flex items-center justify-center gap-2">
+        <Trophy className="h-4 w-4 text-amber-400" />
+        <span className="text-xs text-slate-400">Winner:</span>
+        <span className="text-sm font-semibold text-amber-300">{tie ? "Tie" : r.winner}</span>
+        {r.judged && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300">judged</span>}
+      </div>
+      <div className="flex gap-3">
+        <Side label={r.label_a} s={r.a} win={aWins} />
+        <Side label={r.label_b} s={r.b} win={!aWins && !tie} />
+      </div>
+      <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px]">
+        <span className="text-slate-500">Δ (B−A):</span>
+        <span>success <span className={dSucc.cls}>{dSucc.text}%</span></span>
+        <span>cost <span className={dCost.cls}>{dCost.text}</span></span>
+        <span>tokens <span className={dTok.cls}>{dTok.text}</span></span>
+        {dScore && <span>quality <span className={dScore.cls}>{dScore.text}</span></span>}
+      </div>
+      {r.judge_note && <p className="text-[10px] text-amber-400/80 text-center">{r.judge_note}</p>}
     </div>
   );
 }

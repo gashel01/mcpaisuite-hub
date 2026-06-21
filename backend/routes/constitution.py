@@ -99,6 +99,47 @@ class PreviewRequest(BaseModel):
     rag_context: str = ""
 
 
+class ABTestRequest(BaseModel):
+    """Run the same goal under two constitutions and compare. Each side is either a
+    saved version id, the live constitution ("current"), or raw rules text."""
+    goal: str
+    version_a: str = ""        # saved version id, or "current"
+    version_b: str = ""
+    rules_a: Optional[str] = None  # raw rules; overrides version_a when set
+    rules_b: Optional[str] = None
+    reps: int = 1
+    namespace: str = "default"
+    judge: bool = False        # LLM-as-judge quality scoring (evalmcp)
+    expected_output: str = ""  # reference answer the judge grades against (required for judge)
+    label_a: str = ""          # display label; falls back to version id / "custom" / "current"
+    label_b: str = ""
+
+
+def _load_version_rules(version_id: str) -> str | None:
+    """Rules text for a saved version id, or None if not found."""
+    with _db_lock:
+        conn = _get_db()
+        try:
+            row = conn.execute("SELECT rules FROM versions WHERE id = ?", (version_id,)).fetchone()
+            return row["rules"] if row else None
+        finally:
+            conn.close()
+
+
+def _resolve_ab_side(raw: Optional[str], version_id: str, kernel) -> tuple[str, str]:
+    """Resolve one A/B side to (rules_text, label). Raw text wins; then a saved
+    version id; then the live constitution ("current"/empty)."""
+    if raw is not None:
+        return raw, "custom"
+    if version_id and version_id != "current":
+        rules = _load_version_rules(version_id)
+        if rules is None:
+            raise HTTPException(status_code=404, detail=f"Version {version_id} not found")
+        return rules, version_id
+    # current live constitution
+    return (kernel._engine._constitution.rules or ""), "current"
+
+
 # --- Endpoints ---
 
 @router.get("/constitution")
@@ -319,3 +360,74 @@ def diff_versions(a: str = Query(..., description="Version A ID"), b: str = Quer
         "version_b": {"id": b, "rules": row_b["rules"], "created_at": row_b["created_at"]},
         "diff": diff_lines,
     }
+
+
+@router.post("/constitution/ab")
+async def ab_test_constitutions(req: ABTestRequest):
+    """A/B test two constitutions on a goal — reports metric deltas + a winner.
+
+    Each side is a saved version id, "current" (live constitution), or raw rules.
+    The live constitution is restored after every run (the kernel swaps it per-task),
+    so this does NOT permanently change the active constitution. When ``judge`` is on
+    and ``expected_output`` is given, an evalmcp LLM judge scores answer quality and
+    the winner is decided on quality first (then success rate, then cost)."""
+    kernel = _get_kernel()
+    if not kernel:
+        raise HTTPException(status_code=503, detail="Kernel not available")
+    if not req.goal.strip():
+        raise HTTPException(status_code=400, detail="goal is required")
+
+    rules_a, auto_a = _resolve_ab_side(req.rules_a, req.version_a, kernel)
+    rules_b, auto_b = _resolve_ab_side(req.rules_b, req.version_b, kernel)
+    label_a = req.label_a.strip() or auto_a
+    label_b = req.label_b.strip() or auto_b
+    if label_a == label_b:  # keep the winner unambiguous
+        label_a, label_b = f"{label_a} (A)", f"{label_b} (B)"
+
+    async def _run_fn(goal: str, constitution: str):
+        return await kernel.run(goal, namespace=req.namespace, constitution=constitution)
+
+    # Optional quality scoring via an evalmcp LLM judge, grounded on expected_output.
+    score_fn = None
+    judged = False
+    if req.judge and req.expected_output.strip():
+        llm = getattr(getattr(kernel, "_engine", None), "_llm", None)
+        if llm is not None:
+            try:
+                from evalmcp.core.judges import LLMJudge
+                from evalmcp.core.models import EvalCase
+
+                async def _judge_llm_fn(prompt: str) -> str:
+                    resp = await llm.complete(
+                        system="You are an evaluation judge. Respond only with valid JSON.",
+                        messages=[{"role": "user", "content": prompt}],
+                        tools=[],
+                    )
+                    return resp.content or ""
+
+                _judge = LLMJudge(_judge_llm_fn)
+                _case = EvalCase(input=req.goal, expected_output=req.expected_output, tool="")
+
+                async def score_fn(goal: str, task) -> float:  # noqa: F811
+                    answer = getattr(task, "summary", "") or ""
+                    res = await _judge.judge(_case, answer)
+                    return res.score
+
+                judged = True
+            except Exception:
+                score_fn = None  # evalmcp missing → degrade to metric-only comparison
+
+    from kernelmcp.ab_test import run_ab
+    try:
+        result = await run_ab(
+            _run_fn, req.goal, rules_a, rules_b,
+            reps=max(1, req.reps), label_a=label_a, label_b=label_b,
+            score_fn=score_fn,
+        )
+    except Exception as exc:  # noqa: BLE001 - surface kernel/provider errors
+        raise HTTPException(status_code=502, detail=f"A/B run failed: {exc}")
+
+    result["judged"] = judged
+    if req.judge and not judged:
+        result["judge_note"] = "Judge skipped: expected_output required and an LLM must be configured."
+    return result
