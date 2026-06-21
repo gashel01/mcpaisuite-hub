@@ -1017,3 +1017,97 @@ async def schedule_taskforce(body: dict, x_tenant_id: str = Header(default="")):
 
 
 ## schedules routes moved above /agents/taskforce/{task_id} to avoid path conflict
+
+
+# ── LTP plan view + structural diff (Observability "Plan" tab) ────────────────
+# Only LTP/Hybrid runs compile a plan; ltp_runner stores the STRUCTURED plan
+# (LTPPlan.model_dump) in task.metadata["ltp_plan"]. ReAct runs have none (dynamic,
+# by design). We reconstruct via LTPPlan.model_validate — no fragile text re-parsing.
+
+def _step_view(s) -> dict:
+    """JSON-safe view of an LTPStep for the UI."""
+    return {
+        "id": s.id,
+        "tool": s.tool,
+        "args": s.args,
+        "output_var": s.output_var,
+        "goto": s.goto,
+        "parallel_group": s.parallel_group,
+        "is_foreach": s.is_foreach,
+        "condition": (str(s.condition) if s.condition else None),
+    }
+
+
+def _load_plan(k, task_id: str):
+    """Reconstruct the LTPPlan stored on a task, or None if the run had no plan."""
+    task = k._tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, f"Task {task_id} not found")
+    dump = (task.metadata or {}).get("ltp_plan")
+    if not dump:
+        return None
+    from ltpmcp import LTPPlan
+    return LTPPlan.model_validate(dump)
+
+
+@router.get("/ltp/plans")
+async def list_ltp_plans(x_tenant_id: str = Header(default="")):
+    """Tasks that compiled an LTP plan — the pickable set for the plan diff."""
+    k = _require()
+    tenant_ns = ns(x_tenant_id)
+    out = []
+    for t in k._tasks.values():
+        meta = t.metadata or {}
+        if not meta.get("ltp_plan"):
+            continue
+        # Match by BASE namespace so run-scoped tasks ("demo__run_xyz") still belong to
+        # their tenant ("demo"); only filter when a tenant is in play.
+        base = (t.namespace or "").split("__")[0]
+        if tenant_ns and base and base != tenant_ns:
+            continue
+        out.append({
+            "task_id": t.id,
+            "goal": (t.goal or "")[:100],
+            "steps": meta.get("ltp_plan_steps", 0),
+            "status": t.status.value if hasattr(t.status, "value") else str(t.status),
+            "created_at": getattr(t, "created_at", None) and str(t.created_at),
+        })
+    # Newest first when timestamps are available.
+    out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return {"plans": out, "total": len(out)}
+
+
+@router.get("/tasks/{task_id}/plan")
+async def get_task_plan(task_id: str, x_tenant_id: str = Header(default="")):
+    """The compiled LTP plan for a run (parsed steps), or has_plan=False for ReAct runs."""
+    k = _require()
+    task = k._tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    plan = _load_plan(k, task_id)
+    if plan is None:
+        return {"task_id": task_id, "has_plan": False,
+                "mode": (task.metadata or {}).get("execution_mode_used")}
+    return {"task_id": task_id, "has_plan": True, "goal": task.goal,
+            "steps": [_step_view(s) for s in plan.steps]}
+
+
+class PlanDiffBody(BaseModel):
+    a_task_id: str
+    b_task_id: str
+
+
+@router.post("/ltp/diff")
+async def ltp_diff(body: PlanDiffBody):
+    """Structural diff of two runs' compiled plans (added/removed/changed/reordered)."""
+    k = _require()
+    pa = _load_plan(k, body.a_task_id)
+    pb = _load_plan(k, body.b_task_id)
+    if pa is None or pb is None:
+        raise HTTPException(400, "Both runs must have a compiled plan (LTP/Hybrid only).")
+    from ltpmcp import diff_plans
+    return {
+        "diff": diff_plans(pa, pb),
+        "a": {"steps": [_step_view(s) for s in pa.steps]},
+        "b": {"steps": [_step_view(s) for s in pb.steps]},
+    }

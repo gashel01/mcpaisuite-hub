@@ -5,6 +5,7 @@ import EventsPanel from "@/components/observability/EventsPanel";
 import TraceWaterfall from "@/components/observability/TraceWaterfall";
 import RunStats from "@/components/observability/RunStats";
 import TimeTravelPanel from "@/components/observability/TimeTravelPanel";
+import PlanDiffPanel from "@/components/observability/PlanDiffPanel";
 import RunWorkspacesButton from "@/components/observability/RunWorkspacesButton";
 import ReviewQueue from "@/components/observability/ReviewQueue";
 import InsightsPanel from "@/components/observability/InsightsPanel";
@@ -15,8 +16,8 @@ import type { PageMode, Analytics, Stats } from "./types";
 
 interface RightPanelContentProps {
   mode: PageMode;
-  traceSub: "events" | "spans" | "stats" | "replay";
-  setTraceSub: (t: "events" | "spans" | "stats" | "replay") => void;
+  traceSub: "events" | "spans" | "stats" | "replay" | "plan";
+  setTraceSub: (t: "events" | "spans" | "stats" | "replay" | "plan") => void;
   dashSub: "alerts" | "queue" | "insights";
   setDashSub: (t: "alerts" | "queue" | "insights") => void;
   isLive: boolean;
@@ -55,6 +56,7 @@ export function RightPanelContent({
           { id: "spans" as const, label: "Spans" },
           { id: "stats" as const, label: "Run Stats" },
           { id: "replay" as const, label: "Replay" },
+          { id: "plan" as const, label: "Plan" },
         ]).map(t => (
           <button key={t.id} onClick={() => setTraceSub(t.id)}
             className={`relative px-3 py-2 text-[11px] sm:text-xs font-medium rounded-lg transition-all touch-target ${traceSub === t.id ? "text-violet-300" : "text-slate-500 hover:text-slate-300"}`}
@@ -110,6 +112,11 @@ export function RightPanelContent({
           {traceSub === "replay" && (
             <motion.div key="replay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
               <TimeTravelPanel taskId={taskId || selectedHistoryTask || ""} namespace={tenant} />
+            </motion.div>
+          )}
+          {traceSub === "plan" && (
+            <motion.div key="plan" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+              <PlanDiffPanel taskId={taskId || selectedHistoryTask || ""} namespace={tenant} />
             </motion.div>
           )}
         </AnimatePresence>

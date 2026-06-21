@@ -121,7 +121,7 @@ function ObservabilityInner() {
   }, [isMobile]);
 
   // ── Trace mode: right panel sub-tab ────────────────────────────────────
-  const [traceSub, setTraceSub] = useState<"events" | "spans" | "stats" | "replay">("events");
+  const [traceSub, setTraceSub] = useState<"events" | "spans" | "stats" | "replay" | "plan">("events");
   const [copiedTrace, setCopiedTrace] = useState(false);
 
   // ── Dashboard mode: right panel sub-tab ────────────────────────────────
@@ -596,7 +596,7 @@ function ObservabilityInner() {
                             <div className={`h-1.5 w-1.5 rounded-full ${viewState === "completed" ? "bg-emerald-400" : "bg-violet-400"}`} />
                             <span className="hidden sm:inline">{viewState === "completed" ? "Task completed" : "Viewing trace"}</span>
                             <span className="sm:hidden">{viewState === "completed" ? "Done" : "Trace"}</span>
-                            {(["events", "spans", "stats", "replay"] as const).map(t => (
+                            {(["events", "spans", "stats", "replay", "plan"] as const).map(t => (
                               <button
                                 key={t}
                                 onClick={() => { setTraceSub(t); if (isMobile) setMobilePanel("right"); }}
@@ -604,7 +604,7 @@ function ObservabilityInner() {
                                   traceSub === t ? "bg-white/[0.15] text-white" : "bg-white/[0.06] hover:bg-white/[0.1]"
                                 }`}
                               >
-                                {t === "events" ? "Events" : t === "spans" ? "Spans" : t === "stats" ? "Stats" : "Replay"}
+                                {t === "events" ? "Events" : t === "spans" ? "Spans" : t === "stats" ? "Stats" : t === "replay" ? "Replay" : "Plan"}
                               </button>
                             ))}
                             <button
