@@ -20,6 +20,11 @@ Thumbs.db
 !README.md
 data/
 
+# Stray workspace folders created when a Windows absolute path was used as a
+# workspace root (the path's ':' and '\' become literal folder-name glyphs).
+backend/*Users*/
+backend/C*workspace*/
+
 # Test output files
 test_graph.py
 test_graph_output*.txt
