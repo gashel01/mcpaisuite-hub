@@ -9,12 +9,7 @@ Part of the [MCP AI Suite](https://mcpaisuite.com).
 
 ## 🎬 See it in action
 
-<!--
-  VIDEO: paste the GitHub user-attachments URL (from dragging tour-hub.mp4 into a
-  GitHub comment box) on its own line right below this comment. GitHub renders it
-  as a native, inline video player. Remove the placeholder line once added.
--->
-_A 2½-minute tour of the Hub goes here — video upload pending._
+https://github.com/user-attachments/assets/02922f67-4186-4f3e-9a3f-8a7570c7885d
 
 ## Stack
 
