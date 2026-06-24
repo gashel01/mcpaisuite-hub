@@ -1,6 +1,20 @@
-# MCP AI Suite Hub
+# 🎛️ MCP AI Suite Hub — the control plane for governed AI agents
 
-Full-stack demo for the `kernelmcp` orchestrator. Connects all six MCP libraries (memory, planning, workspace, sandbox, scheduler, RAG) through a single FastAPI backend with a Next.js 14 frontend.
+Part of the [MCP AI Suite](https://mcpaisuite.com).
+
+[![License](https://img.shields.io/badge/license-BSL%201.1-orange)](LICENSE)
+&nbsp;⭐ **[Star on GitHub](https://github.com/gashel01/mcpaisuite-hub)** · 🌐 **[mcpaisuite.com](https://mcpaisuite.com)** · 📚 **[Docs](https://mcpaisuite.com/docs)**
+
+**A full-stack control hub for running, observing, and governing AI agents from one place.** It connects the entire MCP AI Suite — the `kernelmcp` orchestrator plus memory, planning, workspace, sandbox, scheduler, RAG, web search, eval, and LTP planning — through a single FastAPI backend and a Next.js 14 frontend: live execution **observability**, **time-travel replay**, a **visual graph builder** that actually runs, **plan-diffing**, A/B-tested constitutions, **deploy-an-agent-as-an-API**, and a conversational **chat-to-build** team designer.
+
+## 🎬 See it in action
+
+<!--
+  VIDEO: paste the GitHub user-attachments URL (from dragging tour-hub.mp4 into a
+  GitHub comment box) on its own line right below this comment. GitHub renders it
+  as a native, inline video player. Remove the placeholder line once added.
+-->
+_A 2½-minute tour of the Hub goes here — video upload pending._
 
 ## Stack
 
@@ -33,7 +47,9 @@ Opens at:
 ```bash
 cd backend
 pip install -r requirements.txt
-pip install kernelmcp memorymcp ragmcp planningmcp workspacemcp sandboxmcp schedulermcp
+pip install mcpaisuite-kernelmcp mcpaisuite-memorymcp mcpaisuite-ragmcp mcpaisuite-planningmcp \
+            mcpaisuite-workspacemcp mcpaisuite-sandboxmcp mcpaisuite-schedulermcp \
+            mcpaisuite-websearchmcp mcpaisuite-evalmcp mcpaisuite-ltpmcp
 uvicorn server:app --reload --port 8000
 ```
 
@@ -234,6 +250,6 @@ The bundled SearXNG instance provides web search capabilities to the kernel's to
 
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE).
+Business Source License 1.1 — see [LICENSE](LICENSE).
 
-Open source for individuals and open-source projects. For commercial use in closed-source products, a commercial license is available — contact [contact@mcpaisuite.com](mailto:contact@mcpaisuite.com).
+Source-available. Free for non-production use — development, testing, evaluation, and personal use. **Any production use requires a commercial license** — contact [contact@mcpaisuite.com](mailto:contact@mcpaisuite.com). Each version converts to Apache-2.0 on 2030-06-22.
